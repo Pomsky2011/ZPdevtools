@@ -1,0 +1,2879 @@
+================================================================================
+                    ZEROPOINT PPU MICROCODE SPECIFICATION
+                           Revision 1.0 - 2025
+================================================================================
+
+TABLE OF CONTENTS
+-----------------
+
+1.  OVERVIEW
+    1.1  Introduction
+    1.2  Architecture Summary
+    1.3  Clock Domains and Timing
+    1.4  Design Philosophy
+
+2.  HARDWARE ARCHITECTURE
+    2.1  Register File
+    2.2  Memory Organization
+    2.3  Execution Unit
+    2.4  Comparison Flags
+    2.5  State Machine
+
+3.  INSTRUCTION FORMAT
+    3.1  Basic Instruction Encoding
+    3.2  Preset F Extension Format
+    3.3  Operand Encoding
+    3.4  Endianness
+
+4.  INSTRUCTION SET REFERENCE
+    4.1  Control Flow Instructions
+    4.2  Data Movement Instructions
+    4.3  Arithmetic Instructions
+    4.4  Comparison and Flags
+    4.5  Graphics Instructions (Preset F)
+
+5.  DETAILED INSTRUCTION DESCRIPTIONS
+    5.1  Basic Instructions (0x0 - 0xE)
+    5.2  Preset F Instructions (0xF)
+
+6.  PROGRAMMING MODEL
+    6.1  Register Usage Conventions
+    6.2  Stack Management
+    6.3  Function Calls
+    6.4  Interrupt Handling
+
+7.  INITIALIZATION AND BOOT SEQUENCE
+    7.1  Power-On State
+    7.2  Interrupt Vector Setup
+    7.3  Boot ROM Behavior
+    7.4  Transition to User Code
+
+8.  TIMING AND PERFORMANCE
+    8.1  Instruction Cycle Counts
+    8.2  Memory Access Timing
+    8.3  Performance Calculations
+
+9.  GRAPHICS SUBSYSTEM
+    9.1  Tile System
+    9.2  Palette Management
+    9.3  Render Modes
+    9.4  Blank Status Detection
+
+10. ASSEMBLY LANGUAGE
+    10.1 Syntax Rules
+    10.2 Label Definitions
+    10.3 Immediate Value Formats
+    10.4 Comments
+
+11. PROGRAMMING TECHNIQUES
+    11.1 Loops and Iteration
+    11.2 Conditional Execution
+    11.3 Table Lookups
+    11.4 Fixed-Point Arithmetic
+    11.5 Memory Access Patterns
+
+12. EXAMPLE PROGRAMS
+    12.1 Hello World (Register Manipulation)
+    12.2 Loop Counter
+    12.3 Memory Copy
+    12.4 Multiplication Table
+    12.5 VBlank Synchronization
+
+13. BINARY FORMAT
+    13.1 File Layout
+    13.2 Loading Procedures
+    13.3 Memory Mapping
+
+14. DEBUGGING
+    14.1 Common Errors
+    14.2 Register Inspection
+    14.3 Execution Tracing
+
+15. APPENDICES
+    15.1 Opcode Quick Reference
+    15.2 Register Map
+    15.3 Instruction Encoding Table
+    15.4 Assembler Error Messages
+
+================================================================================
+
+1. OVERVIEW
+
+1.1 INTRODUCTION
+
+The ZeroPoint Picture Processing Unit (PPU) is a microcode-based graphics
+processor designed to provide programmable control over the rendering
+pipeline of the ZeroPoint fantasy console. Unlike traditional fixed-function
+graphics hardware, the PPU executes a custom instruction set that allows
+developers to implement their own rendering algorithms, effects, and
+optimizations.
+
+The PPU operates independently from the main CPU, running at 64 MHz with a
+dedicated 64 KiB memory space that contains both executable microcode and
+graphics data. This architecture enables sophisticated graphics operations
+while maintaining the retro aesthetic of early 1990s gaming hardware.
+
+1.2 ARCHITECTURE SUMMARY
+
+Key specifications:
+- Clock frequency: 64 MHz (67,108,864 Hz exact)
+- Instruction execution rate: 64 million instructions per second
+- Register file: 64 general-purpose 16-bit registers
+- Memory: 64 KiB (65,536 bytes) unified code/data
+- Instruction size: 16 bits (2 bytes)
+- Instruction format: 4-bit opcode + 12-bit operand
+- Endianness: Big-endian (MSB first)
+- Comparison flags: Zero, Greater
+- Special registers: PC (R62), DP (R63)
+
+1.3 CLOCK DOMAINS AND TIMING
+
+The PPU operates at exactly 64 × 1024 × 1024 Hz = 67,108,864 Hz.
+
+Every clock cycle executes exactly one instruction. There are no multi-cycle
+instructions, and there is no pipelining. This simplifies timing analysis and
+makes the PPU highly deterministic.
+
+At 60 Hz refresh rate:
+- Cycles per frame: 1,118,481 cycles
+- Cycles per scanline (261 total): 4,285 cycles
+- Cycles per visible scanline (256): 4,285 cycles
+- Cycles during VBlank (5 scanlines): 21,425 cycles
+- Cycles during HBlank (84 pixels): ~514 cycles
+
+This provides ample time for complex rendering operations within the blanking
+intervals.
+
+1.4 DESIGN PHILOSOPHY
+
+The PPU microcode architecture follows these design principles:
+
+1. SIMPLICITY: Every instruction executes in exactly one cycle. No exceptions.
+
+2. ORTHOGONALITY: Register operands are consistently encoded across all
+   instructions. Any register can be used in any position.
+
+3. EXTENSIBILITY: The Preset F opcode (0xF) provides a clean extension
+   mechanism for specialized graphics operations without cluttering the base
+   instruction set.
+
+4. DETERMINISM: No caches, no speculation, no variable-length instructions.
+   Program behavior is completely predictable.
+
+5. PROGRAMMER VISIBILITY: All architectural state is directly accessible.
+   No hidden registers or microarchitectural state.
+
+================================================================================
+
+2. HARDWARE ARCHITECTURE
+
+2.1 REGISTER FILE
+
+The PPU contains 64 general-purpose 16-bit registers, numbered R0 through R63.
+All registers are equal in capability with two exceptions:
+
+R62 (PC - Program Counter):
+  - Used by jump instructions as the target address
+  - NOT the actual execution pointer (that is maintained internally)
+  - Software-writable and readable like any other register
+  - Serves as a jump target register for conditional/unconditional jumps
+
+R63 (DP - Data Pointer):
+  - Used by memory access instructions (MOV, MOVDP, SETDP)
+  - Points to a 16-bit word address in the 64 KiB address space
+  - Software-writable and readable
+  - No auto-increment or auto-decrement behavior
+
+All registers are zeroed on power-up and reset.
+
+Register organization:
+  ┌────────────────────┐
+  │ R0  - R15          │  General purpose (16 registers)
+  │ R16 - R31          │  General purpose (16 registers)
+  │ R32 - R47          │  General purpose (16 registers)
+  │ R48 - R61          │  General purpose (14 registers)
+  │ R62 (PC)           │  Program Counter (jump target)
+  │ R63 (DP)           │  Data Pointer
+  └────────────────────┘
+
+NOTE: There is no architectural concept of a "stack pointer". Software must
+implement stack management using general-purpose registers if needed.
+
+2.2 MEMORY ORGANIZATION
+
+The PPU has a unified 64 KiB address space containing both code and data:
+
+  Address Range       Size        Typical Usage
+  ───────────────────────────────────────────────────────────────
+  0x0000 - 0x00FF     256 bytes   Interrupt vectors, boot code
+  0x0100 - 0x0FFF     3840 bytes  Microcode program
+  0x1000 - 0x3FFF     12 KiB      Graphics data (tiles, palettes)
+  0x4000 - 0xFFFF     48 KiB      Free (data, additional code)
+
+Memory is byte-addressable but 16-bit aligned access is recommended for
+performance. All 16-bit values are stored in big-endian format:
+
+  Address    Value
+  ────────────────
+  0x1000     0xAB  (MSB)
+  0x1001     0xCD  (LSB)
+
+  Result: 0xABCD
+
+The PPU reads instructions from sequential memory addresses starting at the
+internal execution pointer (initially 0x0000). This is separate from R62 (PC).
+
+2.3 EXECUTION UNIT
+
+The execution unit contains:
+
+1. Execution Pointer (EP): Internal 16-bit counter tracking next instruction
+   - Initialized to 0x0000 on start
+   - Auto-increments by 2 after each instruction fetch
+   - Modified by jump instructions (loads from R62)
+   - Not directly accessible to software
+
+2. Instruction Register (IR): Holds current 16-bit instruction
+   - Loaded from memory[EP]
+   - Decoded into opcode and operand fields
+
+3. ALU: 16-bit arithmetic/logic unit
+   - Performs add, subtract, multiply, divide operations
+   - Supports increment/decrement
+   - Updates comparison flags
+
+4. Flag Register: Contains comparison result flags
+   - Zero flag: Set when comparison result equals zero
+   - Greater flag: Set when left operand > right operand
+   - Cleared by CLRF instruction
+   - Updated by CMP instruction
+
+Execution flow (per cycle):
+  1. Fetch 16-bit instruction from memory[EP]
+  2. Increment EP by 2
+  3. Decode opcode (bits 15-12) and operand (bits 11-0)
+  4. Execute instruction
+  5. Write results (if any)
+
+2.4 COMPARISON FLAGS
+
+The PPU maintains two comparison flags:
+
+ZERO FLAG:
+  - Set to 1 when: (RegisterX - RegisterY) == 0
+  - Set to 0 otherwise
+  - Used by: JMZ (jump if zero), JNZ (jump if not zero)
+  - Updated by: CMP instruction
+  - Cleared by: CLRF instruction
+
+GREATER FLAG:
+  - Set to 1 when: RegisterX > RegisterY (unsigned comparison)
+  - Set to 0 when: RegisterX <= RegisterY
+  - Used by: JMG (jump if greater), JNG (jump if not greater)
+  - Updated by: CMP instruction
+  - Cleared by: CLRF instruction
+
+Flag behavior examples:
+  CMP R0, R1    ; R0=5, R1=10
+  -> Zero=0, Greater=0 (5 < 10)
+
+  CMP R0, R1    ; R0=10, R1=5
+  -> Zero=0, Greater=1 (10 > 5)
+
+  CMP R0, R1    ; R0=7, R1=7
+  -> Zero=1, Greater=0 (7 == 7)
+
+2.5 STATE MACHINE
+
+The PPU operates in one of five states:
+
+WAITING_FOR_INTERRUPTS:
+  - Initial state on power-up
+  - Expects VBlank interrupt address to be set first
+  - Then expects HBlank interrupt address
+  - No instructions execute in this state
+
+RUNNING_BOOT_ROM:
+  - Executes boot ROM animation (logo display)
+  - Currently not implemented (transitions immediately)
+  - Future enhancement for boot-time branding
+
+WAITING_FOR_START:
+  - All initialization complete
+  - Stalled until CPU sends start signal
+  - Ready to begin microcode execution
+
+RUNNING:
+  - Normal execution mode
+  - Executes one instruction per cycle
+  - Only state where instructions execute
+
+HALTED:
+  - Stopped by HALT instruction
+  - No further execution until reset
+  - Registers retain their values
+
+State transitions:
+  POWER_ON
+    ↓
+  WAITING_FOR_INTERRUPTS
+    ↓ (after VBlank & HBlank addresses set)
+  RUNNING_BOOT_ROM
+    ↓ (boot complete)
+  WAITING_FOR_START
+    ↓ (start signal received)
+  RUNNING
+    ↓ (HALT instruction)
+  HALTED
+
+================================================================================
+
+3. INSTRUCTION FORMAT
+
+3.1 BASIC INSTRUCTION ENCODING
+
+Every instruction is exactly 16 bits (2 bytes), formatted as:
+
+  Bit Position:  15  14  13  12  11  10   9   8   7   6   5   4   3   2   1   0
+                ┌───┬───┬───┬───┬───┬───┬───┬───┬───┬───┬───┬───┬───┬───┬───┬───┐
+                │ O │ O │ O │ O │ A │ A │ A │ A │ A │ A │ A │ A │ A │ A │ A │ A │
+                └───┴───┴───┴───┴───┴───┴───┴───┴───┴───┴───┴───┴───┴───┴───┴───┘
+                 \_____________/  \_______________________________________________/
+                   Opcode (4)                   Operand (12)
+
+Opcode field: Bits 15-12 (4 bits)
+  - Determines instruction type
+  - Range: 0x0 to 0xF (16 possible opcodes)
+  - Value 0xF indicates Preset F extended instruction
+
+Operand field: Bits 11-0 (12 bits)
+  - Instruction-specific encoding
+  - May contain register numbers, immediate values, or sub-fields
+  - Range: 0x000 to 0xFFF
+
+3.2 PRESET F EXTENSION FORMAT
+
+When opcode = 0xF, the operand field is subdivided:
+
+  Bit Position:  15  14  13  12  11  10   9   8   7   6   5   4   3   2   1   0
+                ┌───┬───┬───┬───┬───┬───┬───┬───┬───┬───┬───┬───┬───┬───┬───┬───┐
+                │ 1 │ 1 │ 1 │ 1 │ S │ S │ S │ S │ O │ O │ O │ O │ O │ O │ O │ O │
+                └───┴───┴───┴───┴───┴───┴───┴───┴───┴───┴───┴───┴───┴───┴───┴───┘
+                 \_____________/  \_____________/  \_______________________________/
+                 Opcode=0xF (4)    Sub-op (4)         Sub-operand (8)
+
+Sub-opcode field: Bits 11-8 (4 bits)
+  - Determines Preset F instruction type
+  - Range: 0x0 to 0xF (16 graphics/control instructions)
+
+Sub-operand field: Bits 7-0 (8 bits)
+  - Sub-instruction specific encoding
+  - May contain register numbers, mode bits, etc.
+  - Range: 0x00 to 0xFF
+
+3.3 OPERAND ENCODING
+
+Different instructions use the 12-bit operand field differently:
+
+SINGLE REGISTER (6 bits):
+  ┌───────────────────────┬───────────────────────────┐
+  │  Reserved (6 bits)    │   Register # (6 bits)     │
+  │       000000          │         RRRRRR            │
+  └───────────────────────┴───────────────────────────┘
+  Bits 11-6: Unused (should be 0)
+  Bits 5-0:  Register number (0-63)
+
+  Example: CLR R5
+    Opcode: 0x3, Operand: 0x005
+    Binary: 0011 0000 0000 0101
+    Bytes: 0x30 0x05
+
+DUAL REGISTER (6 bits each):
+  ┌───────────────────────┬───────────────────────────┐
+  │   Register X (6 bits) │   Register Y (6 bits)     │
+  │       XXXXXX          │         YYYYYY            │
+  └───────────────────────┴───────────────────────────┘
+  Bits 11-6: First register (X)
+  Bits 5-0:  Second register (Y)
+
+  Example: ADD R10, R3
+    Opcode: 0xA, Operand: (10 << 6) | 3 = 0x283
+    Binary: 1010 0010 1000 0011
+    Bytes: 0xA2 0x83
+
+8-BIT IMMEDIATE:
+  ┌───────────────────────┬───────────────────────────┐
+  │  Reserved (4 bits)    │   Immediate (8 bits)      │
+  │       0000            │       IIIIIIII            │
+  └───────────────────────┴───────────────────────────┘
+  Bits 11-8: Unused
+  Bits 7-0:  Immediate value (0-255)
+
+  Example: DEFCALL 0x42
+    Opcode: 0x0, Operand: 0x042
+    Binary: 0000 0000 0100 0010
+    Bytes: 0x00 0x42
+
+JUMP FLAG BIT:
+  ┌───┬───────────────────────────────────────────────┐
+  │ B │         Reserved (11 bits)                    │
+  │   │            00000000000                        │
+  └───┴───────────────────────────────────────────────┘
+  Bit 11:   Flag selector (0=zero, 1=greater)
+  Bits 10-0: Unused
+
+  Example: JMG (jump if greater)
+    Opcode: 0x6, Operand: 0x800 (bit 11 set)
+    Binary: 0110 1000 0000 0000
+    Bytes: 0x68 0x00
+
+3.4 ENDIANNESS
+
+All multi-byte values in the PPU are big-endian (most significant byte first).
+
+Instruction encoding example:
+  Assembly: ADD R10, R3
+
+  Encoding process:
+    1. Opcode = 0xA (ADD)
+    2. RegX = 10 (0x0A)
+    3. RegY = 3 (0x03)
+    4. Operand = (10 << 6) | 3 = 640 + 3 = 643 = 0x283
+    5. Instruction = (0xA << 12) | 0x283 = 0xA283
+
+  Memory layout:
+    Byte 0 (MSB): 0xA2
+    Byte 1 (LSB): 0x83
+
+When writing to memory via MOVDP:
+  MOVDP R5  ; R5 = 0x1234, DP = 0x1000
+
+  Memory after execution:
+    Address 0x1000: 0x12 (MSB)
+    Address 0x1001: 0x34 (LSB)
+
+================================================================================
+
+4. INSTRUCTION SET REFERENCE
+
+4.1 CONTROL FLOW INSTRUCTIONS
+
+DEFCALL    - Define callable function (marker)
+ENDDEFCALL - End function definition (marker)
+JMZ        - Jump to (PC) if zero flag set
+JMG        - Jump to (PC) if greater flag set
+JNZ        - Jump to (PC) if zero flag clear
+JNG        - Jump to (PC) if greater flag clear (or equal)
+JML        - Jump to (PC) if less (alias for JNG)
+JMR        - Jump relative to (PC) [Preset F]
+CALL       - Call function at address [Preset F]
+HALT       - Stop execution
+
+4.2 DATA MOVEMENT INSTRUCTIONS
+
+SWAPREG    - Swap two registers
+CLR        - Clear register to zero
+SETDP      - Set DP register from another register [Preset F]
+MOV        - Load from (DP) to register [Preset F]
+MOVDP      - Store register to (DP) [Preset F]
+
+4.3 ARITHMETIC INSTRUCTIONS
+
+INC        - Increment register
+DEC        - Decrement register
+ADD        - Add two registers
+SUB        - Subtract two registers
+MUL        - Multiply two registers
+INTDIV     - Integer divide two registers
+
+4.4 COMPARISON AND FLAGS
+
+CMP        - Compare two registers (set flags)
+CLRF       - Clear comparison flags
+
+4.5 GRAPHICS INSTRUCTIONS (PRESET F)
+
+SETPOS       - Set position using 4-bit register IDs
+SETTILE      - Set current tile ID
+SETRENDMOD   - Set render mode (16-bit or 32-bit RGBA)
+PALETTE16    - Load 16-color palette from (DP)
+PALETTE256   - Load 256-color palette from (DP)
+SETREGBANK   - Set register banks for SETPOS
+CLRTILE      - Clear current tile
+CLRPALETTE   - Clear palette
+STRTDEFTILE  - Start defining tile
+ENDDEFTILE   - End defining tile
+GBLS         - Get blank status (VBlank/HBlank/Active)
+
+================================================================================
+
+5. DETAILED INSTRUCTION DESCRIPTIONS
+
+5.1 BASIC INSTRUCTIONS (0x0 - 0xE)
+
+────────────────────────────────────────────────────────────────────────────
+
+DEFCALL - Define Callable Function
+────────────────────────────────────────────────────────────────────────────
+
+Opcode: 0x0
+Format: DEFCALL address
+Encoding: 0000 0000 AAAAAAAA
+
+Description:
+  Marker instruction indicating a callable function entry point. The address
+  operand specifies the function identifier (0-255). This is a no-op during
+  execution but serves as metadata for the CALL instruction.
+
+  Currently not implemented in hardware. Reserved for future function call
+  stack mechanism.
+
+Operands:
+  address (8-bit immediate): Function identifier (0-255)
+
+Flags: No effect
+
+Cycles: 1
+
+Example:
+  DEFCALL 5    ; Mark this location as function 5
+  INC R0
+  INC R1
+  ENDDEFCALL
+
+Encoding Example:
+  DEFCALL 0x42
+  → 0x0042 → Bytes: 0x00 0x42
+
+Notes:
+  - No validation that address is unique
+  - Software must maintain function table
+  - Future hardware may implement call stack
+
+────────────────────────────────────────────────────────────────────────────
+
+ENDDEFCALL - End Function Definition
+────────────────────────────────────────────────────────────────────────────
+
+Opcode: 0x1
+Format: ENDDEFCALL
+Encoding: 0001 0000 00000000
+
+Description:
+  Marker instruction indicating end of callable function. Should be paired
+  with DEFCALL. Currently a no-op.
+
+Operands: None
+
+Flags: No effect
+
+Cycles: 1
+
+Example:
+  DEFCALL 5
+  INC R0
+  ENDDEFCALL   ; End of function 5
+
+Encoding:
+  → 0x1000 → Bytes: 0x10 0x00
+
+────────────────────────────────────────────────────────────────────────────
+
+SWAPREG - Swap Two Registers
+────────────────────────────────────────────────────────────────────────────
+
+Opcode: 0x2
+Format: SWAPREG RX, RY
+Encoding: 0010 XXXXXX YYYYYY
+
+Description:
+  Atomically exchanges the contents of registers RX and RY.
+
+Operands:
+  RX (6-bit register): First register (bits 11-6)
+  RY (6-bit register): Second register (bits 5-0)
+
+Operation:
+  temp ← RX
+  RX ← RY
+  RY ← temp
+
+Flags: No effect
+
+Cycles: 1
+
+Example:
+  ; R0 = 100, R1 = 200
+  SWAPREG R0, R1
+  ; R0 = 200, R1 = 100
+
+Encoding Example:
+  SWAPREG R5, R10
+  RX = 5 (000101), RY = 10 (001010)
+  Operand = (5 << 6) | 10 = 320 + 10 = 330 = 0x14A
+  → 0x214A → Bytes: 0x21 0x4A
+
+Notes:
+  - Works with any two registers including PC and DP
+  - Use with caution when swapping PC (affects jumps)
+
+────────────────────────────────────────────────────────────────────────────
+
+CLR - Clear Register
+────────────────────────────────────────────────────────────────────────────
+
+Opcode: 0x3
+Format: CLR RX
+Encoding: 0011 000000 XXXXXX
+
+Description:
+  Sets the specified register to zero.
+
+Operands:
+  RX (6-bit register): Target register (bits 5-0)
+
+Operation:
+  RX ← 0x0000
+
+Flags: No effect
+
+Cycles: 1
+
+Example:
+  CLR R0    ; R0 = 0
+  CLR PC    ; PC = 0 (affects next jump)
+  CLR DP    ; DP = 0
+
+Encoding Example:
+  CLR R15
+  → 0x300F → Bytes: 0x30 0x0F
+
+Notes:
+  - Fastest way to initialize a register
+  - More efficient than subtracting register from itself
+  - Clearing PC sets jump target to address 0
+
+────────────────────────────────────────────────────────────────────────────
+
+CMP - Compare Registers
+────────────────────────────────────────────────────────────────────────────
+
+Opcode: 0x4
+Format: CMP RX, RY
+Encoding: 0100 XXXXXX YYYYYY
+
+Description:
+  Compares RX with RY and updates comparison flags. Does not modify registers.
+  Performs unsigned 16-bit comparison.
+
+Operands:
+  RX (6-bit register): Left operand (bits 11-6)
+  RY (6-bit register): Right operand (bits 5-0)
+
+Operation:
+  result ← RX - RY
+  Zero ← (result == 0)
+  Greater ← (RX > RY)
+
+Flags:
+  Zero: Set if RX == RY, cleared otherwise
+  Greater: Set if RX > RY, cleared otherwise
+
+Cycles: 1
+
+Example:
+  ; R0 = 10, R1 = 5
+  CMP R0, R1    ; Zero=0, Greater=1 (10 > 5)
+  JMG           ; Will jump
+
+  ; R0 = 5, R1 = 10
+  CMP R0, R1    ; Zero=0, Greater=0 (5 < 10)
+  JMG           ; Will not jump
+
+  ; R0 = 7, R1 = 7
+  CMP R0, R1    ; Zero=1, Greater=0 (7 == 7)
+  JMZ           ; Will jump
+
+Encoding Example:
+  CMP R3, R8
+  → 0x40C8 → Bytes: 0x40 0xC8
+
+Notes:
+  - Always unsigned comparison
+  - Does not affect any registers
+  - Flags remain set until next CMP or CLRF
+
+────────────────────────────────────────────────────────────────────────────
+
+CLRF - Clear Flags
+────────────────────────────────────────────────────────────────────────────
+
+Opcode: 0x5
+Format: CLRF
+Encoding: 0101 000000000000
+
+Description:
+  Clears both comparison flags (Zero and Greater) to 0.
+
+Operands: None
+
+Operation:
+  Zero ← 0
+  Greater ← 0
+
+Flags:
+  Zero: Cleared
+  Greater: Cleared
+
+Cycles: 1
+
+Example:
+  CMP R0, R1    ; Flags set based on comparison
+  CLRF          ; Both flags now 0
+  JMZ           ; Will not jump (Zero is 0)
+
+Encoding:
+  → 0x5000 → Bytes: 0x50 0x00
+
+Notes:
+  - Useful for resetting flag state
+  - Required before using flags for different purpose
+
+────────────────────────────────────────────────────────────────────────────
+
+JMZ - Jump if Zero
+────────────────────────────────────────────────────────────────────────────
+
+Opcode: 0x6
+Format: JMZ
+Encoding: 0110 0 00000000000
+
+Description:
+  If Zero flag is set, jumps to address stored in PC register (R62).
+  Otherwise, continues to next instruction.
+
+Operands: None (uses PC register as target)
+
+Operation:
+  if (Zero == 1)
+    Execution_Pointer ← PC
+  else
+    Execution_Pointer ← Execution_Pointer + 2
+
+Flags: No effect
+
+Cycles: 1 (whether jump taken or not)
+
+Example:
+  CLR PC
+  ; Set PC to loop address (assume loop at byte 0x0020)
+  INC PC  ; PC = 1
+  INC PC  ; ... repeat until PC = 0x20
+
+  CMP R0, R1    ; Compare
+  JMZ           ; Jump to address in PC if R0 == R1
+
+Encoding:
+  → 0x6000 → Bytes: 0x60 0x00
+
+Notes:
+  - Jump is based on PC value at time of execution
+  - PC is not automatically updated after jump
+  - Bit 11 = 0 distinguishes from JMG
+
+────────────────────────────────────────────────────────────────────────────
+
+JMG - Jump if Greater
+────────────────────────────────────────────────────────────────────────────
+
+Opcode: 0x6
+Format: JMG
+Encoding: 0110 1 00000000000
+
+Description:
+  If Greater flag is set, jumps to address stored in PC register (R62).
+  Otherwise, continues to next instruction.
+
+Operands: None (uses PC register as target)
+
+Operation:
+  if (Greater == 1)
+    Execution_Pointer ← PC
+  else
+    Execution_Pointer ← Execution_Pointer + 2
+
+Flags: No effect
+
+Cycles: 1
+
+Example:
+  ; Loop while R0 > R1
+  CLR PC
+  ; Set PC to loop address
+
+loop:
+  ; ... do work ...
+  CMP R0, R1
+  JMG       ; Jump if R0 > R1
+
+Encoding:
+  → 0x6800 → Bytes: 0x68 0x00
+
+Notes:
+  - Bit 11 = 1 distinguishes from JMZ
+  - Same opcode (0x6) as JMZ, different operand bit
+
+────────────────────────────────────────────────────────────────────────────
+
+JNZ - Jump if Not Zero
+────────────────────────────────────────────────────────────────────────────
+
+Opcode: 0x7
+Format: JNZ
+Encoding: 0111 0 00000000000
+
+Description:
+  If Zero flag is clear (0), jumps to address stored in PC register (R62).
+  Otherwise, continues to next instruction.
+
+Operands: None (uses PC register as target)
+
+Operation:
+  if (Zero == 0)
+    Execution_Pointer ← PC
+  else
+    Execution_Pointer ← Execution_Pointer + 2
+
+Flags: No effect
+
+Cycles: 1
+
+Example:
+  ; Skip ahead if R0 != R1
+  CMP R0, R1
+  JNZ       ; Jump if not equal
+
+Encoding:
+  → 0x7000 → Bytes: 0x70 0x00
+
+Notes:
+  - Inverse of JMZ
+  - Useful for "not equal" comparisons
+  - Bit 11 = 0 distinguishes from JNG/JML
+
+────────────────────────────────────────────────────────────────────────────
+
+JNG - Jump if Not Greater (Less or Equal)
+────────────────────────────────────────────────────────────────────────────
+
+Opcode: 0x7
+Format: JNG  (also JML)
+Encoding: 0111 1 00000000000
+
+Description:
+  If Greater flag is clear (0), jumps to address stored in PC register (R62).
+  This occurs when the left operand is less than or equal to the right operand.
+
+Operands: None (uses PC register as target)
+
+Operation:
+  if (Greater == 0)
+    Execution_Pointer ← PC
+  else
+    Execution_Pointer ← Execution_Pointer + 2
+
+Flags: No effect
+
+Cycles: 1
+
+Example:
+  ; Loop while R0 <= R1
+loop:
+  ; ... do work ...
+  INC R0
+  CMP R0, R1
+  JNG       ; Jump if R0 <= R1
+
+Alternate Usage (JML - Jump if Less):
+  ; This works because:
+  ; JNG jumps when Greater=0
+  ; After CMP, Greater=0 when left <= right
+  ; To test strictly less, ensure not equal first
+  CMP R0, R1
+  JMZ skip
+  JNG       ; Gets here only if R0 < R1
+skip:
+
+Encoding:
+  → 0x7800 → Bytes: 0x78 0x00
+
+Notes:
+  - JML (Jump if Less) is an alias for JNG
+  - Bit 11 = 1 distinguishes from JNZ
+  - Most commonly used for loop conditions
+
+────────────────────────────────────────────────────────────────────────────
+
+INC - Increment Register
+────────────────────────────────────────────────────────────────────────────
+
+Opcode: 0x8
+Format: INC RX
+Encoding: 1000 0 00000 XXXXXX
+
+Description:
+  Increments the specified register by 1. Wraps around at 0xFFFF to 0x0000.
+
+Operands:
+  RX (6-bit register): Target register (bits 5-0)
+
+Operation:
+  RX ← RX + 1
+
+Flags: No effect
+
+Cycles: 1
+
+Example:
+  CLR R0    ; R0 = 0
+  INC R0    ; R0 = 1
+  INC R0    ; R0 = 2
+
+  ; R0 = 0xFFFF
+  INC R0    ; R0 = 0x0000 (wraparound)
+
+Encoding Example:
+  INC R10
+  → 0x800A → Bytes: 0x80 0x0A
+
+Notes:
+  - Fastest way to add 1
+  - No overflow flag
+  - Commonly used for loop counters
+  - Can increment PC or DP
+
+────────────────────────────────────────────────────────────────────────────
+
+DEC - Decrement Register
+────────────────────────────────────────────────────────────────────────────
+
+Opcode: 0x9
+Format: DEC RX
+Encoding: 1001 000000 XXXXXX
+
+Description:
+  Decrements the specified register by 1. Wraps around at 0x0000 to 0xFFFF.
+
+Operands:
+  RX (6-bit register): Target register (bits 5-0)
+
+Operation:
+  RX ← RX - 1
+
+Flags: No effect
+
+Cycles: 1
+
+Example:
+  ; R0 = 10
+  DEC R0    ; R0 = 9
+  DEC R0    ; R0 = 8
+
+  CLR R0    ; R0 = 0
+  DEC R0    ; R0 = 0xFFFF (wraparound)
+
+Encoding Example:
+  DEC R5
+  → 0x9005 → Bytes: 0x90 0x05
+
+Notes:
+  - Counterpart to INC
+  - Useful for countdown loops
+  - No underflow flag
+
+────────────────────────────────────────────────────────────────────────────
+
+ADD - Add Registers
+────────────────────────────────────────────────────────────────────────────
+
+Opcode: 0xA
+Format: ADD RX, RY
+Encoding: 1010 XXXXXX YYYYYY
+
+Description:
+  Adds RY to RX, storing result in RX. Performs 16-bit unsigned addition
+  with wraparound on overflow.
+
+Operands:
+  RX (6-bit register): Destination and left operand (bits 11-6)
+  RY (6-bit register): Source and right operand (bits 5-0)
+
+Operation:
+  RX ← RX + RY
+
+Flags: No effect
+
+Cycles: 1
+
+Example:
+  ; R0 = 100, R1 = 50
+  ADD R0, R1    ; R0 = 150, R1 = 50
+
+  ; R0 = 0xFFFF, R1 = 2
+  ADD R0, R1    ; R0 = 0x0001 (overflow wraps)
+
+Encoding Example:
+  ADD R3, R7
+  → 0xA0C7 → Bytes: 0xA0 0xC7
+
+Notes:
+  - Result always stored in first operand (RX)
+  - Second operand (RY) unchanged
+  - No carry flag
+  - To add immediate, must first load into register
+
+────────────────────────────────────────────────────────────────────────────
+
+SUB - Subtract Registers
+────────────────────────────────────────────────────────────────────────────
+
+Opcode: 0xB
+Format: SUB RX, RY
+Encoding: 1011 XXXXXX YYYYYY
+
+Description:
+  Subtracts RY from RX, storing result in RX. Performs 16-bit unsigned
+  subtraction with wraparound on underflow.
+
+Operands:
+  RX (6-bit register): Destination and left operand (bits 11-6)
+  RY (6-bit register): Source and right operand (bits 5-0)
+
+Operation:
+  RX ← RX - RY
+
+Flags: No effect
+
+Cycles: 1
+
+Example:
+  ; R0 = 100, R1 = 30
+  SUB R0, R1    ; R0 = 70, R1 = 30
+
+  ; R0 = 10, R1 = 20
+  SUB R0, R1    ; R0 = 0xFFF6 (underflow wraps)
+
+Encoding Example:
+  SUB R8, R2
+  → 0xB202 → Bytes: 0xB2 0x02
+
+Notes:
+  - Result stored in first operand (RX)
+  - Second operand (RY) unchanged
+  - No borrow flag
+  - Wraparound makes it suitable for modular arithmetic
+
+────────────────────────────────────────────────────────────────────────────
+
+MUL - Multiply Registers
+────────────────────────────────────────────────────────────────────────────
+
+Opcode: 0xC
+Format: MUL RX, RY
+Encoding: 1100 XXXXXX YYYYYY
+
+Description:
+  Multiplies RX by RY, storing lower 16 bits of result in RX. Upper 16 bits
+  of product are lost.
+
+Operands:
+  RX (6-bit register): Destination and left operand (bits 11-6)
+  RY (6-bit register): Source and right operand (bits 5-0)
+
+Operation:
+  temp ← RX × RY  (32-bit product)
+  RX ← temp & 0xFFFF  (lower 16 bits)
+
+Flags: No effect
+
+Cycles: 1
+
+Example:
+  ; R0 = 10, R1 = 5
+  MUL R0, R1    ; R0 = 50, R1 = 5
+
+  ; R0 = 1000, R1 = 100
+  MUL R0, R1    ; R0 = 34464 (100000 & 0xFFFF)
+                ; Upper bits discarded
+
+Encoding Example:
+  MUL R4, R9
+  → 0xC109 → Bytes: 0xC1 0x09
+
+Notes:
+  - Only lower 16 bits retained (overflow truncated)
+  - No way to access upper 16 bits of product
+  - Fast single-cycle multiplication
+  - Use with caution for large values
+
+────────────────────────────────────────────────────────────────────────────
+
+INTDIV - Integer Division
+────────────────────────────────────────────────────────────────────────────
+
+Opcode: 0xD
+Format: INTDIV RX, RY
+Encoding: 1101 XXXXXX YYYYYY
+
+Description:
+  Divides RX by RY, storing integer quotient in RX. Remainder is discarded.
+  Division by zero leaves RX unchanged.
+
+Operands:
+  RX (6-bit register): Destination and dividend (bits 11-6)
+  RY (6-bit register): Divisor (bits 5-0)
+
+Operation:
+  if (RY != 0)
+    RX ← RX / RY  (integer division)
+  else
+    RX ← RX  (unchanged)
+
+Flags: No effect
+
+Cycles: 1
+
+Example:
+  ; R0 = 100, R1 = 3
+  INTDIV R0, R1    ; R0 = 33, R1 = 3 (remainder lost)
+
+  ; R0 = 10, R1 = 20
+  INTDIV R0, R1    ; R0 = 0, R1 = 20
+
+  ; R0 = 50, R1 = 0
+  INTDIV R0, R1    ; R0 = 50 (division by zero: no change)
+
+Encoding Example:
+  INTDIV R15, R8
+  → 0xD3C8 → Bytes: 0xD3 0xC8
+
+Notes:
+  - No remainder available
+  - No divide-by-zero exception (silent no-op)
+  - Truncates toward zero
+  - Fast single-cycle division
+
+────────────────────────────────────────────────────────────────────────────
+
+HALT - Stop Execution
+────────────────────────────────────────────────────────────────────────────
+
+Opcode: 0xE
+Format: HALT
+Encoding: 1110 000000000000
+
+Description:
+  Stops PPU execution immediately. Transitions to HALTED state. No further
+  instructions execute until PPU is reset.
+
+Operands: None
+
+Operation:
+  PPU_State ← HALTED
+
+Flags: No effect
+
+Cycles: 1
+
+Example:
+  ; End of program
+  INC R0
+  INC R1
+  HALT    ; Stop here
+
+Encoding:
+  → 0xE000 → Bytes: 0xE0 0x00
+
+Notes:
+  - Preferred way to end microcode programs
+  - Registers retain their values after HALT
+  - Resume requires full PPU reset
+  - Used for debugging and program termination
+
+================================================================================
+
+5.2 PRESET F INSTRUCTIONS (0xF)
+
+────────────────────────────────────────────────────────────────────────────
+
+SETPOS - Set Position
+────────────────────────────────────────────────────────────────────────────
+
+Opcode: 0xF, Sub-op: 0x0
+Format: SETPOS RX, RY
+Encoding: 1111 0000 XXXX YYYY
+
+Description:
+  Sets current rendering position using 4-bit register IDs from register
+  banks. Used with SETREGBANK to access full 64-register set.
+
+Operands:
+  RX (4-bit register): X position register (bits 7-4)
+  RY (4-bit register): Y position register (bits 3-0)
+
+Operation:
+  full_regX ← (RegBankX << 4) | RX
+  full_regY ← (RegBankY << 4) | RY
+  Position_X ← Registers[full_regX]
+  Position_Y ← Registers[full_regY]
+
+Flags: No effect
+
+Cycles: 1
+
+Example:
+  ; Use registers R0 (X) and R1 (Y)
+  SETREGBANK 0, 0    ; Banks both 0
+  SETPOS R0, R1      ; Position from R0, R1
+
+  ; Use R16 (X) and R32 (Y)
+  SETREGBANK 1, 2    ; Bank X=1, Y=2
+  SETPOS R0, R0      ; Actually uses R16 and R32
+
+Encoding Example:
+  SETPOS R3, R5
+  → 0xF035 → Bytes: 0xF0 0x35
+
+Notes:
+  - Currently a placeholder (no rendering implemented)
+  - 4-bit encoding saves space for common operations
+  - Register banks extend 4-bit IDs to 6-bit
+
+────────────────────────────────────────────────────────────────────────────
+
+SETTILE - Set Tile ID
+────────────────────────────────────────────────────────────────────────────
+
+Opcode: 0xF, Sub-op: 0x1
+Format: SETTILE tile_id
+Encoding: 1111 0001 TTTTTTTT
+
+Description:
+  Sets the current tile ID for rendering operations. Tile data is expected
+  to be pre-loaded in memory.
+
+Operands:
+  tile_id (8-bit immediate): Tile identifier (0-255)
+
+Operation:
+  Current_Tile ← tile_id
+
+Flags: No effect
+
+Cycles: 1
+
+Example:
+  SETTILE 0      ; Select tile 0
+  SETTILE 42     ; Select tile 42
+  SETTILE 0xFF   ; Select tile 255
+
+Encoding Example:
+  SETTILE 0x2A
+  → 0xF12A → Bytes: 0xF1 0x2A
+
+Notes:
+  - Placeholder (tile rendering not implemented)
+  - Allows 256 unique tiles
+  - Tile data format TBD
+
+────────────────────────────────────────────────────────────────────────────
+
+SETDP - Set Data Pointer
+────────────────────────────────────────────────────────────────────────────
+
+Opcode: 0xF, Sub-op: 0x2
+Format: SETDP RX
+Encoding: 1111 0010 XXXXXX 00
+
+Description:
+  Copies value from register RX into the DP register (R63). Used to set up
+  memory access operations.
+
+Operands:
+  RX (6-bit register): Source register (bits 7-2)
+
+Operation:
+  DP (R63) ← RX
+
+Flags: No effect
+
+Cycles: 1
+
+Example:
+  CLR R5
+  ; Build address 0x1000 in R5 (increment 4096 times, or use other method)
+  SETDP R5      ; DP now points to 0x1000
+
+  ; Alternative using PC
+  CLR PC
+  INC PC  ; ... build address in PC
+  SETDP PC
+
+Encoding Example:
+  SETDP R10
+  → 0xF228 → Bytes: 0xF2 0x28
+
+Notes:
+  - Same as: SWAPREG DP, RX; SWAPREG DP, RX, but clearer intent
+  - DP is just R63, but SETDP is more semantic
+  - Bits 1-0 of operand are always 00
+
+────────────────────────────────────────────────────────────────────────────
+
+MOVDP - Move Register to (DP)
+────────────────────────────────────────────────────────────────────────────
+
+Opcode: 0xF, Sub-op: 0x3
+Format: MOVDP RX
+Encoding: 1111 0011 XXXXXX 00
+
+Description:
+  Writes the 16-bit value from register RX to memory at the address stored
+  in DP. Stores in big-endian format.
+
+Operands:
+  RX (6-bit register): Source register (bits 7-2)
+
+Operation:
+  addr ← DP
+  if (addr < 65535)
+    Memory[addr] ← RX[15:8]    (MSB)
+    Memory[addr+1] ← RX[7:0]   (LSB)
+
+Flags: No effect
+
+Cycles: 1
+
+Example:
+  ; Write R5 to address 0x2000
+  CLR R10
+  ; ... build 0x2000 in R10 ...
+  SETDP R10      ; DP = 0x2000
+  MOVDP R5       ; Memory[0x2000-0x2001] = R5
+
+Encoding Example:
+  MOVDP R3
+  → 0xF30C → Bytes: 0xF3 0x0C
+
+Notes:
+  - Writes two bytes (16-bit word)
+  - DP not auto-incremented (must manually update)
+  - Bounds check prevents write at address 0xFFFF
+
+────────────────────────────────────────────────────────────────────────────
+
+SETRENDMOD - Set Render Mode
+────────────────────────────────────────────────────────────────────────────
+
+Opcode: 0xF, Sub-op: 0x4
+Format: SETRENDMOD mode
+Encoding: 1111 0100 M 0000000
+
+Description:
+  Sets the rendering color mode. Mode 0 is 16-bit RGBA (5-5-5-1), mode 1
+  is 32-bit RGBA (8-8-8-8).
+
+Operands:
+  mode (1-bit immediate): 0=16-bit RGBA, 1=32-bit RGBA (bit 7)
+
+Operation:
+  if (mode == 0)
+    Render_Mode ← RGBA16
+  else
+    Render_Mode ← RGBA32
+
+Flags: No effect
+
+Cycles: 1
+
+Example:
+  SETRENDMOD 0    ; 16-bit mode (5-5-5-1)
+  SETRENDMOD 1    ; 32-bit mode (8-8-8-8)
+
+Encoding Examples:
+  SETRENDMOD 0 → 0xF400 → Bytes: 0xF4 0x00
+  SETRENDMOD 1 → 0xF480 → Bytes: 0xF4 0x80
+
+Notes:
+  - Placeholder (rendering not implemented)
+  - Affects palette size and color depth
+  - Mode persists until changed
+
+────────────────────────────────────────────────────────────────────────────
+
+PALETTE16 - Load 16-Color Palette
+────────────────────────────────────────────────────────────────────────────
+
+Opcode: 0xF, Sub-op: 0x5
+Format: PALETTE16
+Encoding: 1111 0101 00000000
+
+Description:
+  Loads 16-color palette from memory address stored in DP. Size depends on
+  render mode: 32 bytes (16-bit mode) or 64 bytes (32-bit mode).
+
+Operands: None (uses DP)
+
+Operation:
+  addr ← DP
+  if (Render_Mode == RGBA16)
+    Load 32 bytes from Memory[addr] into 16-color palette
+  else
+    Load 64 bytes from Memory[addr] into 16-color palette
+
+Flags: No effect
+
+Cycles: 1
+
+Example:
+  ; Palette data at 0x3000
+  CLR R0
+  ; ... build 0x3000 in R0 ...
+  SETDP R0
+  PALETTE16    ; Load 16 colors from 0x3000
+
+Encoding:
+  → 0xF500 → Bytes: 0xF5 0x00
+
+Notes:
+  - Placeholder (palette system not implemented)
+  - DP not modified after load
+  - Data format: consecutive color values
+
+────────────────────────────────────────────────────────────────────────────
+
+PALETTE256 - Load 256-Color Palette
+────────────────────────────────────────────────────────────────────────────
+
+Opcode: 0xF, Sub-op: 0x6
+Format: PALETTE256
+Encoding: 1111 0110 00000000
+
+Description:
+  Loads 256-color palette from memory address stored in DP. Size depends on
+  render mode: 512 bytes (16-bit mode) or 1024 bytes (32-bit mode).
+
+Operands: None (uses DP)
+
+Operation:
+  addr ← DP
+  if (Render_Mode == RGBA16)
+    Load 512 bytes from Memory[addr] into 256-color palette
+  else
+    Load 1024 bytes from Memory[addr] into 256-color palette
+
+Flags: No effect
+
+Cycles: 1
+
+Example:
+  ; Palette data at 0x4000
+  CLR R0
+  ; ... build 0x4000 in R0 ...
+  SETDP R0
+  PALETTE256   ; Load 256 colors from 0x4000
+
+Encoding:
+  → 0xF600 → Bytes: 0xF6 0x00
+
+Notes:
+  - Placeholder (palette system not implemented)
+  - Requires significant memory space
+  - DP not modified after load
+
+────────────────────────────────────────────────────────────────────────────
+
+JMR - Jump Relative
+────────────────────────────────────────────────────────────────────────────
+
+Opcode: 0xF, Sub-op: 0x7
+Format: JMR
+Encoding: 1111 0111 00000000
+
+Description:
+  Unconditional jump to address stored in PC register (R62). Similar to
+  conditional jumps but always executes.
+
+Operands: None (uses PC)
+
+Operation:
+  Execution_Pointer ← PC
+
+Flags: No effect
+
+Cycles: 1
+
+Example:
+  CLR PC
+  ; Build target address in PC
+  JMR    ; Jump to address in PC
+
+Encoding:
+  → 0xF700 → Bytes: 0xF7 0x00
+
+Notes:
+  - Unconditional version of JMZ/JMG/etc
+  - PC value at execution time is used
+  - Useful for computed jumps
+
+────────────────────────────────────────────────────────────────────────────
+
+MOV - Move from (DP) to Register
+────────────────────────────────────────────────────────────────────────────
+
+Opcode: 0xF, Sub-op: 0x8
+Format: MOV RX
+Encoding: 1111 1000 XXXXXX 00
+
+Description:
+  Reads 16-bit value from memory at address stored in DP and loads it into
+  register RX. Reads in big-endian format.
+
+Operands:
+  RX (6-bit register): Destination register (bits 7-2)
+
+Operation:
+  addr ← DP
+  if (addr < 65535)
+    RX[15:8] ← Memory[addr]      (MSB)
+    RX[7:0] ← Memory[addr+1]     (LSB)
+
+Flags: No effect
+
+Cycles: 1
+
+Example:
+  ; Read word from address 0x2000 into R7
+  CLR R10
+  ; ... build 0x2000 in R10 ...
+  SETDP R10      ; DP = 0x2000
+  MOV R7         ; R7 = Memory[0x2000-0x2001]
+
+Encoding Example:
+  MOV R12
+  → 0xF830 → Bytes: 0xF8 0x30
+
+Notes:
+  - Complement of MOVDP
+  - Reads 16-bit word (2 bytes)
+  - DP not auto-incremented
+  - Bounds check at 0xFFFF
+
+────────────────────────────────────────────────────────────────────────────
+
+SETREGBANK - Set Register Banks
+────────────────────────────────────────────────────────────────────────────
+
+Opcode: 0xF, Sub-op: 0x9
+Format: SETREGBANK bank_x, bank_y
+Encoding: 1111 1001 XX YY 0000
+
+Description:
+  Sets the register bank selectors used by SETPOS instruction. Banks extend
+  4-bit register IDs to full 6-bit register numbers.
+
+Operands:
+  bank_x (2-bit immediate): X register bank (bits 7-6)
+  bank_y (2-bit immediate): Y register bank (bits 5-4)
+
+Operation:
+  RegBankX ← bank_x
+  RegBankY ← bank_y
+
+Flags: No effect
+
+Cycles: 1
+
+Example:
+  SETREGBANK 0, 0    ; Both banks = 0 (R0-R15)
+  SETREGBANK 1, 1    ; Both banks = 1 (R16-R31)
+  SETREGBANK 2, 3    ; X bank = 2 (R32-R47), Y bank = 3 (R48-R63)
+
+Encoding Example:
+  SETREGBANK 1, 2
+  → 0xF960 → Bytes: 0xF9 0x60
+
+Bank Mapping:
+  Bank 0: Registers R0  - R15  (0x00 - 0x0F)
+  Bank 1: Registers R16 - R31  (0x10 - 0x1F)
+  Bank 2: Registers R32 - R47  (0x20 - 0x2F)
+  Bank 3: Registers R48 - R63  (0x30 - 0x3F)
+
+Notes:
+  - Only affects SETPOS instruction
+  - Allows compact 4-bit register encoding
+  - Persistent until changed
+
+────────────────────────────────────────────────────────────────────────────
+
+CLRTILE - Clear Tile
+────────────────────────────────────────────────────────────────────────────
+
+Opcode: 0xF, Sub-op: 0xA
+Format: CLRTILE
+Encoding: 1111 1010 00000000
+
+Description:
+  Clears the currently selected tile to transparent/background color.
+
+Operands: None
+
+Operation:
+  Clear_Current_Tile()
+
+Flags: No effect
+
+Cycles: 1
+
+Example:
+  SETTILE 5
+  CLRTILE    ; Tile 5 now cleared
+
+Encoding:
+  → 0xFA00 → Bytes: 0xFA 0x00
+
+Notes:
+  - Placeholder (tile system not implemented)
+  - Affects tile selected by SETTILE
+
+────────────────────────────────────────────────────────────────────────────
+
+CLRPALETTE - Clear Palette
+────────────────────────────────────────────────────────────────────────────
+
+Opcode: 0xF, Sub-op: 0xB
+Format: CLRPALETTE
+Encoding: 1111 1011 00000000
+
+Description:
+  Clears the entire palette to black/transparent.
+
+Operands: None
+
+Operation:
+  Clear_Palette()
+
+Flags: No effect
+
+Cycles: 1
+
+Example:
+  CLRPALETTE    ; All palette entries = 0
+
+Encoding:
+  → 0xFB00 → Bytes: 0xFB 0x00
+
+Notes:
+  - Placeholder (palette system not implemented)
+  - Clears both 16-color and 256-color palettes
+
+────────────────────────────────────────────────────────────────────────────
+
+STRTDEFTILE - Start Defining Tile
+────────────────────────────────────────────────────────────────────────────
+
+Opcode: 0xF, Sub-op: 0xC
+Format: STRTDEFTILE
+Encoding: 1111 1100 00000000
+
+Description:
+  Begins a tile definition sequence. Subsequent operations modify the current
+  tile until ENDDEFTILE is called.
+
+Operands: None
+
+Operation:
+  Tile_Definition_Mode ← Active
+
+Flags: No effect
+
+Cycles: 1
+
+Example:
+  SETTILE 10
+  STRTDEFTILE
+  ; ... tile data operations ...
+  ENDDEFTILE
+
+Encoding:
+  → 0xFC00 → Bytes: 0xFC 0x00
+
+Notes:
+  - Placeholder (tile system not implemented)
+  - Must be paired with ENDDEFTILE
+
+────────────────────────────────────────────────────────────────────────────
+
+ENDDEFTILE - End Defining Tile
+────────────────────────────────────────────────────────────────────────────
+
+Opcode: 0xF, Sub-op: 0xD
+Format: ENDDEFTILE
+Encoding: 1111 1101 00000000
+
+Description:
+  Ends a tile definition sequence started by STRTDEFTILE. Finalizes the
+  tile data.
+
+Operands: None
+
+Operation:
+  Tile_Definition_Mode ← Inactive
+
+Flags: No effect
+
+Cycles: 1
+
+Example:
+  STRTDEFTILE
+  ; ... tile data operations ...
+  ENDDEFTILE
+
+Encoding:
+  → 0xFD00 → Bytes: 0xFD 0x00
+
+Notes:
+  - Placeholder (tile system not implemented)
+  - Must be paired with STRTDEFTILE
+
+────────────────────────────────────────────────────────────────────────────
+
+CALL - Call Function
+────────────────────────────────────────────────────────────────────────────
+
+Opcode: 0xF, Sub-op: 0xE
+Format: CALL function_id
+Encoding: 1111 1110 FFFFFFFF
+
+Description:
+  Calls function at specified ID. Requires function defined with DEFCALL.
+  Currently a placeholder - no call stack implemented.
+
+Operands:
+  function_id (8-bit immediate): Function identifier (0-255)
+
+Operation:
+  ; Placeholder - no operation currently
+  ; Future: Push return address, jump to function
+
+Flags: No effect
+
+Cycles: 1
+
+Example:
+  CALL 5    ; Call function 5
+
+  ; Elsewhere:
+  DEFCALL 5
+  INC R0
+  ENDDEFCALL
+
+Encoding Example:
+  CALL 0x10
+  → 0xFE10 → Bytes: 0xFE 0x10
+
+Notes:
+  - Not implemented (placeholder)
+  - No call stack or return mechanism yet
+  - Future enhancement
+
+────────────────────────────────────────────────────────────────────────────
+
+GBLS - Get Blank Status
+────────────────────────────────────────────────────────────────────────────
+
+Opcode: 0xF, Sub-op: 0xF
+Format: GBLS RX
+Encoding: 1111 1111 XXXXXX 00
+
+Description:
+  Reads the current blanking status and stores in register RX. Returns 0 for
+  VBlank, 1 for HBlank, or 65535 (0xFFFF) for active rendering.
+
+Operands:
+  RX (6-bit register): Destination register (bits 7-2)
+
+Operation:
+  if (VBlank_Active)
+    RX ← 0
+  else if (HBlank_Active)
+    RX ← 1
+  else
+    RX ← 65535
+
+Flags: No effect
+
+Cycles: 1
+
+Example:
+  GBLS R0
+  ; R0 now contains:
+  ;   0 if in VBlank
+  ;   1 if in HBlank
+  ;   65535 if actively rendering
+
+Wait for VBlank:
+  wait_vblank:
+    GBLS R0
+    CMP R0, R1    ; R1 = 0
+    JNZ
+    ; Now in VBlank
+
+Encoding Example:
+  GBLS R8
+  → 0xFF20 → Bytes: 0xFF 0x20
+
+Notes:
+  - Essential for synchronization
+  - Check before doing heavy rendering work
+  - VBlank provides ~21,425 cycles
+  - HBlank provides ~514 cycles per scanline
+
+================================================================================
+
+6. PROGRAMMING MODEL
+
+6.1 REGISTER USAGE CONVENTIONS
+
+While all registers are general-purpose, the following conventions are
+recommended for code consistency:
+
+R0-R7:   Temporary values, expression evaluation
+R8-R15:  Function arguments and return values
+R16-R23: Local variables
+R24-R31: Loop counters and indices
+R32-R47: Long-lived data, tables
+R48-R61: Free for application use
+R62 (PC): Jump target address
+R63 (DP): Memory access pointer
+
+These are suggestions only - the hardware enforces no restrictions.
+
+6.2 STACK MANAGEMENT
+
+The PPU has no hardware stack. Software must implement stack management if
+needed. Suggested approach:
+
+1. Reserve a memory region for stack (e.g., 0xF000-0xFFFF)
+2. Use a dedicated register as stack pointer (e.g., R48)
+3. Implement push/pop using DP and MOV/MOVDP
+
+Example stack push (R0 to stack):
+  ; Assuming R48 is stack pointer, initially 0xF000
+  SETDP R48      ; DP = stack pointer
+  MOVDP R0       ; Write R0 to stack
+  INC R48        ; Move stack pointer
+  INC R48        ; (2 bytes per word)
+
+Example stack pop (stack to R0):
+  DEC R48        ; Move stack pointer back
+  DEC R48
+  SETDP R48      ; DP = stack pointer
+  MOV R0         ; Read from stack to R0
+
+6.3 FUNCTION CALLS
+
+Without hardware support, function calls require manual implementation:
+
+Method 1: Inline code (no call overhead)
+  ; Just write code inline - simplest approach
+
+Method 2: Manual return address (using registers)
+  ; Caller:
+  CLR R8         ; R8 = return address
+  ; ... build return address in R8 ...
+  CLR PC
+  ; ... build function address in PC ...
+  JMR            ; Jump to function
+  return_here:
+
+  ; Callee:
+  ; ... do work ...
+  SWAPREG PC, R8  ; PC = return address
+  JMR             ; Jump back
+
+Method 3: Stack-based (if stack implemented)
+  ; Caller:
+  ; Push return address to stack
+  ; Jump to function
+
+  ; Callee:
+  ; Do work
+  ; Pop return address
+  ; Jump back
+
+6.4 INTERRUPT HANDLING
+
+The PPU supports two interrupt vectors:
+
+VBlank Interrupt:
+  - Set via setVBlankInterrupt() before start
+  - Fired when display enters VBlank period
+  - Microcode should poll via GBLS
+
+HBlank Interrupt:
+  - Set via setHBlankInterrupt() before start
+  - Fired when display enters HBlank period
+  - Microcode should poll via GBLS
+
+Polling pattern:
+  main_loop:
+    GBLS R0
+    CMP R0, R1    ; R1 = 0 (VBlank)
+    JMZ vblank_handler
+
+    ; Normal rendering work
+    ; ...
+
+    CLR PC
+    ; ... set PC to main_loop ...
+    JMR
+
+  vblank_handler:
+    ; Safe to do heavy work here
+    ; 21,425 cycles available
+    ; ...
+    CLR PC
+    ; ... set PC to main_loop ...
+    JMR
+
+================================================================================
+
+7. INITIALIZATION AND BOOT SEQUENCE
+
+7.1 POWER-ON STATE
+
+On power-up or reset, the PPU initializes to:
+
+Registers:      All 64 registers set to 0x0000
+Memory:         Undefined (contains previous data)
+Execution Ptr:  0x0000
+Flags:          Zero=0, Greater=0
+State:          WAITING_FOR_INTERRUPTS
+Banks:          RegBankX=0, RegBankY=0
+Render Mode:    RGBA16
+
+7.2 INTERRUPT VECTOR SETUP
+
+Before the PPU can start, interrupt addresses must be configured:
+
+Step 1: Set VBlank interrupt address
+  C++ API: ppu.setVBlankInterrupt(address);
+
+Step 2: Set HBlank interrupt address
+  C++ API: ppu.setHBlankInterrupt(address);
+
+Note: Currently these are not used by the microcode (polling via GBLS is
+used instead). This is for future hardware interrupt support.
+
+7.3 BOOT ROM BEHAVIOR
+
+After interrupt vectors are set, the PPU enters RUNNING_BOOT_ROM state.
+Currently this immediately transitions to WAITING_FOR_START without any
+boot animation.
+
+Future implementation may display logo or branding during this phase.
+
+7.4 TRANSITION TO USER CODE
+
+To begin microcode execution:
+
+C++ API: ppu.start();
+
+This transitions from WAITING_FOR_START to RUNNING state. The PPU begins
+executing instructions from memory address 0x0000.
+
+Complete initialization sequence:
+
+  ZeroPoint::PPU ppu;
+
+  // Load microcode
+  ppu.loadMicrocode(code, length, 0);
+
+  // Set interrupt vectors (required, even if not used)
+  ppu.setVBlankInterrupt(0x0000);
+  ppu.setHBlankInterrupt(0x0000);
+
+  // Start execution
+  ppu.start();
+
+  // Run cycles
+  while (ppu.getState() == PPUState::Running) {
+    ppu.tick();
+  }
+
+================================================================================
+
+8. TIMING AND PERFORMANCE
+
+8.1 INSTRUCTION CYCLE COUNTS
+
+Every instruction executes in exactly 1 cycle. No exceptions.
+
+This includes:
+- All arithmetic operations (ADD, SUB, MUL, INTDIV)
+- Memory access (MOV, MOVDP)
+- Jumps (taken or not taken)
+- All Preset F instructions
+
+8.2 MEMORY ACCESS TIMING
+
+Memory reads and writes complete within the same cycle. There is no cache,
+no wait states, and no memory hierarchy.
+
+Read timing:  Same cycle as MOV instruction
+Write timing: Same cycle as MOVDP instruction
+
+8.3 PERFORMANCE CALCULATIONS
+
+At 64 MHz:
+
+Instructions per second: 64,000,000
+Instructions per frame (60 Hz): 1,066,666
+Instructions per scanline (261): 4,096
+Instructions during VBlank (5 scanlines): 20,480
+Instructions during HBlank (per line): ~500
+
+Example: Clearing 256 bytes of memory
+
+  ; R0 = counter (0 to 256)
+  ; R1 = target (256)
+  ; R2 = zero value
+  ; R3 = base address
+
+  CLR R0
+  CLR R1
+  ; Build R1 = 256 (256 INC operations = 256 cycles)
+  CLR R2
+  CLR R3
+  ; Build R3 = base address
+  SETDP R3
+
+  loop:
+    MOVDP R2     ; Write zero (1 cycle)
+    INC R3       ; Next address (1 cycle)
+    SETDP R3     ; Update DP (1 cycle)
+    INC R0       ; Increment counter (1 cycle)
+    CMP R0, R1   ; Check done (1 cycle)
+    JNG loop     ; Loop if not done (1 cycle)
+
+  ; Total per iteration: 6 cycles
+  ; 256 iterations: 1536 cycles
+  ; Plus setup: ~270 cycles
+  ; Total: ~1806 cycles
+  ; At 64 MHz: 28.2 microseconds
+
+================================================================================
+
+9. GRAPHICS SUBSYSTEM
+
+9.1 TILE SYSTEM
+
+The PPU is designed around a tile-based rendering system. While not fully
+implemented in current hardware, the microcode instruction set provides
+operations for:
+
+Tile Selection: SETTILE
+Tile Definition: STRTDEFTILE, ENDDEFTILE
+Tile Clearing: CLRTILE
+Position Setting: SETPOS
+
+Tiles are expected to be 8×8 or 16×16 pixel blocks (TBD based on mode).
+
+9.2 PALETTE MANAGEMENT
+
+Two palette modes are supported:
+
+16-Color Mode:
+  - 16 palette entries
+  - 32 bytes (16-bit color) or 64 bytes (32-bit color)
+  - Loaded via PALETTE16
+
+256-Color Mode:
+  - 256 palette entries
+  - 512 bytes (16-bit color) or 1024 bytes (32-bit color)
+  - Loaded via PALETTE256
+
+Palette Clearing:
+  - CLRPALETTE sets all entries to 0
+
+9.3 RENDER MODES
+
+RGBA16 (16-bit mode):
+  - 5 bits red, 5 bits green, 5 bits blue, 1 bit alpha
+  - Format: BBBBBGGGGGRRRRRA (MSB to LSB)
+  - Bit 0 is alpha (1=opaque, 0=transparent)
+  - 32,768 possible colors
+  - Compact memory usage
+
+RGBA32 (32-bit mode):
+  - 8 bits red, 8 bits green, 8 bits blue, 8 bits alpha
+  - Standard RGBA format
+  - 16.7 million colors plus alpha
+  - Full color depth
+
+Mode Selection:
+  SETRENDMOD 0    ; 16-bit mode
+  SETRENDMOD 1    ; 32-bit mode
+
+9.4 BLANK STATUS DETECTION
+
+The GBLS instruction provides synchronization with the display controller:
+
+VBlank (value 0):
+  - 5 scanlines (lines 257-260 plus preline)
+  - 21,425 cycles available
+  - Safe for heavy processing
+  - Palette updates, DMA transfers, etc.
+
+HBlank (value 1):
+  - 84 pixels per scanline
+  - ~514 cycles per line
+  - Can do small updates
+  - Position increments, tile changes
+
+Active Rendering (value 65535):
+  - 256 visible pixels per scanline
+  - Avoid heavy work during this period
+  - Monitor only, minimal processing
+
+Synchronization example:
+
+  ; Wait for VBlank
+  wait:
+    GBLS R0
+    ; R0 = 0 when in VBlank
+    ; R0 = 1 when in HBlank
+    ; R0 = 65535 when rendering
+    CMP R0, R1    ; R1 = 0
+    JNZ wait
+
+  ; Now in VBlank - safe to update
+  PALETTE16
+  ; ... other updates ...
+
+================================================================================
+
+10. ASSEMBLY LANGUAGE
+
+10.1 SYNTAX RULES
+
+Instructions:
+  - One instruction per line
+  - Mnemonic followed by operands
+  - Operands separated by commas or spaces
+  - Case-insensitive (converted to uppercase)
+
+Example:
+  INC R0
+  ADD R1, R2
+  cmp r3, r4    ; Also valid
+
+Whitespace:
+  - Leading/trailing whitespace ignored
+  - Multiple spaces/tabs treated as one separator
+
+Blank lines:
+  - Allowed, ignored
+
+10.2 LABEL DEFINITIONS
+
+Labels mark code locations for jumps and references.
+
+Syntax:
+  label_name:
+    instruction
+
+Label names:
+  - Start with letter or underscore
+  - Contain letters, numbers, underscores
+  - Case-sensitive
+  - No length limit (assembler dependent)
+
+Example:
+  start:
+    CLR R0
+
+  loop:
+    INC R0
+    CMP R0, R1
+    JNG loop     ; Reference to label
+
+  done:
+    HALT
+
+Label on same line as instruction:
+  loop: INC R0
+
+Multiple labels:
+  label1:
+  label2:
+  label3:
+    HALT
+
+10.3 IMMEDIATE VALUE FORMATS
+
+Decimal:
+  42
+  255
+  1000
+
+Hexadecimal (prefix 0x):
+  0x2A
+  0xFF
+  0x3E8
+
+Binary (prefix 0b):
+  0b00101010
+  0b11111111
+  0b11111000
+
+All formats can be used interchangeably:
+  SETTILE 42      ; Decimal
+  SETTILE 0x2A    ; Hexadecimal (same value)
+  SETTILE 0b00101010  ; Binary (same value)
+
+10.4 COMMENTS
+
+Single-line comments start with semicolon:
+
+  ; This is a comment
+  INC R0    ; Increment counter
+
+Comments can appear:
+  - On their own line
+  - After an instruction
+  - After a label
+
+Everything from semicolon to end of line is ignored.
+
+Example:
+  ; Initialize registers
+  CLR R0    ; Counter
+  CLR R1    ; Target value
+
+  loop:     ; Main loop starts here
+    INC R0  ; Increment counter
+    ; Check if done
+    CMP R0, R1
+    JNG loop  ; Loop if not done
+
+================================================================================
+
+11. PROGRAMMING TECHNIQUES
+
+11.1 LOOPS AND ITERATION
+
+Basic counted loop:
+
+  ; Count from 0 to 10
+  CLR R0          ; Counter
+  CLR R1
+  ; Build R1 = 10
+  INC R1
+  INC R1
+  ; ... (8 more times)
+
+  ; Build PC = loop address
+  CLR PC
+  ; ... build address ...
+
+  loop:
+    ; Do work here
+    INC R0
+    CMP R0, R1
+    JNG loop
+
+  ; After loop, R0 = 11
+
+Countdown loop:
+
+  CLR R0
+  ; Build R0 = 10
+
+  CLR PC
+  ; ... build loop address ...
+
+  loop:
+    ; Do work here
+    DEC R0
+    ; Check if R0 > 0
+    CLR R1    ; R1 = 0
+    CMP R0, R1
+    JMG loop
+
+  ; After loop, R0 = 0
+
+Infinite loop:
+
+  CLR PC
+  ; Build PC = loop address
+
+  loop:
+    ; Do work
+    JMR    ; Always jump back
+
+11.2 CONDITIONAL EXECUTION
+
+If-then:
+
+  ; If R0 == R1 then ...
+  CMP R0, R1
+  JNZ skip
+
+  ; Then branch
+  INC R2
+
+  skip:
+  ; Continue
+
+If-then-else:
+
+  CMP R0, R1
+  JNZ else_branch
+
+  ; Then branch
+  INC R2
+  ; Skip else
+  CLR PC
+  ; ... build end address ...
+  JMR
+
+  else_branch:
+  ; Else branch
+  INC R3
+
+  end:
+  ; Continue
+
+Multiple conditions (AND):
+
+  ; If (R0 > R1) AND (R2 > R3) then ...
+  CMP R0, R1
+  JNG skip    ; First condition failed
+
+  CMP R2, R3
+  JNG skip    ; Second condition failed
+
+  ; Both conditions true
+  INC R4
+
+  skip:
+  ; Continue
+
+11.3 TABLE LOOKUPS
+
+Lookup value from table in memory:
+
+  ; R0 = index
+  ; R1 = table base address
+  ; R2 = result
+
+  ; Calculate address: base + (index * 2)
+  SETDP R1     ; DP = base
+
+  ; Add offset (R0 * 2)
+  ADD R1, R0
+  ADD R1, R0   ; R1 = base + index * 2
+
+  SETDP R1     ; DP = table[index]
+  MOV R2       ; R2 = value
+
+11.4 FIXED-POINT ARITHMETIC
+
+The PPU has no floating-point support. Use fixed-point instead.
+
+Example: 8.8 fixed point (8 integer bits, 8 fractional bits)
+
+Represent 10.5:
+  10.5 * 256 = 2688 = 0x0A80
+
+Multiplication:
+  ; R0 = 10.5 (0x0A80)
+  ; R1 = 2.0 (0x0200)
+  MUL R0, R1    ; R0 = 0x1500 (but this is wrong scale)
+
+  ; Need to shift right 8 bits (divide by 256)
+  ; Use lookup table or iterative shifting
+
+Division:
+  ; R0 = dividend
+  ; R1 = divisor
+  INTDIV R0, R1
+
+  ; For fractional result, pre-shift dividend
+  ; R0 = R0 * 256 (shift left 8)
+  ; Then divide
+
+11.5 MEMORY ACCESS PATTERNS
+
+Sequential writes:
+
+  ; Write 10 values starting at 0x1000
+  CLR R0       ; Counter
+  CLR R1       ; Target (10)
+  ; ... build R1 = 10 ...
+
+  CLR R2       ; Address
+  ; ... build R2 = 0x1000 ...
+
+  CLR R3       ; Value to write
+
+  CLR PC
+  ; ... build loop address ...
+
+  loop:
+    SETDP R2
+    MOVDP R3
+
+    INC R2     ; Next address
+    INC R2     ; (16-bit = 2 bytes)
+    INC R3     ; Next value
+    INC R0     ; Counter
+
+    CMP R0, R1
+    JNG loop
+
+Sequential reads:
+
+  ; Read 10 values starting at 0x1000
+  CLR R0       ; Counter
+  CLR R1       ; Target (10)
+  ; ... build R1 = 10 ...
+
+  CLR R2       ; Address
+  ; ... build R2 = 0x1000 ...
+
+  CLR PC
+  ; ... build loop address ...
+
+  loop:
+    SETDP R2
+    MOV R3     ; Read to R3
+
+    ; Process R3 here
+
+    INC R2     ; Next address
+    INC R2
+    INC R0     ; Counter
+
+    CMP R0, R1
+    JNG loop
+
+================================================================================
+
+12. EXAMPLE PROGRAMS
+
+12.1 HELLO WORLD (REGISTER MANIPULATION)
+
+; Set R0 = "Hello" (0x48656C6C = ASCII "Hell", truncated for 16-bit)
+; In practice, just demonstrate register operations
+
+  CLR R0
+  CLR R1
+  CLR R2
+
+  ; R0 = 72 (ASCII 'H')
+  INC R0
+  INC R0
+  ; ... (70 more times) ...
+
+  ; R1 = 101 (ASCII 'e')
+  ; ... build via INC ...
+
+  ; R2 = 108 (ASCII 'l')
+  ; ... build via INC ...
+
+  HALT
+
+12.2 LOOP COUNTER
+
+; Count from 0 to 5
+
+  CLR R0          ; Counter
+  CLR R1          ; Target = 5
+
+  ; Build R1 = 5
+  INC R1
+  INC R1
+  INC R1
+  INC R1
+  INC R1
+
+  ; Build PC = 16 (loop address)
+  CLR PC
+  INC PC
+  INC PC
+  ; ... (14 more times) ...
+
+  loop:
+    INC R0
+    CMP R0, R1
+    JNG
+
+  HALT
+
+12.3 MEMORY COPY
+
+; Copy 16-bit word from address 0x1000 to 0x2000
+
+  CLR R0
+  ; Build R0 = 0x1000 (source)
+  ; ... 4096 INC operations ...
+
+  CLR R1
+  ; Build R1 = 0x2000 (dest)
+  ; ... 8192 INC operations ...
+
+  ; Read from source
+  SETDP R0
+  MOV R2        ; R2 = value at 0x1000
+
+  ; Write to dest
+  SETDP R1
+  MOVDP R2      ; Value now at 0x2000
+
+  HALT
+
+12.4 MULTIPLICATION TABLE
+
+; Generate multiplication table for 5
+; Results stored starting at 0x3000
+
+  CLR R0       ; Multiplier (5)
+  INC R0
+  INC R0
+  INC R0
+  INC R0
+  INC R0
+
+  CLR R1       ; Index (0 to 10)
+  CLR R2       ; Limit (10)
+  ; Build R2 = 10
+
+  CLR R3       ; Base address (0x3000)
+  ; Build R3 = 0x3000
+
+  CLR PC
+  ; Build PC = loop address
+
+  loop:
+    ; Calculate R0 * R1
+    CLR R4
+    ADD R4, R0
+    MUL R4, R1    ; R4 = 5 * index
+
+    ; Store result
+    SETDP R3
+    MOVDP R4
+
+    ; Next position
+    INC R3
+    INC R3       ; 2 bytes per word
+    INC R1       ; Next index
+
+    CMP R1, R2
+    JNG loop
+
+  HALT
+
+12.5 VBLANK SYNCHRONIZATION
+
+; Wait for VBlank, then update palette
+
+  CLR R0       ; For GBLS result
+  CLR R1       ; Target = 0 (VBlank)
+
+  CLR PC
+  ; Build PC = wait_loop address
+
+  wait_loop:
+    GBLS R0
+    CMP R0, R1
+    JNZ      ; Not VBlank yet, loop
+
+  ; Now in VBlank - safe to update
+
+  CLR R2
+  ; Build R2 = palette address
+  SETDP R2
+  PALETTE16    ; Load palette
+
+  ; Continue with rendering
+  HALT
+
+================================================================================
+
+13. BINARY FORMAT
+
+13.1 FILE LAYOUT
+
+Assembled microcode is stored as raw binary, 16-bit big-endian:
+
+Offset  Size    Description
+──────────────────────────────────────────────────────────────
+0x0000  2       Instruction 0 (big-endian)
+0x0002  2       Instruction 1
+0x0004  2       Instruction 2
+...
+0xNNNN  2       Instruction N
+
+No header, no metadata, just raw instruction stream.
+
+13.2 LOADING PROCEDURES
+
+C++ API:
+
+  uint8_t code[] = {0x30, 0x00, 0x80, 0x00, ...};
+  ppu.loadMicrocode(code, sizeof(code), offset);
+
+Parameters:
+  - code: Byte array of assembled instructions
+  - length: Number of bytes
+  - offset: Memory address to load at (default 0)
+
+The microcode is copied into PPU memory at the specified offset.
+
+13.3 MEMORY MAPPING
+
+After loading at offset 0x0000:
+
+Memory Address    Content
+────────────────────────────────────────────
+0x0000           Byte 0 of instruction 0 (MSB)
+0x0001           Byte 1 of instruction 0 (LSB)
+0x0002           Byte 0 of instruction 1 (MSB)
+0x0003           Byte 1 of instruction 1 (LSB)
+...
+
+After loading at offset 0x0100:
+
+Memory Address    Content
+────────────────────────────────────────────
+0x0100           Byte 0 of instruction 0 (MSB)
+0x0101           Byte 1 of instruction 0 (LSB)
+0x0102           Byte 0 of instruction 1 (MSB)
+0x0103           Byte 1 of instruction 1 (LSB)
+...
+
+================================================================================
+
+14. DEBUGGING
+
+14.1 COMMON ERRORS
+
+WRONG JUMP TARGET:
+  Symptom: Jumps go to wrong location or crash
+  Cause: PC register not set correctly
+  Fix: Manually calculate target address and verify PC value
+
+MEMORY ACCESS OUT OF BOUNDS:
+  Symptom: Reads/writes fail or corrupt data
+  Cause: DP pointing to invalid address
+  Fix: Verify DP value before MOV/MOVDP
+
+INFINITE LOOP:
+  Symptom: Program never halts
+  Cause: Loop condition never becomes false
+  Fix: Check comparison logic and counter updates
+
+FLAGS NOT CLEARED:
+  Symptom: Conditional jumps behave unexpectedly
+  Cause: Flags from previous comparison still set
+  Fix: Use CLRF before new comparison sequence
+
+REGISTER CORRUPTION:
+  Symptom: Register values change unexpectedly
+  Cause: Reusing register without saving
+  Fix: Use different registers or save/restore via memory
+
+14.2 REGISTER INSPECTION
+
+Use C++ API to inspect registers during execution:
+
+  uint16_t value = ppu.getRegister(0);  // Get R0
+  std::cout << "R0 = 0x" << std::hex << value << "\n";
+
+  // Check PC
+  uint16_t pc = ppu.getRegister(62);
+  std::cout << "PC = 0x" << std::hex << pc << "\n";
+
+  // Check DP
+  uint16_t dp = ppu.getRegister(63);
+  std::cout << "DP = 0x" << std::hex << dp << "\n";
+
+14.3 EXECUTION TRACING
+
+Single-step execution:
+
+  while (ppu.getState() == PPUState::Running) {
+    // Print state before instruction
+    std::cout << "EP = 0x" << std::hex << execution_pointer << "\n";
+    for (int i = 0; i < 8; i++) {
+      std::cout << "R" << i << " = 0x" << ppu.getRegister(i) << " ";
+    }
+    std::cout << "\n";
+
+    // Execute one instruction
+    ppu.tick();
+
+    // Check for specific condition
+    if (ppu.getRegister(0) > 100) {
+      std::cout << "Breakpoint: R0 > 100\n";
+      break;
+    }
+  }
+
+Memory inspection:
+
+  uint8_t byte = ppu.readMemory(0x1000);
+  std::cout << "Memory[0x1000] = 0x" << std::hex << (int)byte << "\n";
+
+================================================================================
+
+15. APPENDICES
+
+15.1 OPCODE QUICK REFERENCE
+
+Opcode  Mnemonic       Cycles  Format
+──────────────────────────────────────────────────────────────
+0x0     DEFCALL        1       DEFCALL addr
+0x1     ENDDEFCALL     1       ENDDEFCALL
+0x2     SWAPREG        1       SWAPREG RX, RY
+0x3     CLR            1       CLR RX
+0x4     CMP            1       CMP RX, RY
+0x5     CLRF           1       CLRF
+0x6     JMZ/JMG        1       JMZ / JMG
+0x7     JNZ/JNG        1       JNZ / JNG / JML
+0x8     INC            1       INC RX
+0x9     DEC            1       DEC RX
+0xA     ADD            1       ADD RX, RY
+0xB     SUB            1       SUB RX, RY
+0xC     MUL            1       MUL RX, RY
+0xD     INTDIV         1       INTDIV RX, RY
+0xE     HALT           1       HALT
+
+Preset F Sub-opcodes (0xF):
+
+Sub-op  Mnemonic       Cycles  Format
+──────────────────────────────────────────────────────────────
+0x0     SETPOS         1       SETPOS RX, RY
+0x1     SETTILE        1       SETTILE tile_id
+0x2     SETDP          1       SETDP RX
+0x3     MOVDP          1       MOVDP RX
+0x4     SETRENDMOD     1       SETRENDMOD mode
+0x5     PALETTE16      1       PALETTE16
+0x6     PALETTE256     1       PALETTE256
+0x7     JMR            1       JMR
+0x8     MOV            1       MOV RX
+0x9     SETREGBANK     1       SETREGBANK bx, by
+0xA     CLRTILE        1       CLRTILE
+0xB     CLRPALETTE     1       CLRPALETTE
+0xC     STRTDEFTILE    1       STRTDEFTILE
+0xD     ENDDEFTILE     1       ENDDEFTILE
+0xE     CALL           1       CALL func_id
+0xF     GBLS           1       GBLS RX
+
+15.2 REGISTER MAP
+
+Register  Alias  Description
+────────────────────────────────────────────────────────────────────
+R0              General purpose
+R1              General purpose
+R2              General purpose
+...
+R61             General purpose
+R62       PC    Program Counter (jump target)
+R63       DP    Data Pointer
+
+All registers are 16-bit, initialized to 0 on reset.
+
+15.3 INSTRUCTION ENCODING TABLE
+
+Mnemonic    Opcode  Operand Bits         Example Assembly  Example Encoding
+─────────────────────────────────────────────────────────────────────────────
+DEFCALL     0x0     [11:0]=addr          DEFCALL 0x42      0x0042
+ENDDEFCALL  0x1     [11:0]=0             ENDDEFCALL        0x1000
+SWAPREG     0x2     [11:6]=X,[5:0]=Y     SWAPREG R5, R10   0x214A
+CLR         0x3     [5:0]=X              CLR R15           0x300F
+CMP         0x4     [11:6]=X,[5:0]=Y     CMP R3, R8        0x40C8
+CLRF        0x5     [11:0]=0             CLRF              0x5000
+JMZ         0x6     [11]=0               JMZ               0x6000
+JMG         0x6     [11]=1               JMG               0x6800
+JNZ         0x7     [11]=0               JNZ               0x7000
+JNG         0x7     [11]=1               JNG               0x7800
+INC         0x8     [5:0]=X              INC R10           0x800A
+DEC         0x9     [5:0]=X              DEC R5            0x9005
+ADD         0xA     [11:6]=X,[5:0]=Y     ADD R3, R7        0xA0C7
+SUB         0xB     [11:6]=X,[5:0]=Y     SUB R8, R2        0xB202
+MUL         0xC     [11:6]=X,[5:0]=Y     MUL R4, R9        0xC109
+INTDIV      0xD     [11:6]=X,[5:0]=Y     INTDIV R15, R8    0xD3C8
+HALT        0xE     [11:0]=0             HALT              0xE000
+
+SETPOS      0xF0    [7:4]=X,[3:0]=Y      SETPOS R3, R5     0xF035
+SETTILE     0xF1    [7:0]=tile           SETTILE 0x2A      0xF12A
+SETDP       0xF2    [7:2]=X              SETDP R10         0xF228
+MOVDP       0xF3    [7:2]=X              MOVDP R3          0xF30C
+SETRENDMOD  0xF4    [7]=mode             SETRENDMOD 1      0xF480
+PALETTE16   0xF5    [7:0]=0              PALETTE16         0xF500
+PALETTE256  0xF6    [7:0]=0              PALETTE256        0xF600
+JMR         0xF7    [7:0]=0              JMR               0xF700
+MOV         0xF8    [7:2]=X              MOV R12           0xF830
+SETREGBANK  0xF9    [7:6]=X,[5:4]=Y      SETREGBANK 1, 2   0xF960
+CLRTILE     0xFA    [7:0]=0              CLRTILE           0xFA00
+CLRPALETTE  0xFB    [7:0]=0              CLRPALETTE        0xFB00
+STRTDEFTILE 0xFC    [7:0]=0              STRTDEFTILE       0xFC00
+ENDDEFTILE  0xFD    [7:0]=0              ENDDEFTILE        0xFD00
+CALL        0xFE    [7:0]=func           CALL 0x10         0xFE10
+GBLS        0xFF    [7:2]=X              GBLS R8           0xFF20
+
+15.4 ASSEMBLER ERROR MESSAGES
+
+"Error on line N: Unknown instruction"
+  - Mnemonic not recognized
+  - Check spelling and case
+  - Refer to instruction list
+
+"Error on line N: Invalid register"
+  - Register number out of range (must be 0-63)
+  - Invalid register name
+  - Use R0-R63, PC, or DP
+
+"Error on line N: Invalid immediate value"
+  - Immediate value out of range
+  - Syntax error in number (e.g., 0xGG)
+  - Check value fits in required bits
+
+"Error on line N: Undefined label"
+  - Label referenced but not defined
+  - Check label spelling
+  - Ensure label has colon (:) in definition
+
+"Error on line N: Duplicate label"
+  - Label defined multiple times
+  - Use unique label names
+
+"Error on line N: [instruction] requires N operands"
+  - Wrong number of operands for instruction
+  - Check instruction syntax
+  - Refer to instruction format
+
+================================================================================
+
+END OF ZEROPOINT PPU MICROCODE SPECIFICATION
+Version 1.0 - 2025
+
+For questions, issues, or updates, refer to the ZeroPoint emulator
+documentation and source code.
+
+================================================================================
