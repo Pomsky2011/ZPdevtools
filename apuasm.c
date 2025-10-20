@@ -1,0 +1,434 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <ctype.h>
+#include <stdint.h>
+
+#define MAX_LABELS 1000
+#define MAX_LINE 1024
+#define MAX_TOKENS 10
+
+typedef struct {
+    char name[64];
+    uint16_t address;
+} Label;
+
+static Label labels[MAX_LABELS];
+static int label_count = 0;
+static uint16_t current_address = 0;
+static uint16_t instructions[32768];
+static int instruction_count = 0;
+
+// Token parsing
+static char* tokens[MAX_TOKENS];
+static int token_count = 0;
+
+void error(const char* msg, int line) {
+    fprintf(stderr, "Error on line %d: %s\n", line, msg);
+    exit(1);
+}
+
+void trim(char* str) {
+    char* start = str;
+    while (isspace(*start)) start++;
+    if (start != str) memmove(str, start, strlen(start) + 1);
+
+    int len = strlen(str);
+    while (len > 0 && isspace(str[len - 1])) {
+        str[--len] = '\0';
+    }
+}
+
+void tokenize(char* line) {
+    token_count = 0;
+    char* token = strtok(line, " \t,");
+    while (token && token_count < MAX_TOKENS) {
+        tokens[token_count++] = token;
+        token = strtok(NULL, " \t,");
+    }
+}
+
+int is_label_def(const char* str) {
+    int len = strlen(str);
+    return len > 0 && str[len - 1] == ':';
+}
+
+void add_label(const char* name, uint16_t address) {
+    if (label_count >= MAX_LABELS) {
+        fprintf(stderr, "Too many labels\n");
+        exit(1);
+    }
+
+    strncpy(labels[label_count].name, name, 63);
+    labels[label_count].name[63] = '\0';
+
+    // Remove trailing colon if present
+    int len = strlen(labels[label_count].name);
+    if (len > 0 && labels[label_count].name[len - 1] == ':') {
+        labels[label_count].name[len - 1] = '\0';
+    }
+
+    labels[label_count].address = address;
+    label_count++;
+}
+
+int find_label(const char* name) {
+    for (int i = 0; i < label_count; i++) {
+        if (strcmp(labels[i].name, name) == 0) {
+            return labels[i].address;
+        }
+    }
+    return -1;
+}
+
+int parse_number(const char* str) {
+    if (str[0] == '$') {
+        return (int)strtol(str + 1, NULL, 16);
+    } else if (str[0] == '0' && (str[1] == 'x' || str[1] == 'X')) {
+        return (int)strtol(str + 2, NULL, 16);
+    } else if (str[0] == '0' && (str[1] == 'b' || str[1] == 'B')) {
+        return (int)strtol(str + 2, NULL, 2);
+    } else {
+        return atoi(str);
+    }
+}
+
+int parse_register(const char* str) {
+    if (str[0] == 'R' || str[0] == 'r') {
+        return parse_number(str + 1);
+    } else if (strcmp(str, "X") == 0 || strcmp(str, "x") == 0) {
+        return 0;
+    } else if (strcmp(str, "Y") == 0 || strcmp(str, "y") == 0) {
+        return 1;
+    }
+    return parse_number(str);
+}
+
+void emit_instruction(uint16_t inst) {
+    if (instruction_count >= 32768) {
+        fprintf(stderr, "Too many instructions\n");
+        exit(1);
+    }
+    instructions[instruction_count++] = inst;
+    current_address += 2;
+}
+
+uint16_t encode_instruction(uint8_t opcode, uint16_t operand) {
+    return ((opcode & 0x1F) << 11) | (operand & 0x7FF);
+}
+
+void assemble_line(char* line, int line_num) {
+    // Remove comments
+    char* comment = strchr(line, ';');
+    if (comment) *comment = '\0';
+
+    trim(line);
+    if (strlen(line) == 0) return;
+
+    tokenize(line);
+    if (token_count == 0) return;
+
+    // Check for label definition
+    if (is_label_def(tokens[0])) {
+        add_label(tokens[0], current_address);
+
+        // Check if there's an instruction on the same line
+        if (token_count > 1) {
+            // Shift tokens left
+            for (int i = 0; i < token_count - 1; i++) {
+                tokens[i] = tokens[i + 1];
+            }
+            token_count--;
+        } else {
+            return;
+        }
+    }
+
+    const char* mnemonic = tokens[0];
+
+    // Convert to uppercase for comparison
+    char upper_mnemonic[64];
+    strncpy(upper_mnemonic, mnemonic, 63);
+    upper_mnemonic[63] = '\0';
+    for (int i = 0; upper_mnemonic[i]; i++) {
+        upper_mnemonic[i] = toupper(upper_mnemonic[i]);
+    }
+
+    // Instruction encoding
+
+    if (strcmp(upper_mnemonic, "NOP") == 0) {
+        uint16_t stall = (token_count > 1) ? parse_number(tokens[1]) : 0;
+        emit_instruction(encode_instruction(0x00, stall));
+    }
+    else if (strcmp(upper_mnemonic, "JMP") == 0) {
+        if (token_count >= 2) {
+            int addr = parse_number(tokens[1]);
+            emit_instruction(encode_instruction(0x01, addr & 0x7FF));
+        }
+    }
+    else if (strcmp(upper_mnemonic, "JNZ") == 0) {
+        if (token_count >= 3) {
+            int reg = parse_register(tokens[1]);
+            int addr = parse_number(tokens[2]);
+            uint16_t operand = ((reg & 1) << 9) | (addr & 0xFF);
+            emit_instruction(encode_instruction(0x02, operand));
+        }
+    }
+    else if (strcmp(upper_mnemonic, "SRP") == 0) {
+        if (token_count >= 2) {
+            int page = parse_number(tokens[1]);
+            emit_instruction(encode_instruction(0x03, page & 0xFF));
+        }
+    }
+    else if (strcmp(upper_mnemonic, "SDP") == 0) {
+        if (token_count >= 2) {
+            int page = parse_number(tokens[1]);
+            emit_instruction(encode_instruction(0x03, 0x400 | (page & 0xFF)));
+        }
+    }
+    else if (strcmp(upper_mnemonic, "NOR") == 0) {
+        if (token_count >= 4) {
+            int rx = parse_register(tokens[1]);
+            int ry = parse_register(tokens[2]);
+            int rz = parse_register(tokens[3]);
+            uint16_t operand = ((rx & 1) << 9) | ((ry & 1) << 8) | 0x100 | (rz & 0x7F);
+            emit_instruction(encode_instruction(0x04, operand));
+        }
+    }
+    else if (strcmp(upper_mnemonic, "AND") == 0) {
+        if (token_count >= 4) {
+            int rx = parse_register(tokens[1]);
+            int ry = parse_register(tokens[2]);
+            int rz = parse_register(tokens[3]);
+            uint16_t operand = ((rx & 1) << 9) | ((ry & 1) << 8) | 0x100 | (rz & 0x7F);
+            emit_instruction(encode_instruction(0x05, operand));
+        }
+    }
+    else if (strcmp(upper_mnemonic, "ADD") == 0) {
+        if (token_count >= 4) {
+            int rx = parse_register(tokens[1]);
+            int ry = parse_register(tokens[2]);
+            int rz = parse_register(tokens[3]);
+            uint16_t operand = ((rx & 1) << 9) | ((ry & 1) << 8) | 0x100 | (rz & 0x7F);
+            emit_instruction(encode_instruction(0x06, operand));
+        }
+    }
+    else if (strcmp(upper_mnemonic, "SUB") == 0) {
+        if (token_count >= 4) {
+            int rx = parse_register(tokens[1]);
+            int ry = parse_register(tokens[2]);
+            int rz = parse_register(tokens[3]);
+            uint16_t operand = ((rx & 1) << 9) | ((ry & 1) << 8) | 0x100 | (rz & 0x7F);
+            emit_instruction(encode_instruction(0x07, operand));
+        }
+    }
+    else if (strcmp(upper_mnemonic, "STA") == 0) {
+        if (token_count >= 3) {
+            int reg = parse_register(tokens[1]);
+            int offset = parse_number(tokens[2]);
+            uint16_t operand = ((reg & 1) << 9) | 0x200 | (offset & 0xFF);
+            emit_instruction(encode_instruction(0x08, operand));
+        }
+    }
+    else if (strcmp(upper_mnemonic, "STR") == 0) {
+        if (token_count >= 3) {
+            int offset = parse_number(tokens[1]);
+            int reg = parse_register(tokens[2]);
+            uint16_t operand = ((reg & 1) << 9) | (offset & 0xFF);
+            emit_instruction(encode_instruction(0x08, operand));
+        }
+    }
+    else if (strcmp(upper_mnemonic, "SBF") == 0) {
+        if (token_count >= 2) {
+            int value = parse_number(tokens[1]);
+            emit_instruction(encode_instruction(0x09, value & 1));
+        }
+    }
+    else if (strcmp(upper_mnemonic, "SCR") == 0) {
+        if (token_count >= 3) {
+            int reg = parse_register(tokens[1]);
+            int value = parse_number(tokens[2]);
+            uint16_t operand = ((reg & 1) << 8) | (value & 0xFF);
+            emit_instruction(encode_instruction(0x0A, operand));
+        }
+    }
+    else if (strcmp(upper_mnemonic, "ZOR") == 0) {
+        if (token_count >= 2) {
+            int reg = parse_register(tokens[1]);
+            emit_instruction(encode_instruction(0x0C, 0x080 | (reg & 0x3F)));
+        }
+    }
+    else if (strcmp(upper_mnemonic, "ZOA") == 0) {
+        if (token_count >= 2) {
+            int offset = parse_number(tokens[1]);
+            emit_instruction(encode_instruction(0x0C, 0x020 | (offset & 0xFF)));
+        }
+    }
+    else if (strcmp(upper_mnemonic, "LST") == 0) {
+        if (token_count >= 3) {
+            int loopId = parse_number(tokens[1]);
+            int count = parse_number(tokens[2]);
+            uint16_t operand = ((loopId & 0x0F) << 6) | (count & 0x3F);
+            emit_instruction(encode_instruction(0x0D, operand));
+        }
+    }
+    else if (strcmp(upper_mnemonic, "LFN") == 0) {
+        if (token_count >= 2) {
+            int loopId = parse_number(tokens[1]);
+            uint16_t operand = 0x400 | ((loopId & 0x0F) << 6);
+            emit_instruction(encode_instruction(0x0D, operand));
+        }
+    }
+    else if (strcmp(upper_mnemonic, "IBC") == 0) {
+        if (token_count >= 2) {
+            int bank = parse_number(tokens[1]);
+            emit_instruction(encode_instruction(0x10, bank & 0x7FF));
+        }
+    }
+    else if (strcmp(upper_mnemonic, "RBC") == 0) {
+        if (token_count >= 2) {
+            int bank = parse_number(tokens[1]);
+            emit_instruction(encode_instruction(0x11, bank & 0x7FF));
+        }
+    }
+    else if (strcmp(upper_mnemonic, "BEQ") == 0) {
+        if (token_count >= 4) {
+            int rx = parse_register(tokens[1]);
+            int ry = parse_register(tokens[2]);
+            int offset = parse_number(tokens[3]);
+            uint16_t operand = ((rx & 1) << 9) | ((ry & 1) << 8) | (offset & 0xFF);
+            emit_instruction(encode_instruction(0x12, operand));
+        }
+    }
+    else if (strcmp(upper_mnemonic, "BNE") == 0) {
+        if (token_count >= 4) {
+            int rx = parse_register(tokens[1]);
+            int ry = parse_register(tokens[2]);
+            int offset = parse_number(tokens[3]);
+            uint16_t operand = ((rx & 1) << 9) | ((ry & 1) << 8) | 0x100 | (offset & 0xFF);
+            emit_instruction(encode_instruction(0x12, operand));
+        }
+    }
+    else if (strcmp(upper_mnemonic, "BLT") == 0) {
+        if (token_count >= 4) {
+            int rx = parse_register(tokens[1]);
+            int ry = parse_register(tokens[2]);
+            int offset = parse_number(tokens[3]);
+            uint16_t operand = ((rx & 1) << 9) | ((ry & 1) << 8) | (offset & 0xFF);
+            emit_instruction(encode_instruction(0x13, operand));
+        }
+    }
+    else if (strcmp(upper_mnemonic, "BGT") == 0) {
+        if (token_count >= 4) {
+            int rx = parse_register(tokens[1]);
+            int ry = parse_register(tokens[2]);
+            int offset = parse_number(tokens[3]);
+            uint16_t operand = ((rx & 1) << 9) | ((ry & 1) << 8) | 0x100 | (offset & 0xFF);
+            emit_instruction(encode_instruction(0x13, operand));
+        }
+    }
+    else if (strcmp(upper_mnemonic, "SDB") == 0) {
+        if (token_count >= 2) {
+            int value = parse_number(tokens[1]);
+            emit_instruction(encode_instruction(0x14, value & 0xFF));
+        }
+    }
+    else if (strcmp(upper_mnemonic, "WRH") == 0) {
+        if (token_count >= 2) {
+            int value = parse_number(tokens[1]);
+            emit_instruction(encode_instruction(0x15, value & 0xFF));
+        }
+    }
+    else if (strcmp(upper_mnemonic, "WRL") == 0) {
+        if (token_count >= 2) {
+            int value = parse_number(tokens[1]);
+            emit_instruction(encode_instruction(0x15, 0x100 | (value & 0xFF)));
+        }
+    }
+    else if (strcmp(upper_mnemonic, "CFS") == 0) {
+        if (token_count >= 2) {
+            int funcId = parse_number(tokens[1]);
+            emit_instruction(encode_instruction(0x16, funcId & 0x7FF));
+        }
+    }
+    else if (strcmp(upper_mnemonic, "CFE") == 0) {
+        if (token_count >= 2) {
+            int funcId = parse_number(tokens[1]);
+            emit_instruction(encode_instruction(0x17, funcId & 0x7FF));
+        }
+    }
+    else if (strcmp(upper_mnemonic, "CCF") == 0) {
+        if (token_count >= 2) {
+            int funcId = parse_number(tokens[1]);
+            emit_instruction(encode_instruction(0x18, funcId & 0x7FF));
+        }
+    }
+    else if (strcmp(upper_mnemonic, "HLT") == 0) {
+        // Infinite loop: JMP 0 (jump to current address)
+        emit_instruction(encode_instruction(0x01, 0));
+    }
+    else {
+        char msg[128];
+        snprintf(msg, sizeof(msg), "Unknown instruction: %s", mnemonic);
+        error(msg, line_num);
+    }
+}
+
+int main(int argc, char** argv) {
+    if (argc < 2) {
+        fprintf(stderr, "Usage: %s <input.asm> [output.bin]\n", argv[0]);
+        return 1;
+    }
+
+    const char* input_file = argv[1];
+    const char* output_file = (argc >= 3) ? argv[2] : NULL;
+
+    // Generate output filename if not provided
+    char default_output[256];
+    if (!output_file) {
+        strncpy(default_output, input_file, 250);
+        char* dot = strrchr(default_output, '.');
+        if (dot) *dot = '\0';
+        strcat(default_output, ".bin");
+        output_file = default_output;
+    }
+
+    // First pass: collect labels
+    FILE* fp = fopen(input_file, "r");
+    if (!fp) {
+        fprintf(stderr, "Cannot open input file: %s\n", input_file);
+        return 1;
+    }
+
+    char line[MAX_LINE];
+    int line_num = 0;
+
+    while (fgets(line, sizeof(line), fp)) {
+        line_num++;
+        assemble_line(line, line_num);
+    }
+
+    fclose(fp);
+
+    // Write output
+    FILE* out = fopen(output_file, "wb");
+    if (!out) {
+        fprintf(stderr, "Cannot open output file: %s\n", output_file);
+        return 1;
+    }
+
+    // Write instructions as 16-bit big-endian
+    for (int i = 0; i < instruction_count; i++) {
+        uint16_t inst = instructions[i];
+        uint8_t bytes[2] = {(inst >> 8) & 0xFF, inst & 0xFF};
+        fwrite(bytes, 1, 2, out);
+    }
+
+    fclose(out);
+
+    printf("Assembled %d instructions (%d bytes) to %s\n",
+           instruction_count, instruction_count * 2, output_file);
+    printf("Labels defined: %d\n", label_count);
+
+    return 0;
+}

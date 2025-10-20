@@ -1,6 +1,6 @@
 # ZeroPoint Development Tools
 
-Development tools for the ZeroPoint fantasy console PPU microarchitecture.
+Development tools for the ZeroPoint fantasy console, including assemblers for both PPU (Picture Processing Unit) and APU (Audio Processing Unit).
 
 **⚠️ IMPORTANT: Assembler Shorthand Users**
 
@@ -20,11 +20,19 @@ See `docs/ppu/preset-e-and-shorthands.txt` for complete documentation.
 
 ## Building
 
+### PPU Assembler (zpasm)
 ```bash
 gcc -o zpasm zpasm.c
 ```
 
-This creates the `zpasm` executable.
+This creates the `zpasm` executable for assembling PPU programs.
+
+### APU Assembler (apuasm)
+```bash
+gcc -o apuasm apuasm.c
+```
+
+This creates the `apuasm` executable for assembling APU programs.
 
 ## zpasm - PPU Assembler
 
@@ -296,7 +304,9 @@ For Preset F instructions (opcode 0xF):
 
 ## Testing Assembled Programs
 
-You can test assembled binaries with the test runner:
+### PPU Programs
+
+You can test assembled PPU binaries with the test runner:
 
 ```bash
 cd ZeroPoint/build
@@ -304,6 +314,106 @@ cd ZeroPoint/build
 ```
 
 This loads the binary and runs it on the PPU, showing visual output.
+
+### APU Programs
+
+You can test assembled APU binaries with the APU test runner:
+
+```bash
+cd ZeroPoint/build
+./bin/test_apu examples/apu/your_program.bin 10000
+```
+
+This loads the binary and runs it on the APU emulator for up to 10,000 cycles.
+
+For audio output:
+```bash
+./bin/run_apu_demo examples/apu/your_program.bin
+```
+
+## apuasm - APU Assembler
+
+Assembles APU assembly language into binary format.
+
+### Usage
+
+```bash
+./apuasm <input.asm> [output.bin]
+```
+
+If no output file is specified, uses the input filename with `.bin` extension.
+
+### Syntax
+
+#### Comments
+```asm
+; This is a comment
+SCR X, 42    ; Set X register to 42
+```
+
+#### Labels
+```asm
+loop:
+    ADD X, Y, X
+    JMP loop
+```
+
+#### Registers
+- `X`, `Y` - Primary registers (aliases for R0, R1)
+- `R0` to `R255` - General purpose registers
+- Special registers: `PC` (Program Counter), `RP` (ROM Page), `DP` (Data Page), `DB` (Data Byte)
+
+#### Immediate Values
+- Decimal: `42`
+- Hexadecimal: `0x2A` or `$2A`
+- Binary: `0b00101010`
+
+### APU Instructions
+
+See `docs/apu/instruction-set.txt` for complete instruction reference.
+
+#### Common Instructions
+
+| Instruction | Example | Description |
+|------------|---------|-------------|
+| `NOP` | `NOP 100` | No operation (stall 100 cycles) |
+| `SCR` | `SCR X, 42` | Set register to constant |
+| `ADD` | `ADD X, Y, R2` | Add X + Y, store in R2 |
+| `SUB` | `SUB X, Y, R2` | Subtract X - Y, store in R2 |
+| `JMP` | `JMP $50` | Jump to address |
+| `LST` | `LST 0, 10` | Loop start (ID 0, 10 iterations) |
+| `LFN` | `LFN 0` | Loop finish (ID 0) |
+| `SDP` | `SDP $30` | Set data page to $30 |
+| `WRH` | `WRH 0xAB` | Write high byte to $DPDB |
+| `WRL` | `WRL 0xCD` | Write low byte to $DPDB |
+| `HLT` | `HLT` | Halt (infinite loop) |
+
+### APU Example Programs
+
+#### Simple Addition
+```asm
+; Add 42 + 100, result in R2
+start:
+    SCR X, 42       ; X = 42
+    SCR Y, 100      ; Y = 100
+    ADD X, Y, R2    ; R2 = X + Y = 142
+    HLT
+```
+
+#### Hardware Loop
+```asm
+; Count from 0 to 10
+start:
+    ZOR X           ; X = 0
+    LST 0, 10       ; Loop 10 times
+loop:
+    SCR Y, 1
+    ADD X, Y, X     ; X++
+    LFN 0           ; End loop
+    HLT
+```
+
+See `examples/apu/` for more examples.
 
 ## Documentation
 
@@ -328,14 +438,34 @@ This loads the binary and runs it on the PPU, showing visual output.
 
 ## Files
 
+### Assemblers
 - `zpasm.c` - PPU assembler (C source)
-- `zpasm` - Compiled assembler (created by gcc)
-- `examples/` - Example assembly programs
-  - `ppu/` - PPU-specific examples
-    - `test_preset_e.asm` - Demonstrates Preset E and shorthands
-    - `fibbonaci.asm` - Fibonacci sequence generator
-    - Various pixel/tile demos
-- `docs/` - Documentation
-  - `ppu/ucode.txt` - Complete instruction reference
-  - `ppu/preset-e-and-shorthands.txt` - New features guide
+- `zpasm` - Compiled PPU assembler (created by gcc)
+- `apuasm.c` - APU assembler (C source)
+- `apuasm` - Compiled APU assembler (created by gcc)
+
+### Examples
+- `examples/ppu/` - PPU example programs
+  - `test_preset_e.asm` - Demonstrates Preset E and shorthands
+  - `fibonacci.asm` - Fibonacci sequence generator
+  - Various pixel/tile demos
+- `examples/apu/` - APU example programs
+  - `hello.asm` - Simple register operations
+  - `counter.asm` - Hardware loop counter
+  - `tone_gen.asm` - Sample data generation
+
+### Documentation
+- `docs/ppu/` - PPU documentation
+  - `ucode.txt` - Complete PPU instruction reference
+  - `preset-e-and-shorthands.txt` - PPU features guide
+- `docs/apu/` - APU documentation (8 files)
+  - `README.txt` - APU documentation index
+  - `overview.txt` - Architecture overview
+  - `instruction-set.txt` - Complete APU instruction reference
+  - `memory-map.txt` - Memory layout
+  - `registers.txt` - Register reference
+  - `sst.txt` - Sample Storage System
+  - `mmp.txt` - Music Mixing Processor
+  - `programming-guide.txt` - Examples and patterns
 - `README.md` - This file
+- `TODO.md` - Development tracking

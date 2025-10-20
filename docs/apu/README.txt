@@ -172,11 +172,84 @@ For larger projects, organize your APU code:
     macros.asm      - Common code patterns
 ```
 
+## Building the APU Assembler
+
+```bash
+cd ZPdevtools
+gcc -o apuasm apuasm.c
+```
+
+This creates the `apuasm` executable.
+
+## Using the APU Assembler
+
+```bash
+./apuasm input.asm [output.bin]
+```
+
+If no output file is specified, uses the input filename with `.bin` extension.
+
+### Example
+```bash
+./apuasm examples/apu/hello.asm examples/apu/hello.bin
+```
+
+## Building the APU Emulator
+
+The APU emulator is built as part of the ZeroPoint project:
+
+```bash
+cd ZeroPoint
+mkdir -p build
+cd build
+cmake ..
+make
+```
+
+This creates:
+- `bin/test_apu` - APU test runner (no audio)
+- `bin/run_apu_demo` - APU demo runner (with SDL audio output)
+
+## Testing APU Programs
+
+### Headless Testing
+```bash
+./bin/test_apu program.bin [max_cycles]
+```
+
+Example:
+```bash
+./bin/test_apu examples/apu/hello.bin 10000
+```
+
+### Audio Testing
+```bash
+./bin/run_apu_demo program.bin
+```
+
+Press ESC or Q to quit.
+
+## Example Programs
+
+Located in `ZPdevtools/examples/apu/`:
+
+- **hello.asm** - Simple register operations (X=42, Y=100, R2=X+Y)
+- **counter.asm** - Hardware loop counting from 0 to 10
+- **tone_gen.asm** - Writes sample data to ARAM
+
+Assemble them with:
+```bash
+./apuasm examples/apu/hello.asm
+./apuasm examples/apu/counter.asm
+./apuasm examples/apu/tone_gen.asm
+```
+
 ## Additional Resources
 
 - **ZeroPoint Main Docs:** /Users/alexanderwhite/Documents/Code/ZeroPoint/CLAUDE.md
 - **PPU Docs:** /Users/alexanderwhite/Documents/Code/ZPdevtools/docs/ppu/
-- **Assembler:** /Users/alexanderwhite/Documents/Code/ZPdevtools/zpasm.c
+- **PPU Assembler:** /Users/alexanderwhite/Documents/Code/ZPdevtools/zpasm.c
+- **APU Assembler:** /Users/alexanderwhite/Documents/Code/ZPdevtools/apuasm.c
 
 ## Version History
 
