@@ -1,0 +1,183 @@
+# ZeroPoint APU Architecture Overview
+
+## Introduction
+
+The ZeroPoint Audio Processing Unit (APU) is an 8-bit RISC processor designed
+specifically for real-time audio processing and music mixing. It runs alongside
+the main CPU to handle all audio-related tasks.
+
+## Core Specifications
+
+- **Architecture**: 8-bit RISC
+- **Clock Speed**: 4.2 MHz
+- **Cycles Per Instruction (CPI)**: 4
+- **Effective Performance**: 1.048576 MIPS (Million Instructions Per Second)
+- **Instruction Size**: 16-bit fixed width
+- **Instruction Format**: 5-bit opcode + 11-bit operands
+
+## Performance Characteristics
+
+### Clock Budget
+- Total cycles per second: 4,200,000
+- Instructions per second: 1,050,000 (at 4 CPI average)
+- At 60 Hz audio: ~17,500 instructions per frame
+- At 48 kHz sample rate: ~21.875 instructions per sample
+
+### Audio Frame Budget (60 Hz)
+```
+Frame time: 16.67 ms
+Cycles per frame: 70,000
+Instructions per frame: 17,500 (at 4 CPI)
+Samples per frame (48 kHz): 800
+Instruction budget per sample: ~21 instructions
+```
+
+## Major Subsystems
+
+### 1. CPU Core (UAS - Universal Audio System)
+- 8-bit register-based processor
+- 5 general-purpose 8-bit registers (X, Y, and 3 others usable in operations)
+- Dedicated registers for memory management (DP, RP, DB, BF)
+- 16-bit program counter
+- Support for loops, functions, and conditional branching
+
+### 2. MMP (Music Mixing Processor)
+- Hardware mixing for 16 stereo channels (32 total)
+- Per-channel pitch control (resampling)
+- Per-channel volume control with 8-bit precision
+- Built-in reverb and echo effects
+- Gaussian interpolation support
+- Independent left/right ear outputs
+
+### 3. SST (Sample Storage/Streaming)
+- Sample block format with loop support
+- 12-byte sample blocks per entry
+- Clamping system for dynamic range compression/expansion
+- Loop points and one-shot playback modes
+- 4-byte headers per block with extensive control flags
+
+### 4. DEF88186 Interface
+- Bidirectional communication with main CPU
+- 2 KiB input buffer ($1000-$17FF)
+- 2 KiB output buffer ($1800-$1FFF)
+- Allows CPU to control APU and receive status
+
+## Memory Organization
+
+Total addressable space: 64 KiB (65,536 bytes)
+Note: Actually uses 32,768 words (16-bit) but addressed as 64 KiB
+
+### Memory Regions
+```
+$0000-$00FF   MMP Control Registers + I/O (256 bytes)
+$0100-$0FFF   General Purpose RAM (3.75 KiB)
+$1000-$17FF   DEF88186 Input from CPU (2 KiB)
+$1800-$1FFF   DEF88186 Output to CPU (2 KiB)
+$2000-$2FFF   MMP ExIO (Extra I/O) (4 KiB)
+$3000-$6FFF   ARAM (Audio RAM) (16 KiB)
+$7000-$7FFF   STL (Sample Table List) (4 KiB)
+$8000-$8FFF   BIOS (4 KiB)
+$9000-$CFFF   SST (Sample Storage) (16 KiB)
+$D000-$FFFF   AROM (Audio ROM, banked) (12 KiB visible)
+```
+
+### Banking System
+- **AROM**: 448 KiB total, organized into 24 KiB banks
+- **Bank Switch**: Use RBC (ROM Bank Change) instruction
+- **Bank Count**: 18 banks × 24 KiB each
+- **Visible Window**: $D000-$FFFF (12 KiB at a time)
+
+Total ROM capacity: 448 KiB (Audio ROM) + 64 KiB (SST) = 512 KiB
+
+## Programming Model
+
+### Instruction Categories
+1. **Control Flow**: JMP, JNZ, conditional branches, loops, functions
+2. **Arithmetic/Logic**: NOR, AND, ADD, SUB
+3. **Memory Access**: STA (store), STR (load), WRH/WRL (write immediate)
+4. **Register Operations**: SCR (set constant), ZOR (zero), SBF (byte flip)
+5. **I/O**: IOO (output), IOI (input), IBC (I/O bank change)
+6. **Special**: NOP with cycle stall, SRP/SDP/SDB (set page registers)
+
+### Key Features
+- **Loops**: Hardware loop support with 16 unique loop IDs
+- **Functions**: Callable function system with CFS/CFE/CCF
+- **Banking**: Separate ROM and I/O banks for extended addressing
+- **Word Operations**: BF (Byte Flip) register allows 16-bit operations via high/low byte selection
+- **Conditional Jumps**: Multiple addressing modes (absolute, relative, offset)
+
+## Audio Pipeline
+
+```
+[Main CPU] <--DEF88186--> [APU Core]
+                             |
+                             v
+                        [MMP Mixer]
+                             |
+                    +--------+--------+
+                    |                 |
+              [Left Ear]         [Right Ear]
+                    |                 |
+                    v                 v
+              [16 Channels]      [16 Channels]
+                    |                 |
+                    +--------+--------+
+                             |
+                             v
+                    [Reverb/Echo FX]
+                             |
+                             v
+                       [Audio Output]
+```
+
+## Typical Use Cases
+
+### 1. Music Playback
+- Load sample data into SST region
+- Configure MMP channels with STL pointers
+- Set pitch, volume, and loop points
+- Enable reverb/echo as needed
+- APU handles mixing automatically
+
+### 2. Sound Effects
+- Use short one-shot samples
+- Dynamically allocate channels
+- Adjust pitch for variations
+- Layer multiple channels for complex effects
+
+### 3. Real-time Synthesis
+- Use APU core for waveform generation
+- Write directly to ARAM
+- Point MMP channels to generated data
+- Update continuously for synthesis
+
+## Performance Optimization Tips
+
+1. **Use Hardware Features**: Let MMP handle mixing rather than doing it in software
+2. **Minimize Memory Access**: Keep frequently-used data in registers
+3. **Leverage Loops**: Hardware loops are more efficient than conditional jumps
+4. **Batch Operations**: Use callable functions for repeated code sequences
+5. **Banking Strategy**: Organize code to minimize bank switches
+6. **Sample Reuse**: Use pitch shifting to create variations from one sample
+
+## Comparison to Main PPU
+
+| Feature          | APU            | PPU            |
+|------------------|----------------|----------------|
+| Clock Speed      | 4.2 MHz        | 64 MHz         |
+| Instruction Set  | RISC (41)      | CISC (~40)     |
+| Register Width   | 8-bit          | 16-bit         |
+| Primary Purpose  | Audio          | Graphics       |
+| Hardware Accel   | MMP Mixer      | Tile Engine    |
+| Memory Size      | 64 KiB         | 64 KiB         |
+| ROM Banking      | 448 KiB        | None           |
+
+## Next Steps
+
+For detailed information, see:
+- instruction-set.txt - Complete instruction reference
+- memory-map.txt - Detailed memory layout
+- registers.txt - Register usage and conventions
+- sst.txt - Sample storage system
+- mmp.txt - Music mixing processor
+- programming-guide.txt - Code examples and patterns

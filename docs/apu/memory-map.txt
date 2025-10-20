@@ -1,0 +1,449 @@
+# ZeroPoint APU Memory Map
+
+## Address Space Overview
+
+Total addressable space: 64 KiB (65,536 bytes)
+Note: Memory is organized as words (16-bit), but byte-addressable
+
+```
+Address Range    Size     Description
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+$0000 - $00FF    256 B    MMP Control Registers + I/O
+$0100 - $0FFF    3.75 KiB General Purpose RAM
+$1000 - $17FF    2 KiB    DEF88186 Input (from CPU)
+$1800 - $1FFF    2 KiB    DEF88186 Output (to CPU)
+$2000 - $2FFF    4 KiB    MMP ExIO (Extra I/O)
+$3000 - $6FFF    16 KiB   ARAM (Audio RAM)
+$7000 - $7FFF    4 KiB    STL (Sample Table List)
+$8000 - $8FFF    4 KiB    BIOS
+$9000 - $CFFF    16 KiB   SST (Sample Storage)
+$D000 - $FFFF    12 KiB   AROM (banked, see below)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Total:           ~64 KiB  (Note: 32,768 words actual implementation)
+```
+
+## Memory Region Details
+
+### $0000-$00FF: MMP Control Registers + I/O
+
+Memory-mapped control registers for the Music Mixing Processor (MMP).
+
+Layout (256 bytes total):
+```
+Left Ear Channels (128 bytes):
+  $0000-$001F: Channel Pitch (16 channels × 2 bytes)
+  $0020-$002F: Channel Volume (16 channels × 1 byte)
+  $0030-$0031: Reverb Flags (1 word, 16 bits for 16 channels)
+  $0032-$0033: Echo Flags (1 word, 16 bits for 16 channels)
+  $0034-$0053: Echo Delay (16 channels × 2 bytes)
+  $0054-$0073: Sample STL Address (16 channels × 2 bytes)
+  $0074-$0075: Gaussian Interpolation Toggle (1 word)
+  $0076-$007F: Reserved (10 bytes)
+
+Right Ear Channels (128 bytes):
+  $0080-$00FF: Same layout as left ear ($0000-$007F)
+```
+
+**Channel Pitch Format** (2 bytes per channel):
+- 16-bit fixed-point value
+- Determines resampling rate
+- Higher = faster playback = higher pitch
+- Example: 0x1000 = 1.0× speed, 0x2000 = 2.0× speed
+
+**Channel Volume Format** (1 byte per channel):
+- 8-bit unsigned value (0-255)
+- Controls dynamic range clamping
+- 0 = -128 to 127 PCM range (8-bit)
+- 255 = -32768 to 32767 PCM range (16-bit equivalent)
+
+**Reverb/Echo Flags** (1 bit per channel):
+- Bit 0 = Channel 0 enable, Bit 1 = Channel 1 enable, etc.
+- Set bit to 1 to enable effect on channel
+
+**Echo Delay** (2 bytes per channel):
+- Delay in samples before echo is heard
+- Example: At 48 kHz, delay of 4800 = 100ms echo
+
+**Sample STL Address** (2 bytes per channel):
+- Pointer into STL region ($7000-$7FFF)
+- Points to 4-byte STL entry for this channel's sample
+
+**Gaussian Interpolation** (1 word):
+- 0 = Disabled (nearest-neighbor resampling)
+- 1 = Enabled (smooth gaussian interpolation)
+
+### $0100-$0FFF: General Purpose RAM
+
+3.75 KiB of fast scratchpad RAM for APU programs.
+
+**Use Cases:**
+- Local variables
+- Stack space
+- Temporary buffers
+- Audio computation workspace
+- DSP coefficient storage
+
+**Notes:**
+- Fastest memory region
+- Not memory-mapped to CPU
+- Initialized to zero on power-up (implementation dependent)
+
+**Recommended Usage:**
+```
+$0100-$01FF: Stack (256 bytes, grows downward from $01FF)
+$0200-$07FF: Variable storage
+$0800-$0FFF: Audio generation buffers
+```
+
+### $1000-$17FF: DEF88186 Input (CPU → APU)
+
+2 KiB buffer for receiving data from the main CPU.
+
+**DEF88186 Interface:**
+- Bidirectional communication bus
+- CPU writes here, APU reads
+- Typically used for commands and parameters
+
+**Example Uses:**
+- Music playback commands (play, stop, pause)
+- Sound effect triggers
+- Volume/pitch adjustments
+- Sample upload coordination
+- Synchronization signals
+
+**Access Pattern:**
+```
+CPU side: Writes to this region (maps to APU input)
+APU side: Reads from $1000-$17FF
+```
+
+**Notes:**
+- Check for new data via polling or interrupts
+- May have hardware flags for "data ready"
+- Implementation-specific buffering behavior
+
+### $1800-$1FFF: DEF88186 Output (APU → CPU)
+
+2 KiB buffer for sending data to the main CPU.
+
+**Example Uses:**
+- Playback status (current position, finished, etc.)
+- Error reporting
+- Performance metrics
+- Debugging information
+
+**Access Pattern:**
+```
+APU side: Writes to $1800-$1FFF
+CPU side: Reads from this region (maps to APU output)
+```
+
+### $2000-$2FFF: MMP ExIO (Extra I/O)
+
+4 KiB region for extended MMP functionality.
+
+**Purpose:**
+- Additional MMP control registers
+- Real-time mixer status
+- Per-sample audio output buffer
+- Advanced DSP parameters
+
+**Notes:**
+- Implementation-specific
+- May include DMA control for sample loading
+- Could provide waveform visualization data
+- Consult hardware documentation for details
+
+### $3000-$6FFF: ARAM (Audio RAM)
+
+16 KiB of general-purpose audio memory.
+
+**Use Cases:**
+- Procedurally generated waveforms
+- Real-time audio synthesis
+- Effect processing buffers
+- Custom sample data
+- Mixing intermediate results
+
+**Performance:**
+- Slightly slower than $0100-$0FFF region (implementation dependent)
+- Large enough for substantial audio buffers
+- Can hold ~16K samples at 8-bit
+- Can hold ~8K samples at 16-bit
+
+**Example Usage:**
+```
+$3000-$4FFF: Synthesis waveform tables (8 KiB)
+$5000-$6FFF: Effect processing buffers (8 KiB)
+```
+
+### $7000-$7FFF: STL (Sample Table List)
+
+4 KiB region containing pointers to sample blocks in SST.
+
+**STL Entry Format** (4 bytes each):
+```
+Offset  Size  Description
+0       2     Sample Words Address (pointer to SST)
+2       2     Loop Words Address (pointer within sample for loop point)
+```
+
+**Capacity:**
+- 4096 bytes ÷ 4 bytes/entry = 1024 STL entries maximum
+
+**Sample Words Address:**
+- Points to a block in SST region ($9000-$CFFF)
+- Each block contains a 4-byte header + 12 sample bytes
+
+**Loop Words Address:**
+- Points to the sample number where looping starts
+- If 0, sample plays once and stops
+- If non-zero, jumps back when reaching end
+
+**Example:**
+```
+STL Entry at $7000:
+  $7000: $9050  ; Sample data starts at $9050
+  $7002: $0004  ; Loop back to sample 4
+
+This means:
+  - Sample data is at $9050 in SST
+  - After playing all samples, loop back to sample #4
+```
+
+### $8000-$8FFF: BIOS
+
+4 KiB of system firmware (typically ROM).
+
+**Contents:**
+- Initialization routines
+- Standard audio functions
+- MMP configuration helpers
+- Sample playback routines
+- Debugging utilities
+
+**Usage:**
+- Jump to BIOS routines using JMP with Y=0 (forces $80XX addressing)
+- Example: `JMP 0, 1, $50` jumps to $8050 (BIOS region)
+
+**Common BIOS Functions (example):**
+```
+$8000: APU initialization
+$8010: MMP setup
+$8020: Play sample (standard interface)
+$8030: Stop all channels
+$8040: Set master volume
+```
+
+**Notes:**
+- Read-only (cannot be written by APU programs)
+- Always accessible regardless of banking
+- Implementation-specific function addresses
+
+### $9000-$CFFF: SST (Sample Storage)
+
+16 KiB of sample storage using a special block format.
+
+**Block Format** (16 bytes total):
+```
+Bytes 0-3:   Header (4 bytes)
+Bytes 4-15:  Sample Data (12 bytes, 12 samples at 8-bit)
+```
+
+**Header Format** (4 bytes = 8 nybbles):
+```
+Nybble:  0  1  2  3  4  5  6  7
+Field:   X  X  Y  L  V  U  T  S
+
+XX = Amount of Loops (0-255)
+Y  = Sample to Start Looping At (0-15, within current block)
+L  = Loop Configuration (4 bits):
+     - Bit 0 (Z): Loop from here to end once (0=no, 1=yes)
+     - Bit 1 (W): Final block in sector (0=more blocks, 1=final)
+     - Bits 2-3: Reserved (0)
+V  = Sample for Clamping One (0-15)
+U  = Sample for Clamping Two (0-15)
+T  = Clamping One Amount (0-15, ±8 PCM values)
+S  = Clamping Two Amount (0-15, ±8 PCM values)
+```
+
+**Clamping System:**
+- Allows exceeding normal 8-bit PCM range (-128 to 127)
+- At sample V, apply clamping adjustment T
+- At sample U, apply clamping adjustment S
+- Clamping values: 0-7 = add 0-7 × 8, 8-15 = subtract (15-value) × 8
+- Enables effective 10-11 bit dynamic range
+
+**Capacity:**
+- 16 KiB ÷ 16 bytes/block = 1024 blocks
+- 1024 blocks × 12 samples = 12,288 samples total
+- At 48 kHz: ~256 ms of audio storage
+- At 22 kHz: ~558 ms of audio storage
+
+**See sst.txt for detailed format documentation.**
+
+### $D000-$FFFF: AROM (Audio ROM, Banked)
+
+Banked ROM region providing access to 448 KiB of audio program storage.
+
+**Banking Details:**
+- Total AROM: 448 KiB
+- Bank Size: 24 KiB per bank
+- Banks: 18 total (0-17)
+- Visible Window: $D000-$FFFF (12 KiB at a time)
+- Bank Selection: RBC instruction
+
+**Banking Calculation:**
+```
+Total banks = 448 KiB ÷ 24 KiB = 18.67 banks (18 full banks)
+
+Note: Window is 12 KiB but banks are 24 KiB
+Implementation may map half-bank or use overlapping scheme
+```
+
+**Bank Switching:**
+```
+RBC 0x000     ; Bank 0 visible at $D000-$FFFF
+RBC 0x001     ; Bank 1 visible at $D000-$FFFF
+RBC 0x011     ; Bank 17 visible at $D000-$FFFF
+```
+
+**Important:**
+- Code executing from AROM should not switch its own bank (will crash)
+- Copy bank-switching code to RAM first
+- Use RBC carefully in interrupt handlers
+
+**Recommended Organization:**
+```
+Bank 0:  Main program entry point
+Bank 1:  Music driver
+Bank 2:  Sound effect player
+Bank 3+: Music data, effect data, wavetables
+```
+
+## Memory Access Patterns
+
+### Reading a 16-bit Value
+```
+SDP $10       ; Set data page
+SBF 0         ; Low byte first
+STR $50, R0   ; Load low byte from $1050
+SBF 1         ; High byte
+STR $50, R1   ; Load high byte from $1050
+; Now R0 = low byte, R1 = high byte
+```
+
+### Writing a 16-bit Value
+```
+SDP $10       ; Set data page
+SDB $50       ; Set data byte offset
+WRL 0xCD      ; Write low byte
+WRH 0xAB      ; Write high byte
+; $1050 now contains $ABCD
+```
+
+### Copying Memory Block
+```
+; Copy 16 bytes from $1000 to $2000
+SRP $10       ; Source page
+SDP $20       ; Dest page
+SCR R2, 16    ; Counter
+SCR R3, 0     ; Offset
+
+loop:
+  SBF 0
+  STR R3, R0  ; Read from $10XX (RP for source)
+  SDP $20
+  STA R0, R3  ; Write to $20XX
+  SDP $10     ; Restore source page
+
+  ADD R3, 1, R3  ; Increment offset
+  SUB R2, 1, R2  ; Decrement counter
+  JNZ R2, loop
+```
+
+## Memory Performance Notes
+
+### Access Speed (Implementation Dependent)
+1. **Fastest:** $0100-$0FFF (General RAM)
+2. **Fast:** $3000-$6FFF (ARAM)
+3. **Medium:** $7000-$7FFF (STL), $9000-$CFFF (SST)
+4. **Slow:** $D000-$FFFF (AROM, ROM access penalty)
+5. **Variable:** $0000-$00FF (MMP registers, side effects)
+6. **Bus:** $1000-$1FFF (DEF88186, synchronization overhead)
+
+### Memory-Mapped I/O Warnings
+
+**MMP Registers ($0000-$00FF):**
+- Reads may have side effects (clear flags, advance counters)
+- Writes trigger hardware actions (start playback, etc.)
+- Do not use as general storage
+- Access only when needed
+
+**DEF88186 Buffers ($1000-$1FFF):**
+- May have synchronization delays
+- CPU access could conflict with APU access
+- Use semaphore/flag system for coordination
+
+## Memory Layout Example
+
+Typical program organization:
+
+```
+$0000-$00FF:  MMP control (hardware)
+$0100-$01FF:  Stack space
+$0200-$03FF:  Global variables
+$0400-$0FFF:  Temporary buffers
+
+$1000-$17FF:  Command buffer from CPU
+$1800-$1FFF:  Status buffer to CPU
+
+$3000-$3FFF:  Waveform synthesis buffer
+$4000-$5FFF:  Effect processing workspace
+$6000-$6FFF:  Free ARAM
+
+$7000-$70FF:  Active STL entries (64 samples)
+$7100-$7FFF:  Reserved STL space
+
+$8000-$8FFF:  BIOS routines (ROM)
+
+$9000-$CFFF:  Sample storage (SST)
+
+$D000-$FFFF:  Program code (banked AROM)
+```
+
+## Special Address Ranges
+
+### Safe for Stack
+- $0100-$01FF (recommended)
+- $0200-$0FFF (if needed)
+
+### Safe for Code Execution
+- $0100-$0FFF (RAM, can be modified)
+- $8000-$8FFF (BIOS ROM)
+- $D000-$FFFF (AROM, read-only)
+
+### Reserved / Hardware Use
+- $0000-$00FF (MMP, read/write with caution)
+- $2000-$2FFF (ExIO, implementation-specific)
+
+### Shared with CPU
+- $1000-$17FF (Input from CPU)
+- $1800-$1FFF (Output to CPU)
+
+## Memory Initialization
+
+On APU reset/power-on:
+- RAM regions: Undefined (may be zero, may be random)
+- MMP registers: Reset to default state (all channels off)
+- ROM regions: Contain firmware/program data
+- DEF88186 buffers: Cleared or undefined (implementation-specific)
+
+**Best Practice:** Initialize all RAM before use.
+
+## See Also
+
+- registers.txt - Register details for memory addressing
+- instruction-set.txt - Memory access instructions (STA, STR, WRH, WRL)
+- sst.txt - Sample Storage format
+- mmp.txt - MMP register details

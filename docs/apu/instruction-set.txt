@@ -1,0 +1,908 @@
+# ZeroPoint APU Instruction Set Reference
+
+## Instruction Format
+
+All APU instructions are 16 bits wide, encoded as follows:
+
+```
+Bit:  15  14  13  12  11 | 10  9   8   7   6   5   4   3   2   1   0
+      [    5-bit Opcode   ] [         11-bit Operands               ]
+```
+
+## Instruction Categories
+
+1. Control Flow (NOP, JMP, JNZ)
+2. Register Management (SRP, SDP, SDB, SBF)
+3. Logic Operations (NOR, AND)
+4. Arithmetic Operations (ADD, SUB)
+5. Memory Operations (STA, STR, WRH, WRL)
+6. Register Operations (SCR, ZOR, ZOA)
+7. I/O Operations (IOO, IOI, IBC)
+8. Loop Control (LST, LFN, BRT, BRP)
+9. Function Control (CFS, CFE, CCF)
+10. Conditional Branches (BEQ, BNE, BLT, BGT)
+11. Conditional Jumps (CME, CMN, CML, CMG)
+
+## Instruction Reference
+
+### 1. NOP - No Operation with Stall
+```
+Encoding: 00000 XXXXXXXXXXX
+Syntax:   NOP 0xXXX
+Cycles:   4 + X
+
+Description:
+  Stalls the processor for X additional clock cycles.
+  Base instruction takes 4 cycles, then adds X more.
+
+Example:
+  NOP 0x000    ; 4 cycle delay
+  NOP 0x100    ; 260 cycle delay (4 + 256)
+  NOP 0x7FF    ; 2051 cycle delay (4 + 2047)
+
+Use Cases:
+  - Precise timing synchronization
+  - Audio sample timing
+  - Waiting for I/O operations
+```
+
+### 2. JMP - Unconditional Jump
+```
+Encoding: 00001 X 0 0 ZZZZZZZZ
+Syntax:   JMP X, $ZZ
+Cycles:   4
+
+Description:
+  Jump by a signed offset.
+  X = 0: Jump forward by ZZ words
+  X = 1: Jump backward by ZZ words
+
+Example:
+  JMP 0, $10    ; Jump forward 16 words
+  JMP 1, $05    ; Jump backward 5 words
+
+Notes:
+  - Offset is in WORDS (2 bytes each), not bytes
+  - PC is updated before next instruction fetch
+  - Maximum forward jump: 255 words (510 bytes)
+  - Maximum backward jump: 255 words (510 bytes)
+```
+
+### 3. JMP - Absolute Jump
+```
+Encoding: 00001 0 Y 1 ZZZZZZZZ
+Syntax:   JMP $ZZ
+Cycles:   4
+
+Description:
+  Jump to an absolute address formed from RP register and ZZ.
+  Y = 0: Jump to $80ZZ (BIOS region)
+  Y = 1: Jump to $RPZZ (RP register determines page)
+
+Example:
+  SRP $D0       ; Set RP to $D0
+  JMP $50       ; Jump to $D050 (if Y=1)
+
+Notes:
+  - High byte comes from RP register or $80 constant
+  - Low byte comes from ZZ operand
+  - Useful for banking and BIOS calls
+```
+
+### 4. JNZ - Jump if Not Zero
+```
+Encoding: 00010 X Y 0 ZZZZZZZZ
+Syntax:   JNZ X, Y, $ZZ
+Cycles:   4
+
+Description:
+  Jump to address if register X is not zero.
+  Y = 0: Jump to $80ZZ if X != 0
+  Y = 1: Jump to $RPZZ if X != 0
+
+Example:
+  SCR R0, 0x05  ; Set R0 = 5
+  JNZ R0, 1, $20 ; Jump to $RP20 if R0 != 0 (will jump)
+
+Notes:
+  - Only tests register, does not modify it
+  - Compare with zero is implicit
+  - For other comparisons, use BEQ/BNE/BLT/BGT
+```
+
+### 5. SRP - Set ROM Page Register
+```
+Encoding: 00011 000 XXXXXXXX
+Syntax:   SRP $XX
+Cycles:   4
+
+Description:
+  Sets the RP (ROM Page) register to value XX.
+  Used for forming 16-bit addresses in jump instructions.
+
+Example:
+  SRP $D0       ; RP = $D0
+  JMP $50       ; Jump to $D050
+
+Notes:
+  - RP is used in: JMP, JNZ, BEQ, BNE, BLT, BGT
+  - Does not affect banking (use RBC for that)
+  - Commonly set at start of routines
+```
+
+### 6. SDP - Set Data Page Register
+```
+Encoding: 00011 100 XXXXXXXX
+Syntax:   SDP $XX
+Cycles:   4
+
+Description:
+  Sets the DP (Data Page) register to value XX.
+  Used for forming 16-bit addresses in memory operations.
+
+Example:
+  SDP $10       ; DP = $10
+  STA R0, $50   ; Store R0 to $1050
+
+Notes:
+  - DP is used in: STA, STR, NOR, AND, ADD, SUB, ZOA, IOI, WRH, WRL
+  - Allows accessing any page of memory
+  - Change DP to access different memory regions
+```
+
+### 7. NOR - Logical NOR Operation
+```
+Encoding: 00100 X Y 0 ZZZZZZZZ  (memory destination)
+          00100 X Y 1 Z 0000000  (register destination)
+Syntax:   NOR X, Y, $ZZ
+          NOR X, Y, Z
+Cycles:   4
+
+Description:
+  Computes (Register X NOR Register Y) and stores result.
+
+  Form 1: NOR X, Y, $ZZ
+    Result goes to memory at $DPZZ (high or low byte based on BF)
+
+  Form 2: NOR X, Y, Z
+    Result goes to register Z
+
+Example:
+  SCR R0, 0b11110000
+  SCR R1, 0b00001111
+  NOR R0, R1, R2    ; R2 = 0b00000000 (both bits set = 0)
+
+  SDP $10
+  SBF 0             ; Select low byte
+  NOR R0, R1, $50   ; Store to $1050 low byte
+
+Truth Table:
+  0 NOR 0 = 1
+  0 NOR 1 = 0
+  1 NOR 0 = 0
+  1 NOR 1 = 0
+
+Notes:
+  - NOR is a universal gate (can create any logic function)
+  - NOT X = X NOR X
+  - OR X, Y = NOT (X NOR Y)
+```
+
+### 8. AND - Logical AND Operation
+```
+Encoding: 00101 X Y 0 ZZZZZZZZ  (memory destination)
+          00101 X Y 1 Z 0000000  (register destination)
+Syntax:   AND X, Y, $ZZ
+          AND X, Y, Z
+Cycles:   4
+
+Description:
+  Computes (Register X AND Register Y) and stores result.
+
+  Form 1: AND X, Y, $ZZ
+    Result goes to memory at $DPZZ (high or low byte based on BF)
+
+  Form 2: AND X, Y, Z
+    Result goes to register Z
+
+Example:
+  SCR R0, 0b11110000
+  SCR R1, 0b11001100
+  AND R0, R1, R2    ; R2 = 0b11000000
+
+Truth Table:
+  0 AND 0 = 0
+  0 AND 1 = 0
+  1 AND 0 = 0
+  1 AND 1 = 1
+
+Use Cases:
+  - Bit masking
+  - Testing specific bits
+  - Clearing specific bits
+```
+
+### 9. ADD - Addition
+```
+Encoding: 00110 X Y 0 ZZZZZZZZ  (memory destination)
+          00110 X Y 1 Z 0000000  (register destination)
+Syntax:   ADD X, Y, $ZZ
+          ADD X, Y, Z
+Cycles:   4
+
+Description:
+  Computes (Register X + Register Y) and stores result.
+
+  Form 1: ADD X, Y, $ZZ
+    Result goes to memory at $DPZZ (high or low byte based on BF)
+
+  Form 2: ADD X, Y, Z
+    Result goes to register Z
+
+Example:
+  SCR R0, 100
+  SCR R1, 50
+  ADD R0, R1, R2    ; R2 = 150
+
+  SCR R0, 200
+  SCR R1, 100
+  ADD R0, R1, R2    ; R2 = 44 (overflow: 300 & 0xFF)
+
+Notes:
+  - 8-bit addition with wraparound
+  - No carry flag or overflow detection
+  - For 16-bit math, use BF to work with high/low bytes separately
+```
+
+### 10. SUB - Subtraction
+```
+Encoding: 00111 X Y 0 ZZZZZZZZ  (memory destination)
+          00111 X Y 1 Z 0000000  (register destination)
+Syntax:   SUB X, Y, $ZZ
+          SUB X, Y, Z
+Cycles:   4
+
+Description:
+  Computes (Register X - Register Y) and stores result.
+
+  Form 1: SUB X, Y, $ZZ
+    Result goes to memory at $DPZZ (high or low byte based on BF)
+
+  Form 2: SUB X, Y, Z
+    Result goes to register Z
+
+Example:
+  SCR R0, 100
+  SCR R1, 30
+  SUB R0, R1, R2    ; R2 = 70
+
+  SCR R0, 10
+  SCR R1, 20
+  SUB R0, R1, R2    ; R2 = 246 (underflow: -10 & 0xFF)
+
+Notes:
+  - 8-bit subtraction with wraparound
+  - No borrow flag or underflow detection
+  - Result is always 8-bit unsigned
+```
+
+### 11. STA - Store to Memory
+```
+Encoding: 01000 X 0 1 YYYYYYYY
+Syntax:   STA X, $YY
+Cycles:   4
+
+Description:
+  Stores register X to memory at address $DPYY.
+  BF register determines which byte of the word:
+    BF = 0: Store to low byte of $DPYY
+    BF = 1: Store to high byte of $DPYY
+
+Example:
+  SDP $10       ; DP = $10
+  SCR R0, 0x42
+  SBF 0         ; Select low byte
+  STA R0, $50   ; Store 0x42 to low byte of $1050
+
+  SBF 1         ; Select high byte
+  STA R0, $50   ; Store 0x42 to high byte of $1050
+
+Notes:
+  - Always stores 8 bits
+  - Use BF to build 16-bit words
+  - Memory is word-addressed but byte-accessible
+```
+
+### 12. STR - Load from Memory
+```
+Encoding: 01000 X 0 0 YYYYYYYY
+Syntax:   STR $YY, X
+Cycles:   4
+
+Description:
+  Loads data from memory at $DPYY into register X.
+  BF register determines which byte of the word:
+    BF = 0: Load from low byte of $DPYY
+    BF = 1: Load from high byte of $DPYY
+
+Example:
+  SDP $10       ; DP = $10
+  SBF 0         ; Select low byte
+  STR $50, R0   ; Load low byte of $1050 into R0
+
+  SBF 1         ; Select high byte
+  STR $50, R1   ; Load high byte of $1050 into R1
+
+Notes:
+  - Always loads 8 bits
+  - Use BF to read 16-bit words in two operations
+  - Syntax: STR memory, register (opposite of STA)
+```
+
+### 13. SBF - Set Byte Flip
+```
+Encoding: 01001 X 0000000000
+Syntax:   SBF X
+Cycles:   4
+
+Description:
+  Sets the BF (Byte Flip) register to 0 or 1.
+  X = 0: Select low byte in word operations
+  X = 1: Select high byte in word operations
+
+Example:
+  SBF 0         ; BF = 0 (low byte)
+  STR $50, R0   ; Load low byte
+  SBF 1         ; BF = 1 (high byte)
+  STR $50, R1   ; Load high byte
+
+Notes:
+  - Affects: STA, STR, NOR, AND, ADD, SUB, IOI
+  - Must be set before each operation that uses it
+  - Does not automatically toggle
+```
+
+### 14. SCR - Set Constant to Register
+```
+Encoding: 01010 X 00 YYYYYYYY
+Syntax:   SCR X, 0xYY
+Cycles:   4
+
+Description:
+  Sets register X to the 8-bit immediate value YY.
+
+Example:
+  SCR R0, 0x00  ; R0 = 0
+  SCR R1, 0xFF  ; R1 = 255
+  SCR R2, 42    ; R2 = 42
+
+Notes:
+  - Only instruction that loads immediate values
+  - Limited to 8-bit constants
+  - For 16-bit values, use memory or build with arithmetic
+```
+
+### 15. IOO - I/O Output
+```
+Encoding: 01011 X Y 0 ZZZZZZZZ
+Syntax:   IOO X, Y, 0xZZ
+Cycles:   4
+
+Description:
+  Sends 24 bits (3 bytes) to I/O port.
+  Byte 1: Register X (8 bits)
+  Byte 2: Register Y (8 bits)
+  Byte 3: Immediate ZZ (8 bits)
+
+Example:
+  SCR R0, 0x12
+  SCR R1, 0x34
+  IOO R0, R1, 0x56  ; Send 0x123456 to I/O
+
+Notes:
+  - I/O port determined by current I/O bank (IBC instruction)
+  - Actual I/O behavior is hardware-dependent
+  - Typically used for MMP control or external hardware
+```
+
+### 16. IOI - I/O Input
+```
+Encoding: 01011 X Y 1 ZZZZZZZZ
+Syntax:   IOI X, Y, $ZZ
+Cycles:   4
+
+Description:
+  Receives 24 bits (3 bytes) from I/O port.
+  Byte 1 → Register X
+  Byte 2 → Register Y
+  Byte 3 → Memory $DPZZ (high or low byte based on BF)
+
+Example:
+  SDP $10
+  SBF 0
+  IOI R0, R1, $50  ; Receive 3 bytes from I/O
+                   ; Byte 1 → R0
+                   ; Byte 2 → R1
+                   ; Byte 3 → $1050 low byte
+
+Notes:
+  - I/O port determined by current I/O bank
+  - Third byte respects BF register
+  - Use for reading MMP status or external input
+```
+
+### 17. ZOR - Zero Out Register
+```
+Encoding: 01100 X 0100000000
+Syntax:   ZOR X
+Cycles:   4
+
+Description:
+  Sets register X to zero.
+
+Example:
+  ZOR R0        ; R0 = 0
+  ZOR R1        ; R1 = 0
+
+Notes:
+  - Equivalent to SCR X, 0x00 but more explicit
+  - Useful for initializing registers
+  - Faster to type than SCR X, 0
+```
+
+### 18. ZOA - Zero Out Address
+```
+Encoding: 01100 001 XXXXXXXX
+Syntax:   ZOA $XX
+Cycles:   4
+
+Description:
+  Zeroes out both bytes of the word at address $DPXX.
+  Sets $DPXX = 0x0000 (entire 16-bit word).
+
+Example:
+  SDP $10
+  ZOA $50       ; $1050 = 0x0000
+
+Notes:
+  - Affects entire word, ignores BF register
+  - Faster than two STA operations
+  - Useful for clearing memory regions
+```
+
+### 19. LST - Loop Start
+```
+Encoding: 01101 0 XXXX YYYYYY
+Syntax:   LST 0xX, 0xYY
+Cycles:   4
+
+Description:
+  Starts a loop with ID X that iterates YY times.
+  X: Loop ID (0-15)
+  YY: Iteration count (0-63)
+
+Example:
+  LST 0x0, 0x0A ; Loop 0, iterate 10 times
+  ; ... loop body ...
+  LFN 0x0       ; End loop 0
+
+Notes:
+  - Can nest up to 16 loops (IDs 0-15)
+  - Iteration count must be known at compile time
+  - Use higher IDs for inner loops
+```
+
+### 20. LFN - Loop Finish
+```
+Encoding: 01101 1 XXXX 000000
+Syntax:   LFN 0xX
+Cycles:   4
+
+Description:
+  Marks the end of loop with ID X.
+  Decrements iteration counter and jumps back if not done.
+
+Example:
+  LST 0x0, 0x05
+  SCR R0, 0x00
+  ADD R0, R0, R1  ; Accumulate
+  LFN 0x0         ; Repeat 5 times
+
+Notes:
+  - Must match LST ID
+  - Automatically handles counter and jump
+  - More efficient than manual CMP + branch
+```
+
+### 21. BRT - Break
+```
+Encoding: 01110 XXXXXXXXXXX
+Syntax:   BRT 0xXXX
+Cycles:   4
+
+Description:
+  Breaks out of the current highest-ID loop.
+  Skips ahead by X instructions after the loop end.
+
+Example:
+  LST 0x0, 0x0A
+  ; ... loop body ...
+  JNZ R0, 0, exit_early
+  ; ... more code ...
+  LFN 0x0
+exit_early:
+
+Notes:
+  - Exits highest ID loop in current scope
+  - Use for early loop termination
+  - X determines how many instructions to skip after LFN
+```
+
+### 22. BRP - Break to Re-enter
+```
+Encoding: 01111 00000000000
+Syntax:   BRP
+Cycles:   4
+
+Description:
+  Exits the current loop but allows re-entering it later.
+  Does not consume the iteration count.
+
+Example:
+  LST 0x0, 0x05
+  ; ... first part ...
+  BRP           ; Exit but can re-enter
+  ; ... other code ...
+  ; Later: jump back to re-enter loop
+
+Notes:
+  - Advanced control flow feature
+  - Preserves loop state
+  - Rarely used in typical code
+```
+
+### 23. IBC - I/O Bank Change
+```
+Encoding: 10000 XXXXXXXXXXX
+Syntax:   IBC 0xXXX
+Cycles:   4
+
+Description:
+  Changes the active I/O port bank to XXX.
+  Affects IOO and IOI operations.
+
+Example:
+  IBC 0x001     ; Switch to I/O bank 1
+  IOO R0, R1, 0x00 ; Output to bank 1
+
+Notes:
+  - Used for accessing multiple I/O regions
+  - MMP likely uses specific bank numbers
+  - Default bank is usually 0
+```
+
+### 24. RBC - ROM Bank Change
+```
+Encoding: 10001 XXXXXXXXXXX
+Syntax:   RBC 0xXXX
+Cycles:   4
+
+Description:
+  Changes the active ROM bank visible at $D000-$FFFF.
+  XXX selects which 24 KiB bank (0-17 for 448 KiB total).
+
+Example:
+  RBC 0x000     ; Bank 0 visible at $D000
+  RBC 0x001     ; Bank 1 visible at $D000
+  RBC 0x011     ; Bank 17 visible at $D000
+
+Notes:
+  - 448 KiB AROM = 18 banks × 24 KiB
+  - Only $D000-$FFFF window changes (12 KiB visible)
+  - Actually 24 KiB per bank, implementation-dependent windowing
+  - Code executing from AROM should not switch its own bank
+```
+
+### 25. BEQ - Branch if Equal
+```
+Encoding: 10010 X Y 0 ZZZZZZZZ
+Syntax:   BEQ X, Y, $ZZ
+Cycles:   4
+
+Description:
+  Jumps to $RPZZ if register X equals register Y.
+
+Example:
+  SCR R0, 42
+  SCR R1, 42
+  SRP $D0
+  BEQ R0, R1, $50  ; Jump to $D050 (will jump)
+
+Notes:
+  - Uses RP register for high byte of address
+  - Does not modify registers
+  - For memory comparison, load both values first
+```
+
+### 26. BNE - Branch if Not Equal
+```
+Encoding: 10010 X Y 1 ZZZZZZZZ
+Syntax:   BNE X, Y, $ZZ
+Cycles:   4
+
+Description:
+  Jumps to $RPZZ if register X does not equal register Y.
+
+Example:
+  SCR R0, 10
+  SCR R1, 20
+  SRP $D0
+  BNE R0, R1, $50  ; Jump to $D050 (will jump)
+```
+
+### 27. BLT - Branch if Less Than
+```
+Encoding: 10011 X Y 0 ZZZZZZZZ
+Syntax:   BLT X, Y, $ZZ
+Cycles:   4
+
+Description:
+  Jumps to $RPZZ if register X < register Y (unsigned).
+
+Example:
+  SCR R0, 10
+  SCR R1, 20
+  SRP $D0
+  BLT R0, R1, $50  ; Jump to $D050 (10 < 20, will jump)
+
+Notes:
+  - Unsigned comparison
+  - No signed comparison available
+  - For signed, implement via bit manipulation
+```
+
+### 28. BGT - Branch if Greater Than
+```
+Encoding: 10011 X Y 1 ZZZZZZZZ
+Syntax:   BGT X, Y, $ZZ
+Cycles:   4
+
+Description:
+  Jumps to $RPZZ if register X > register Y (unsigned).
+
+Example:
+  SCR R0, 30
+  SCR R1, 20
+  SRP $D0
+  BGT R0, R1, $50  ; Jump to $D050 (30 > 20, will jump)
+```
+
+### 29. SDB - Set Data Byte Register
+```
+Encoding: 10100 000 XXXXXXXX
+Syntax:   SDB $XX
+Cycles:   4
+
+Description:
+  Sets the DB (Data Byte) register to value XX.
+  Used with WRH and WRL instructions.
+
+Example:
+  SDB $30
+  WRH 0x12      ; Write 0x12 to high byte of $DP30
+
+Notes:
+  - DB acts as an offset within the DP page
+  - Allows indexed memory access pattern
+```
+
+### 30. WRH - Write High Byte
+```
+Encoding: 10101 00 0 XXXXXXXX
+Syntax:   WRH 0xXX
+Cycles:   4
+
+Description:
+  Writes immediate value XX to the high byte of $DPDB.
+
+Example:
+  SDP $10
+  SDB $50
+  WRH 0xAB      ; Write 0xAB to high byte of $1050
+
+Notes:
+  - Immediate write, no register needed
+  - Useful for quick initialization
+  - Combine with WRL to write full word
+```
+
+### 31. WRL - Write Low Byte
+```
+Encoding: 10101 00 1 XXXXXXXX
+Syntax:   WRL 0xXX
+Cycles:   4
+
+Description:
+  Writes immediate value XX to the low byte of $DPDB.
+
+Example:
+  SDP $10
+  SDB $50
+  WRL 0xCD      ; Write 0xCD to low byte of $1050
+
+Notes:
+  - Immediate write, no register needed
+  - Combine with WRH to write 16-bit values
+```
+
+### 32. CFS - Callable Function Start
+```
+Encoding: 10110 XXXXXXXXXXX
+Syntax:   CFS 0xXXX
+Cycles:   4
+
+Description:
+  Marks the beginning of a callable function with ID XXX.
+  Function can be called from anywhere using CCF.
+
+Example:
+  CFS 0x001     ; Function 1 starts here
+  ; ... function body ...
+  CFE 0x001     ; Function 1 ends here
+
+Notes:
+  - Function IDs 0-2047
+  - Must be paired with CFE of same ID
+  - No automatic stack management
+```
+
+### 33. CFE - Callable Function End
+```
+Encoding: 10111 XXXXXXXXXXX
+Syntax:   CFE 0xXXX
+Cycles:   4
+
+Description:
+  Marks the end of a callable function with ID XXX.
+  Returns control to the caller.
+
+Example:
+  CFS 0x042
+  ; ... function body ...
+  CFE 0x042     ; Return to caller
+
+Notes:
+  - Must match corresponding CFS ID
+  - Automatically returns to caller
+  - No return value mechanism built-in
+```
+
+### 34. CCF - Call Callable Function
+```
+Encoding: 11000 XXXXXXXXXXX
+Syntax:   CCF 0xXXX
+Cycles:   4
+
+Description:
+  Calls the callable function with ID XXX.
+  Execution continues at the CFS with matching ID.
+
+Example:
+  CCF 0x001     ; Call function 1
+  ; ... execution returns here after CFE 0x001 ...
+
+Notes:
+  - Function must be defined with CFS/CFE
+  - Allows code reuse and organization
+  - Maximum 2048 functions
+```
+
+### 35. CME - Conditional Jump Equal
+```
+Encoding: 11001 X Y 00 Z WWWWWW
+Syntax:   CME X, Y, Z, $WW
+Cycles:   4
+
+Description:
+  If X equals Y, jump by offset WW.
+  Z = 0: Jump forward by WW words
+  Z = 1: Jump backward by WW words
+
+Example:
+  SCR R0, 42
+  SCR R1, 42
+  CME R0, R1, 0, $05  ; Jump forward 5 words if equal
+
+Notes:
+  - Relative jump, not absolute
+  - Maximum offset: 63 words
+  - More compact than separate CMP + JMP
+```
+
+### 36. CMN - Conditional Jump Not Equal
+```
+Encoding: 11001 X Y 01 Z WWWWWW
+Syntax:   CMN X, Y, Z, $WW
+Cycles:   4
+
+Description:
+  If X does not equal Y, jump by offset WW.
+  Z = 0: Jump forward by WW words
+  Z = 1: Jump backward by WW words
+```
+
+### 37. CMG - Conditional Jump Greater
+```
+Encoding: 11001 X Y 10 Z WWWWWW
+Syntax:   CMG X, Y, Z, $WW
+Cycles:   4
+
+Description:
+  If X > Y (unsigned), jump by offset WW.
+  Z = 0: Jump forward by WW words
+  Z = 1: Jump backward by WW words
+```
+
+### 38. CML - Conditional Jump Less
+```
+Encoding: 11001 X Y 11 Z WWWWWW
+Syntax:   CML X, Y, Z, $WW
+Cycles:   4
+
+Description:
+  If X < Y (unsigned), jump by offset WW.
+  Z = 0: Jump forward by WW words
+  Z = 1: Jump backward by WW words
+```
+
+## Opcode Summary Table
+
+| Opcode | Mnemonic | Category        | Description                    |
+|--------|----------|-----------------|--------------------------------|
+| 00000  | NOP      | Control         | No operation with stall        |
+| 00001  | JMP      | Control         | Unconditional jump             |
+| 00010  | JNZ      | Control         | Jump if not zero               |
+| 00011  | SRP/SDP  | Register Mgmt   | Set page registers             |
+| 00100  | NOR      | Logic           | Logical NOR                    |
+| 00101  | AND      | Logic           | Logical AND                    |
+| 00110  | ADD      | Arithmetic      | Addition                       |
+| 00111  | SUB      | Arithmetic      | Subtraction                    |
+| 01000  | STA/STR  | Memory          | Store/Load memory              |
+| 01001  | SBF      | Register Mgmt   | Set byte flip                  |
+| 01010  | SCR      | Register Op     | Set constant to register       |
+| 01011  | IOO/IOI  | I/O             | I/O output/input               |
+| 01100  | ZOR/ZOA  | Register Op     | Zero out register/address      |
+| 01101  | LST/LFN  | Loop Control    | Loop start/finish              |
+| 01110  | BRT      | Loop Control    | Break from loop                |
+| 01111  | BRP      | Loop Control    | Break to re-enter              |
+| 10000  | IBC      | I/O             | I/O bank change                |
+| 10001  | RBC      | Memory          | ROM bank change                |
+| 10010  | BEQ/BNE  | Conditional     | Branch if equal/not equal      |
+| 10011  | BLT/BGT  | Conditional     | Branch if less/greater         |
+| 10100  | SDB      | Register Mgmt   | Set data byte register         |
+| 10101  | WRH/WRL  | Memory          | Write high/low byte immediate  |
+| 10110  | CFS      | Function        | Callable function start        |
+| 10111  | CFE      | Function        | Callable function end          |
+| 11000  | CCF      | Function        | Call callable function         |
+| 11001  | CME/CMN  | Conditional     | Conditional jump equal/not eq  |
+| 11001  | CML/CMG  | Conditional     | Conditional jump less/greater  |
+
+## Instruction Timing
+
+All instructions execute in exactly 4 clock cycles (base).
+NOP can stall for up to 2047 additional cycles.
+
+At 4.2 MHz with 4 CPI:
+- Instruction rate: 1,050,000 instructions/second
+- Instruction time: ~0.952 microseconds
+- NOP max stall: ~1.95 milliseconds
+
+## Programming Tips
+
+1. **Use SCR for constants**: Only instruction with immediates
+2. **Minimize SDP/SRP changes**: Set once per memory region
+3. **Use hardware loops**: LST/LFN more efficient than manual loops
+4. **Watch BF register**: Must be set before each byte operation
+5. **Leverage functions**: CFS/CFE/CCF for code organization
+6. **Bank carefully**: RBC is expensive, organize to minimize switches
+7. **Relative jumps**: CME/CMN/CML/CMG more compact for local branches

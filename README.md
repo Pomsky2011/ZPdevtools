@@ -307,11 +307,24 @@ This loads the binary and runs it on the PPU, showing visual output.
 
 ## Documentation
 
+### PPU Documentation
 - `README.md` - This file (quick reference)
 - `docs/ppu/ucode.txt` - Complete PPU microcode specification (2800+ lines)
 - `docs/ppu/preset-e-and-shorthands.txt` - **Preset E & assembler shorthands guide**
 
 **⚠️ Read `preset-e-and-shorthands.txt` before using the new features!**
+
+### APU Documentation
+- `docs/apu/README.txt` - APU documentation index
+- `docs/apu/overview.txt` - Architecture overview (8-bit RISC, 4.2 MHz, MMP, SST)
+- `docs/apu/instruction-set.txt` - Complete instruction reference (41 instructions)
+- `docs/apu/memory-map.txt` - Memory layout ($0000-$FFFF, banking)
+- `docs/apu/registers.txt` - Register reference (X, Y, PC, RP, DP, DB, BF)
+- `docs/apu/sst.txt` - Sample Storage System format
+- `docs/apu/mmp.txt` - Music Mixing Processor (16 stereo channels)
+- `docs/apu/programming-guide.txt` - Examples and programming patterns
+
+**🎵 Complete APU/DSP documentation now available!**
 
 ## Files
 

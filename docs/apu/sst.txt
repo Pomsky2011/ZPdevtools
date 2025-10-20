@@ -1,0 +1,472 @@
+# ZeroPoint APU Sample Storage System (SST)
+
+## Overview
+
+The SST (Sample Storage/Streaming) system provides structured storage for audio samples
+in the APU's memory. It uses a special block format that combines sample data with
+metadata for looping, dynamic range expansion, and playback control.
+
+## Memory Regions
+
+**SST Region:** $9000-$CFFF (16 KiB)
+- Sample data stored in 16-byte blocks
+- Total capacity: 1024 blocks × 12 samples = 12,288 samples
+
+**STL Region:** $7000-$7FFF (4 KiB)
+- Sample Table List - pointers to SST blocks
+- Each entry is 4 bytes (2 words)
+- Total capacity: 1024 entries
+
+## Block Format
+
+Each SST block is 16 bytes total:
+
+```
+Offset  Size  Description
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+0-3     4 B   Header (control metadata)
+4-15    12 B  Sample Data (12 × 8-bit PCM samples)
+```
+
+## Header Format (4 bytes = 8 nybbles)
+
+```
+Byte:     0       1       2       3
+Nybble:   0   1   2   3   4   5   6   7
+Field:   [X] [X] [Y] [L] [V] [U] [T] [S]
+```
+
+### Header Field Definitions
+
+**XX (Nybbles 0-1): Amount of Loops**
+- 8-bit value (0-255)
+- Number of times to repeat this block
+- 0 = Play once, no looping
+- 255 = Loop 255 times
+- Typically set to 255 for continuous loops
+
+**Y (Nybble 2): Sample to Start Looping At**
+- 4-bit value (0-15)
+- Which sample within this block to start loop from
+- 0 = Loop from first sample (sample 0)
+- 11 = Loop from last sample (sample 11)
+- Samples 0-11 correspond to bytes 4-15 of block
+
+**L (Nybble 3): Loop Configuration**
+- 4 bits: `ZW00` (bits 3,2,1,0)
+
+**Bit Z (Bit 3 of nybble L):**
+- 0 = Standard looping behavior
+- 1 = Loop from here to end of sector once, then stop
+
+**Bit W (Bit 2 of nybble L):**
+- 0 = More blocks follow in this sector
+- 1 = This is the final block in the sector
+
+**Bits 1-0:** Reserved (set to 0)
+
+**V (Nybble 4): Sample for Clamping One**
+- 4-bit value (0-15)
+- Sample index where first clamping adjustment is applied
+- 0 = First sample, 11 = Last sample
+
+**U (Nybble 5): Sample for Clamping Two**
+- 4-bit value (0-15)
+- Sample index where second clamping adjustment is applied
+
+**T (Nybble 6): Clamping One Amount**
+- 4-bit value (0-15)
+- Adjustment amount for clamping one:
+  - 0-7: Add (T × 8) to PCM value
+  - 8-15: Subtract ((15 - T) × 8) from PCM value
+- Examples:
+  - 0 = Add 0 (no change)
+  - 1 = Add 8
+  - 7 = Add 56
+  - 8 = Subtract 56
+  - 15 = Subtract 0 (no change)
+
+**S (Nybble 7): Clamping Two Amount**
+- Same format as T
+- Independent adjustment for clamping two
+
+## Sample Data (12 bytes)
+
+Bytes 4-15 contain 12 samples, each 8-bit PCM (Pulse Code Modulation).
+
+**Format:**
+- Signed 8-bit PCM
+- Range: -128 to +127 (without clamping)
+- Sample rate: Determined by MMP playback rate
+- Samples are sequential in time
+
+**Layout:**
+```
+Byte 4:  Sample 0
+Byte 5:  Sample 1
+Byte 6:  Sample 2
+...
+Byte 15: Sample 11
+```
+
+## Clamping System
+
+The clamping system allows samples to exceed the normal 8-bit range (-128 to 127)
+by applying adjustments at specific points.
+
+### How Clamping Works
+
+1. **Standard Playback:** Samples play as-is (8-bit PCM)
+2. **At Sample V:** Apply clamping adjustment T
+3. **At Sample U:** Apply clamping adjustment S
+4. **Result:** Effective dynamic range expanded beyond 8-bit
+
+### Clamping Calculation
+
+```
+If T is 0-7:
+  Clamped Value = PCM Sample + (T × 8)
+
+If T is 8-15:
+  Clamped Value = PCM Sample - ((15 - T) × 8)
+```
+
+### Effective Bit Depth
+
+With clamping, samples can effectively represent 10-11 bit dynamic range:
+
+```
+8-bit range: -128 to +127 (256 values)
+With max clamp (+56): -128 to +183 (311 values)
+With max declamp (-56): -184 to +127 (311 values)
+Full range: -184 to +183 (367 values, ~8.5 bits effective)
+```
+
+### Clamping Example
+
+```
+Header:
+  V = 3   (clamp at sample 3)
+  T = 2   (add 16)
+  U = 8   (clamp at sample 8)
+  S = 10  (subtract 40)
+
+Sample data (before clamping):
+  [50, 60, 70, 80, 90, 100, 110, 120, 100, 90, 80, 70]
+
+After clamping:
+  Sample 0-2: [50, 60, 70]        (unchanged)
+  Sample 3-7: [96, 106, 116, 126, 136]  (added 16)
+  Sample 8-11: [60, 50, 40, 30]   (subtracted 40)
+```
+
+**Use Case:** Smooth volume envelopes, crescendos, fades
+
+## STL (Sample Table List) Format
+
+Each STL entry is 4 bytes (1 word + 1 word):
+
+```
+Offset  Size  Description
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+0-1     2 B   Sample Words Address (pointer to SST block)
+2-3     2 B   Loop Words Address (sample number for loop point)
+```
+
+### Sample Words Address (Bytes 0-1)
+
+16-bit pointer to the SST block containing this sample's data.
+
+**Value Range:** $9000-$CFFF (SST region)
+
+**Example:**
+```
+$9000 = First SST block
+$9010 = Second SST block (16 bytes per block)
+$9020 = Third SST block
+...
+$CFE0 = Last complete block (block 1023)
+```
+
+### Loop Words Address (Bytes 2-3)
+
+16-bit value specifying where to loop back to within the sample.
+
+**Interpretation:**
+- 0 = No looping, play once and stop
+- Non-zero = Sample number to jump back to when reaching end
+
+**Note:** This is a sample number, not a byte address.
+
+**Example:**
+```
+If sample has 48 samples total (4 blocks × 12 samples):
+  Loop Words Address = 12 → Loop back to sample 12 (second block)
+  Loop Words Address = 0  → Play once, don't loop
+```
+
+### STL Entry Example
+
+```
+STL entry at $7000:
+  Bytes 0-1: $9050  ; Sample data starts at SST block $9050
+  Bytes 2-3: $0008  ; Loop back to sample 8 when done
+
+MMP channel setup:
+  Write $7000 to MMP STL address register for channel 0
+  Channel 0 now plays the sample starting at $9050
+  When it reaches the end, it loops back to sample 8
+```
+
+## Complete Sample Format Example
+
+### Short Looping Sample (1 block)
+
+```
+SST Block at $9000:
+  Header:
+    XX = 255  (loop forever)
+    Y  = 0    (loop from sample 0)
+    L  = 0010 (W=1, final block; Z=0, normal loop)
+    V  = 0    (no clamping one)
+    U  = 0    (no clamping two)
+    T  = 0    (no adjustment)
+    S  = 0    (no adjustment)
+
+  Samples (12 bytes):
+    [0, 30, 58, 79, 95, 104, 106, 100, 87, 68, 45, 20]
+    ; Sine wave approximation
+
+STL Entry at $7000:
+  Sample Address: $9000
+  Loop Address: $0000 (loop entire sample)
+```
+
+### Multi-Block Sample with Loop Point
+
+```
+Block 1 at $9100:
+  Header: XX=1, Y=0, L=0000 (more blocks follow), V=0, U=0, T=0, S=0
+  Samples: [attack samples, 0-11]
+
+Block 2 at $9110:
+  Header: XX=1, Y=0, L=0000 (more blocks follow), V=0, U=0, T=0, S=0
+  Samples: [decay samples, 12-23]
+
+Block 3 at $9120:
+  Header: XX=255, Y=0, L=0010 (final block, loop forever), V=0, U=0, T=0, S=0
+  Samples: [sustain loop samples, 24-35]
+
+STL Entry at $7010:
+  Sample Address: $9100  (start at block 1)
+  Loop Address: $0018    (loop back to sample 24, start of block 3)
+
+Playback behavior:
+  1. Play samples 0-23 once (attack + decay)
+  2. Loop samples 24-35 forever (sustain)
+```
+
+### Sample with Dynamic Range Clamping
+
+```
+SST Block at $9200:
+  Header:
+    XX = 10   (loop 10 times)
+    Y  = 0    (loop from beginning)
+    L  = 0010 (final block)
+    V  = 4    (clamp at sample 4)
+    U  = 8    (clamp at sample 8)
+    T  = 3    (add 24 at sample 4)
+    S  = 12   (subtract 24 at sample 8)
+
+  Samples (before clamping):
+    [0, 20, 40, 60, 80, 100, 120, 100, 80, 60, 40, 20]
+
+  Effective output:
+    [0, 20, 40, 60, 104, 124, 144, 124, 56, 36, 16, -4]
+    ; Louder peak, then sudden drop
+```
+
+## Sector Organization
+
+A "sector" is a collection of SST blocks that form one complete sample.
+
+### Single-Block Sector
+```
+Block with L[W]=1 (final block flag set)
+```
+
+### Multi-Block Sector
+```
+Block 1: L[W]=0 (more blocks follow)
+Block 2: L[W]=0 (more blocks follow)
+Block 3: L[W]=0 (more blocks follow)
+Block 4: L[W]=1 (final block)
+```
+
+### Sector Traversal
+
+The MMP hardware reads blocks sequentially until it encounters a block
+with the W bit set (L[bit 2] = 1), indicating the end of the sector.
+
+## Sample Capacity Calculations
+
+### Maximum Samples per Block
+```
+12 samples per block
+```
+
+### Maximum Blocks in SST
+```
+16 KiB ÷ 16 bytes/block = 1024 blocks
+```
+
+### Total Sample Capacity
+```
+1024 blocks × 12 samples/block = 12,288 samples
+```
+
+### Sample Duration Examples
+
+At 48 kHz sample rate:
+```
+12 samples = 0.25 ms
+1 block (12 samples) = 0.25 ms
+10 blocks (120 samples) = 2.5 ms
+100 blocks (1200 samples) = 25 ms
+1024 blocks (12,288 samples) = 256 ms
+```
+
+At 22 kHz sample rate:
+```
+1024 blocks (12,288 samples) = 558 ms
+```
+
+At 11 kHz sample rate:
+```
+1024 blocks (12,288 samples) = 1.12 seconds
+```
+
+## Programming the SST
+
+### Writing a Sample to SST
+
+```
+; Write a simple sine wave sample to $9000
+
+SDP $90       ; Set data page to SST region
+SDB $00       ; Start at $9000
+
+; Write header (4 bytes)
+WRH 0xFF      ; XX = 255 (loop forever)
+WRL 0x00      ; (high byte of XX + low nybble of Y)
+; Note: Actual nybble packing may vary, this is conceptual
+
+SDB $01
+WRH 0x00      ; Y=0, L=0010 (final block, loop from 0)
+WRL 0x00      ; V=0, U=0, T=0, S=0
+
+; Write sample data (12 bytes, sine wave approximation)
+SDB $04
+SBF 0
+SCR R0, 0
+STA R0, $04
+SCR R0, 30
+STA R0, $05
+SCR R0, 58
+STA R0, $06
+; ... etc for all 12 samples
+```
+
+### Writing an STL Entry
+
+```
+; Point STL entry 0 ($7000) to SST block at $9000
+
+SDP $70       ; STL region
+SDB $00       ; First entry
+
+WRH 0x90      ; Sample address high byte
+WRL 0x00      ; Sample address low byte
+
+SDB $02       ; Loop address offset
+WRH 0x00      ; Loop address = 0 (loop entire sample)
+WRL 0x00
+```
+
+### Configuring MMP to Play the Sample
+
+```
+; Set MMP channel 0 to play sample at STL entry $7000
+
+SDP $00       ; MMP registers
+; Write $7000 to channel 0 STL address register
+; (See mmp.txt for exact register layout)
+
+; Assuming STL address is at offset $54 for channel 0:
+SDB $54
+WRH 0x70
+WRL 0x00
+
+; Set pitch, volume, enable channel...
+```
+
+## Advanced Techniques
+
+### Creating Smooth Loops
+
+```
+To avoid clicking at loop point:
+1. Ensure loop point sample value matches loop start sample value
+2. Use crossfading in sample data
+3. Use clamping to adjust loop point volume
+```
+
+### Variable Playback Speed
+
+```
+MMP pitch control acts as a resampling rate:
+- Lower pitch = slower playback = lower frequency
+- Higher pitch = faster playback = higher frequency
+- Can repitch a single sample to create multiple notes
+```
+
+### Dynamic Sample Loading
+
+```
+1. Reserve SST blocks for dynamic samples
+2. Stream new sample data from CPU via DEF88186
+3. Overwrite SST blocks during playback gaps
+4. Update STL entries to point to new blocks
+```
+
+### Compression via Clamping
+
+```
+Store samples with reduced dynamic range (6-7 bits)
+Use clamping to restore full range at playback:
+  - Saves memory (could delta-encode or pack samples)
+  - Trades CPU time for storage space
+```
+
+## Limitations
+
+1. **12-Sample Granularity:** Samples must be multiples of 12 samples
+2. **16-Byte Block Size:** Overhead of 4 header bytes per 12 samples (33%)
+3. **Limited Clamping Points:** Only 2 clamp points per block
+4. **Loop Point Resolution:** Loop points aligned to sample boundaries (not sample-accurate for multi-block loops)
+5. **No Compression:** All samples stored as raw PCM
+
+## Best Practices
+
+1. **Align Loop Points:** Start loops on block boundaries when possible
+2. **Pre-Process Samples:** Apply clamping calculations offline, store final values
+3. **Use STL Wisely:** Reserve STL entries for active samples, reuse entries
+4. **Test Loop Points:** Ensure loop points don't cause audible clicks
+5. **Monitor Capacity:** Track SST usage to avoid overflow
+
+## See Also
+
+- memory-map.txt - SST and STL memory regions
+- mmp.txt - MMP registers for sample playback control
+- programming-guide.txt - Complete sample playback examples

@@ -105,12 +105,23 @@ loop:
 
 ## Documentation Status
 
-### Complete
+### Complete - PPU
 - ✅ README.md with basic usage
 - ✅ Instruction reference
 - ✅ Shorthand documentation (docs/ppu/preset-e-and-shorthands.txt)
 - ✅ Interrupt system (R59/R60)
 - ✅ Target register warnings
+
+### Complete - APU (2025-10-19)
+- ✅ Complete APU/DSP documentation suite (8 files, ~100 KB)
+- ✅ docs/apu/README.txt - Documentation index
+- ✅ docs/apu/overview.txt - Architecture overview
+- ✅ docs/apu/instruction-set.txt - All 41 instructions documented
+- ✅ docs/apu/memory-map.txt - Complete memory layout
+- ✅ docs/apu/registers.txt - Register reference
+- ✅ docs/apu/sst.txt - Sample Storage System
+- ✅ docs/apu/mmp.txt - Music Mixing Processor
+- ✅ docs/apu/programming-guide.txt - 8 complete examples
 
 ### Needed
 - [ ] Troubleshooting guide
@@ -118,6 +129,7 @@ loop:
 - [ ] Best practices document
 - [ ] Performance optimization guide
 - [ ] Example programs (working ones, once bug is fixed)
+- [ ] APU assembler (apuasm) - similar to zpasm for APU code
 
 ## Examples Status
 
