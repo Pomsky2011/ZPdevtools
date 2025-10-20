@@ -2,10 +2,26 @@
 
 Development tools for the ZeroPoint fantasy console PPU microarchitecture.
 
+**⚠️ IMPORTANT: Assembler Shorthand Users**
+
+If you use any of the following shorthands:
+- Label-based jumps (`JMR loop`, `JMZ label`, etc.)
+- Stack operations (`PUSH`, `POP`, `JSR`, `RET`)
+- Halt shorthand (`HLT`)
+
+**Target registers 0 and 1 will be corrupted/overwritten by these shorthands.**
+
+You CAN use target registers 0 and 1 manually, but be aware they'll get stomped on whenever you use a shorthand. For reliable code, stick to target registers 2 and 3.
+
+✅ Safe from shorthand interference: Target registers 2 and 3
+⚠️ Will be overwritten by shorthands: Target registers 0 and 1
+
+See `docs/ppu/preset-e-and-shorthands.txt` for complete documentation.
+
 ## Building
 
 ```bash
-make
+gcc -o zpasm zpasm.c
 ```
 
 This creates the `zpasm` executable.
@@ -45,8 +61,13 @@ loop:
 Registers can be specified in multiple formats:
 - `R0` to `R63` - Standard register notation
 - `0` to `63` - Direct register numbers
+- `R59` - V-Blank Interrupt Address (pushes return address and jumps on V-Blank if non-zero)
+- `R60` - H-Blank Interrupt Address (pushes return address and jumps on H-Blank if non-zero)
+- `SP` - Stack Pointer (alias for R61, used by interrupts and RET)
 - `PC` - Program Counter (alias for R62)
 - `DP` - Data Pointer (alias for R63)
+
+**Interrupts**: When R59 or R60 is non-zero, the PPU automatically pushes the return address onto the stack before jumping to the interrupt handler. Use `RET` to return from interrupt handlers.
 
 #### Immediate Values
 
@@ -60,8 +81,8 @@ Registers can be specified in multiple formats:
 
 | Instruction | Operands | Description | Example |
 |------------|----------|-------------|---------|
-| `DEFCALL` | address | Define callable function | `DEFCALL 0x100` |
-| `ENDDEFCALL` | - | End function definition | `ENDDEFCALL` |
+| `DEFCALL` | X, Y | Define callable: address in RX, ID in RY.LSB | `DEFCALL R10, R11` |
+| `ENDDEFCALL` | X | End call definition for ID in RX.LSB | `ENDDEFCALL R11` |
 | `SWAPREG` | X, Y | Swap registers X and Y | `SWAPREG R0, R1` |
 | `CLR` | X | Clear register X | `CLR R0` |
 | `CMP` | X, Y | Compare X and Y (sets flags) | `CMP R0, R1` |
@@ -77,14 +98,32 @@ Registers can be specified in multiple formats:
 | `SUB` | X, Y | X = X - Y | `SUB R0, R1` |
 | `MUL` | X, Y | X = X × Y | `MUL R0, R1` |
 | `INTDIV` | X, Y | X = X / Y (integer) | `INTDIV R0, R1` |
-| `HALT` | - | Stop execution | `HALT` |
+
+#### Preset E Instructions (Immediate/Byte Operations)
+
+**⚠️ If using shorthands, target registers 0 and 1 will be overwritten! Use 2 and 3 for safety.**
+
+| Instruction | Operands | Description | Example |
+|------------|----------|-------------|---------|
+| `TARREG` | T, Y, X | Set target register T to point to register X's byte Y | `TARREG 2, LSB, R5` |
+| `SETBYTE` | T, imm8 | Set byte in target register to 8-bit immediate | `SETBYTE 2, 0x42` |
+| `BUILD` | T1, T2, X | Build register X from target registers (T1=MSB, T2=LSB) | `BUILD 2, 3, R10` |
+| `CPREG` | X, Y | Copy register X to Y (uses register banks) | `CPREG R5, R10` |
+
+**Example - Load 0x1234 into R5:**
+```asm
+TARREG 2, LSB, R5    ; Target 2 → R5 low byte
+TARREG 3, MSB, R5    ; Target 3 → R5 high byte
+SETBYTE 2, 0x34      ; R5[7:0] = 0x34
+SETBYTE 3, 0x12      ; R5[15:8] = 0x12
+```
 
 #### Preset F Instructions (Graphics/Control)
 
 | Instruction | Operands | Description | Example |
 |------------|----------|-------------|---------|
 | `SETPOS` | X, Y | Set position (4-bit reg IDs) | `SETPOS R0, R1` |
-| `SETTILE` | tile_id | Set tile ID | `SETTILE 0x42` |
+| `SETTILE` | X, mode | Set tile from register X, mode 0-3 | `SETTILE R10, 3` |
 | `SETDP` | X | Set DP from register X | `SETDP R5` |
 | `MOVDP` | X | Move register X to (DP) | `MOVDP R1` |
 | `SETRENDMOD` | mode | Set render mode (0=16bit, 1=32bit) | `SETRENDMOD 0` |
@@ -93,101 +132,135 @@ Registers can be specified in multiple formats:
 | `JMR` | - | Jump relative to (PC) | `JMR` |
 | `MOV` | X | Move from (DP) to register X | `MOV R5` |
 | `SETREGBANK` | X_bank, Y_bank | Set register banks | `SETREGBANK 0, 1` |
-| `CLRTILE` | - | Clear current tile | `CLRTILE` |
+| `CLRTILE` | - | Clear all tile storage | `CLRTILE` |
 | `CLRPALETTE` | - | Clear palette | `CLRPALETTE` |
-| `STRTDEFTILE` | - | Start defining tile | `STRTDEFTILE` |
-| `ENDDEFTILE` | - | End defining tile | `ENDDEFTILE` |
+| `TILEDRAW` | - | Draw tile at position (from 0x0200) | `TILEDRAW` |
 | `CALL` | address | Call function | `CALL function_label` |
 | `GBLS` | X | Get blank status into register X | `GBLS R0` |
 
-### Examples
+### Assembler Shorthands
 
-#### Simple Counter (0 to 10)
+The assembler provides powerful shorthands that expand to instruction sequences. **These use target registers 0 and 1 internally.**
+
+#### Label-Based Jumps
+
+Instead of manually loading PC, you can jump directly to labels:
 
 ```asm
-; Count from 0 to 10
-    CLR R0          ; Counter
-    CLR R1          ; Target
-
-    ; Set R1 = 10
-    INC R1
-    INC R1
-    INC R1
-    INC R1
-    INC R1
-    INC R1
-    INC R1
-    INC R1
-    INC R1
-    INC R1
-
-    ; Set PC to loop address (calculate manually or use second example)
-    CLR PC
-    ; ... set PC to loop start address
-
 loop:
     INC R0
-    CMP R0, R1
-    JNG             ; Jump if R0 <= R1
-
-    HALT
+    CMP R0, R10
+    JNG loop        ; Jumps if R0 <= R10
+    HLT             ; Halt when done
 ```
 
-#### Addition
+Supported: `JMR label`, `JMZ label`, `JNZ label`, `JMG label`, `JNG label`
+
+#### Stack Operations
+
+```asm
+PUSH R5         ; Push register onto stack
+POP R5          ; Pop from stack into register
+JSR function    ; Jump to subroutine (saves PC)
+RET             ; Return from subroutine
+```
+
+#### HLT Shorthand
+
+```asm
+HLT             ; Infinite loop (replaces old HALT opcode)
+```
+
+#### Variable Aliases
+
+Define meaningful names for registers and constants:
+
+```asm
+$0x0100 = IO_BASE
+R10 = COUNTER
+R20 = X_POS
+
+; Then use them:
+TARREG 2, LSB, COUNTER
+SETBYTE 2, IO_BASE
+```
+
+### Examples
+
+#### Simple Counter (0 to 10) - New Method
+
+```asm
+; Count from 0 to 10 using new features
+R0 = COUNTER
+R1 = TARGET
+
+start:
+    CLR COUNTER
+
+    ; Load TARGET = 10 using Preset E
+    TARREG 2, LSB, TARGET
+    SETBYTE 2, 10
+
+loop:
+    INC COUNTER
+    CMP COUNTER, TARGET
+    JNG loop        ; Jump if COUNTER <= TARGET (uses shorthand)
+
+    HLT             ; Halt (uses shorthand)
+```
+
+#### Addition - New Method
 
 ```asm
 ; Add two numbers: R2 = R0 + R1
-    CLR R0
-    CLR R1
-    CLR R2
+R0 = A
+R1 = B
+R2 = RESULT
 
-    ; R0 = 5
-    INC R0
-    INC R0
-    INC R0
-    INC R0
-    INC R0
+start:
+    ; Load A = 5
+    TARREG 2, LSB, A
+    SETBYTE 2, 5
 
-    ; R1 = 10
-    INC R1
-    INC R1
-    INC R1
-    INC R1
-    INC R1
-    INC R1
-    INC R1
-    INC R1
-    INC R1
-    INC R1
+    ; Load B = 10
+    TARREG 2, LSB, B
+    SETBYTE 2, 10
 
-    ; R2 = R0 + R1
-    ADD R2, R0
-    ADD R2, R1
+    ; RESULT = A + B
+    CLR RESULT
+    ADD RESULT, A
+    ADD RESULT, B
 
-    HALT
+    HLT
 ```
 
-#### Memory Operations
+#### Memory Operations - New Method
 
 ```asm
 ; Write value to memory and read it back
-    CLR R0
-    CLR R1
-    CLR R2
+R10 = VALUE
 
-    ; Set R0 = 0x1000 (memory address)
-    ; ... (increment R0 to desired address)
+start:
+    ; Load DP = 0x1000
+    TARREG 2, LSB, DP
+    TARREG 3, MSB, DP
+    SETBYTE 2, 0x00
+    SETBYTE 3, 0x10     ; DP = 0x1000
 
-    ; Set DP to R0
-    SETDP R0
+    ; Load VALUE = 42
+    TARREG 2, LSB, VALUE
+    SETBYTE 2, 42
 
-    ; Write R1 to (DP)
-    MOVDP R1
+    ; Write VALUE to (DP)
+    MOVDP VALUE
 
-    ; Read from (DP) to R2
-    MOV R2
+    ; Clear VALUE
+    CLR VALUE
 
-    HALT
+    ; Read from (DP) back to VALUE
+    MOV VALUE
+
+    HLT
 ```
 
 #### Check Blank Status
@@ -226,21 +299,30 @@ For Preset F instructions (opcode 0xF):
 You can test assembled binaries with the test runner:
 
 ```bash
-make test_assembled
-./test_assembled examples/add.bin
+cd ZeroPoint/build
+./bin/test_demo examples/your_program.bin
 ```
 
-This loads the binary and runs it on the PPU, showing the final register states.
+This loads the binary and runs it on the PPU, showing visual output.
+
+## Documentation
+
+- `README.md` - This file (quick reference)
+- `docs/ppu/ucode.txt` - Complete PPU microcode specification (2800+ lines)
+- `docs/ppu/preset-e-and-shorthands.txt` - **Preset E & assembler shorthands guide**
+
+**⚠️ Read `preset-e-and-shorthands.txt` before using the new features!**
 
 ## Files
 
 - `zpasm.c` - PPU assembler (C source)
-- `zpasm` - Compiled assembler (created by make)
-- `test_assembled.cpp` - Test runner for assembled binaries
+- `zpasm` - Compiled assembler (created by gcc)
 - `examples/` - Example assembly programs
-  - `add.asm` - Simple addition (5 + 10 = 15)
-  - `counter.asm` - Loop counter (0 to 5)
-  - `memory.asm` - Memory read/write operations
-  - `vblank.asm` - Blank status check
-- `Makefile` - Build configuration
+  - `ppu/` - PPU-specific examples
+    - `test_preset_e.asm` - Demonstrates Preset E and shorthands
+    - `fibbonaci.asm` - Fibonacci sequence generator
+    - Various pixel/tile demos
+- `docs/` - Documentation
+  - `ppu/ucode.txt` - Complete instruction reference
+  - `ppu/preset-e-and-shorthands.txt` - New features guide
 - `README.md` - This file

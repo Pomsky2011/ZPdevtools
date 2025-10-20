@@ -1,0 +1,824 @@
+================================================================================
+              ZEROPOINT PPU - PRESET E & ASSEMBLER SHORTHANDS
+                          Supplement to ucode.txt
+                           Revision 2.0 - 2025
+================================================================================
+
+OVERVIEW
+--------
+
+This document describes the Preset E instruction set (opcode 0xE) and the
+zpasm assembler shorthands. These additions significantly improve the
+usability of the PPU assembly language by:
+
+1. Providing efficient immediate value loading (Preset E)
+2. Enabling label-based jumps and loops (assembler shorthands)
+3. Supporting stack operations (PUSH/POP/JSR/RET)
+4. Adding variable aliases for better code readability
+
+⚠️  CRITICAL WARNING FOR SHORTHAND USERS
+────────────────────────────────────────────────────────────────────────────
+
+IF YOU USE ANY OF THE FOLLOWING ASSEMBLER SHORTHANDS:
+  - JMR/JMZ/JNZ/JMG/JNG with a label argument
+  - PUSH/POP
+  - JSR/RET
+  - HLT
+
+TARGET REGISTERS 0 AND 1 WILL BE OVERWRITTEN!
+
+These shorthands automatically expand to sequences that use target registers
+0 and 1. You CAN use target registers 0 and 1 manually, but be aware that
+they will be corrupted/overwritten the moment you use any shorthand.
+
+For reliable code: Use target registers 2 and 3
+Will get stomped on by shorthands: Target registers 0 and 1
+
+================================================================================
+
+1. PRESET E INSTRUCTIONS (OPCODE 0xE)
+
+1.1 ARCHITECTURE ADDITIONS
+
+Target Registers:
+  The PPU now includes 4 target registers (numbered 0-3), each consisting of:
+    - A 16-bit register pointer (points to one of R0-R63)
+    - A byte selector (0 = LSB, 1 = MSB)
+
+  These target registers act as "indirect byte pointers" that can be set up
+  once and then used multiple times for byte-level operations.
+
+  Target Register State:
+    ┌──────────┬────────────────┬──────────────┐
+    │ Target # │ Points to Reg  │ Byte (L/H)   │
+    ├──────────┼────────────────┼──────────────┤
+    │    0     │  R0-R63        │  LSB or MSB  │
+    │    1     │  R0-R63        │  LSB or MSB  │
+    │    2     │  R0-R63        │  LSB or MSB  │
+    │    3     │  R0-R63        │  LSB or MSB  │
+    └──────────┴────────────────┴──────────────┘
+
+1.2 INSTRUCTION ENCODING
+
+Preset E uses opcode 0xE with a 2-bit sub-opcode and 10-bit operand:
+
+  ┌────────────┬────────────┬──────────────────────────┐
+  │ Opcode (4) │ Subop (2)  │ Operand (10)             │
+  │    1110    │     ZZ     │      WWWWWWWWWW          │
+  └────────────┴────────────┴──────────────────────────┘
+
+1.3 PRESET E INSTRUCTION REFERENCE
+
+────────────────────────────────────────────────────────────────────────────
+
+TARREG - Set Target Register
+────────────────────────────────────────────────────────────────────────────
+
+Subopcode: 0x0 (00)
+Format:    TARREG T, Y, X
+Encoding:  1110 00 TT Y 0 XXXXXX
+
+  T (2 bits):  Target register number (0-3)
+  Y (1 bit):   Byte selector (0=LSB, 1=MSB)
+  X (6 bits):  Source register number (0-63)
+
+Description:
+  Configures target register T to point to the specified byte of register X.
+
+  Target register T will now reference:
+    - Register X (from the 64 general-purpose registers)
+    - Byte Y (0 for low byte [7:0], 1 for high byte [15:8])
+
+Flags: None affected
+
+Cycles: 1
+
+Example:
+  TARREG 0, LSB, R5    ; Target 0 → R5's low byte
+  TARREG 1, MSB, R5    ; Target 1 → R5's high byte
+
+  After execution:
+    Target register 0 points to R5[7:0]
+    Target register 1 points to R5[15:8]
+
+────────────────────────────────────────────────────────────────────────────
+
+SETBYTE - Set Byte via Target Register
+────────────────────────────────────────────────────────────────────────────
+
+Subopcode: 0x1 (01)
+Format:    SETBYTE T, imm8
+Encoding:  1110 01 TT XXXXXXXX
+
+  T (2 bits):     Target register number (0-3)
+  imm8 (8 bits):  Immediate value (0-255)
+
+Description:
+  Writes an 8-bit immediate value to the byte pointed to by target register T.
+
+  The target register must have been previously configured with TARREG.
+
+  If target T points to:
+    - LSB: Register[7:0] = imm8, Register[15:8] unchanged
+    - MSB: Register[15:8] = imm8, Register[7:0] unchanged
+
+Flags: None affected
+
+Cycles: 1
+
+Example:
+  TARREG 0, LSB, R10   ; Set up target 0 → R10 low byte
+  SETBYTE 0, 0x42      ; R10[7:0] = 0x42
+
+  TARREG 1, MSB, R10   ; Set up target 1 → R10 high byte
+  SETBYTE 1, 0x12      ; R10[15:8] = 0x12
+
+  ; R10 now contains 0x1242
+
+────────────────────────────────────────────────────────────────────────────
+
+BUILD - Build Register from Target Registers
+────────────────────────────────────────────────────────────────────────────
+
+Subopcode: 0x2 (10)
+Format:    BUILD T1, T2, X
+Encoding:  1110 10 TT TT XXXXXX
+
+  T1 (2 bits):  First target register (provides MSB)
+  T2 (2 bits):  Second target register (provides LSB)
+  X (6 bits):   Destination register (0-63)
+
+Description:
+  Builds a 16-bit value in register X by combining bytes from two target
+  registers. The byte currently pointed to by target T1 becomes the MSB,
+  and the byte pointed to by target T2 becomes the LSB.
+
+  Register X = (byte at T1) << 8 | (byte at T2)
+
+  This instruction is useful for moving bytes between registers or building
+  16-bit values from scattered byte sources.
+
+Flags: None affected
+
+Cycles: 1
+
+Example:
+  ; Assume R10 = 0xABCD, R11 = 0x1234
+
+  TARREG 0, MSB, R10   ; T0 → R10[15:8] = 0xAB
+  TARREG 1, LSB, R11   ; T1 → R11[7:0] = 0x34
+  BUILD 0, 1, R5       ; R5 = 0xAB34
+
+────────────────────────────────────────────────────────────────────────────
+
+CPREG - Copy Register (with Register Banks)
+────────────────────────────────────────────────────────────────────────────
+
+Subopcode: 0x3 (11)
+Format:    CPREG X, Y
+Encoding:  1110 11 00 XXXX YYYY
+
+  X (4 bits):  Source register (4-bit ID, uses register bank X)
+  Y (4 bits):  Destination register (4-bit ID, uses register bank Y)
+
+Description:
+  Copies the value from register X to register Y, using the register banks
+  set by SETREGBANK (Preset F).
+
+  The actual register numbers are:
+    Source = (regBankX << 4) | X
+    Dest   = (regBankY << 4) | Y
+
+  This allows access to all 64 registers using 4-bit register fields.
+
+Flags: None affected
+
+Cycles: 1
+
+Example:
+  SETREGBANK 0, 1      ; Bank X=0, Bank Y=1
+  CPREG R5, R3         ; Copies R5 (bank 0) to R19 (bank 1, 16+3)
+
+================================================================================
+
+2. BUILDING CONSTANTS WITH PRESET E
+
+The primary use of Preset E is efficient 16-bit constant loading.
+
+2.1 BASIC CONSTANT LOADING
+
+Old method (using multiplication, ~8 instructions):
+  CLR R14
+  INC R14
+  INC R14
+  MUL R14, R14
+  MUL R14, R14      ; R14 = 16
+  CLR R7
+  ADD R7, R14
+  MUL R7, R14       ; R7 = 256
+
+New method (4 instructions):
+  TARREG 0, LSB, R7
+  TARREG 1, MSB, R7
+  SETBYTE 0, 0x00
+  SETBYTE 1, 0x01   ; R7 = 0x0100 = 256
+
+2.2 BEST PRACTICES FOR TARGET REGISTER USAGE
+
+⚠️  If you use ANY assembler shorthands, use target registers 2 and 3:
+
+  ; RECOMMENDED: Use targets 2 and 3
+  TARREG 2, LSB, R7
+  TARREG 3, MSB, R7
+  SETBYTE 2, 0x00
+  SETBYTE 3, 0x01   ; R7 = 256
+
+  ; Then later you can still use shorthands safely:
+  JMR loop          ; Uses targets 0 and 1 internally - no conflict!
+  HLT               ; Uses targets 0 and 1 internally - no conflict!
+
+  ; WILL GET CORRUPTED: Using targets 0 or 1 with shorthands
+  TARREG 0, LSB, R7
+  SETBYTE 0, 42     ; R7 low byte = 42... for now
+  JMR loop          ; ⚠️  Shorthand overwrites target 0! R7 is now corrupted!
+
+2.3 COMMON CONSTANT VALUES
+
+  ; Load 0x0100 (256) - I/O base address
+  TARREG 2, LSB, DP
+  TARREG 3, MSB, DP
+  SETBYTE 2, 0x00
+  SETBYTE 3, 0x01
+
+  ; Load 0x00FF (255) - maximum byte value
+  TARREG 2, LSB, R10
+  TARREG 3, MSB, R10
+  SETBYTE 2, 0xFF
+  SETBYTE 3, 0x00
+
+  ; Load 0x0040 (64) - tile dimension
+  TARREG 2, LSB, R11
+  TARREG 3, MSB, R11
+  SETBYTE 2, 0x40
+  SETBYTE 3, 0x00
+
+================================================================================
+
+3. ASSEMBLER SHORTHANDS
+
+The zpasm assembler provides several shorthands that expand to sequences of
+Preset E instructions. These dramatically improve code readability and
+writability.
+
+3.1 LABEL-BASED JUMPS
+
+Syntax:
+  JMR  label    ; Jump to label
+  JMZ  label    ; Jump if zero to label
+  JNZ  label    ; Jump if not zero to label
+  JMG  label    ; Jump if greater to label
+  JNG  label    ; Jump if not greater to label
+
+Expansion:
+  JMR loop  →  TARREG 0, LSB, PC
+               TARREG 1, MSB, PC
+               SETBYTE 0, loop      ; Assembler auto-splits address
+               SETBYTE 1, loop
+               JMR
+
+⚠️  Overwrites target registers 0 and 1
+
+Example:
+  start:
+      CLR R0
+  loop:
+      INC R0
+      CMP R0, R10
+      JNG loop       ; Jump if R0 <= R10
+      HLT
+
+3.2 STACK OPERATIONS
+
+The assembler provides stack operation shorthands. These assume you use R61
+(SP) as your stack pointer.
+
+Special Register:
+  SP = R61 (conventionally used as stack pointer)
+
+────────────────────────────────────────────────────────────────────────────
+
+PUSH - Push Register onto Stack
+────────────────────────────────────────────────────────────────────────────
+
+Syntax:
+  PUSH RX
+
+Expansion:
+  PUSH R5  →  SETDP SP
+              INC SP
+              INC SP
+              MOVDP R5
+
+Description:
+  Pushes the value in register RX onto the stack pointed to by SP.
+  Stack grows upward (towards higher addresses).
+
+⚠️  Does not touch target registers, safe to use with any target regs
+
+Example:
+  ; Initialize stack
+  TARREG 2, LSB, SP
+  TARREG 3, MSB, SP
+  SETBYTE 2, 0x00
+  SETBYTE 3, 0x40    ; SP = 0x4000
+
+  ; Push some values
+  PUSH R10
+  PUSH R11
+  PUSH R12
+
+────────────────────────────────────────────────────────────────────────────
+
+POP - Pop from Stack into Register
+────────────────────────────────────────────────────────────────────────────
+
+Syntax:
+  POP RX
+
+Expansion:
+  POP R5  →  SETDP SP
+             DEC SP
+             DEC SP
+             MOV R5
+
+Description:
+  Pops a value from the stack into register RX.
+  Stack pointer is decremented before the read.
+
+⚠️  Does not touch target registers, safe to use with any target regs
+
+Example:
+  POP R12
+  POP R11
+  POP R10
+
+────────────────────────────────────────────────────────────────────────────
+
+JSR - Jump to Subroutine
+────────────────────────────────────────────────────────────────────────────
+
+Syntax:
+  JSR label
+
+Expansion:
+  JSR func  →  SETDP SP
+               INC SP
+               INC SP
+               MOVDP PC        ; Push current PC
+               TARREG 0, LSB, PC
+               TARREG 1, MSB, PC
+               SETBYTE 0, func
+               SETBYTE 1, func
+               JMR
+
+Description:
+  Calls a subroutine at the given label. Pushes the current PC onto the
+  stack, then jumps to the target label.
+
+⚠️  Overwrites target registers 0 and 1
+
+Example:
+  main:
+      ; Set up stack
+      TARREG 2, LSB, SP
+      SETBYTE 2, 0x00
+      TARREG 3, MSB, SP
+      SETBYTE 3, 0x40
+
+      ; Call subroutine
+      JSR my_function
+
+      ; Continue here after RET
+      HLT
+
+  my_function:
+      ; Do work...
+      INC R10
+      RET
+
+────────────────────────────────────────────────────────────────────────────
+
+RET - Return from Subroutine
+────────────────────────────────────────────────────────────────────────────
+
+Syntax:
+  RET
+
+Expansion:
+  RET  →  SETDP SP
+          DEC SP
+          DEC SP
+          MOV PC
+          JMR
+
+Description:
+  Returns from a subroutine by popping PC from the stack and jumping to it.
+
+⚠️  Overwrites target registers 0 and 1 (via JMR shorthand)
+
+Example:
+  my_function:
+      ; Function body
+      INC R10
+      RET        ; Return to caller
+
+3.3 HALT SHORTHAND
+
+────────────────────────────────────────────────────────────────────────────
+
+HLT - Halt (Infinite Loop)
+────────────────────────────────────────────────────────────────────────────
+
+Syntax:
+  HLT
+
+Expansion:
+  HLT  →  @halt_0:
+          TARREG 0, LSB, PC
+          TARREG 1, MSB, PC
+          SETBYTE 0, @halt_0
+          SETBYTE 1, @halt_0
+          JMR
+
+Description:
+  Creates an infinite loop that halts execution. The assembler generates a
+  unique auto-label (@halt_N) for each HLT.
+
+⚠️  Overwrites target registers 0 and 1
+
+Example:
+  main:
+      ; Do work...
+      CLR R0
+      INC R0
+
+      ; Halt when done
+      HLT
+
+3.4 VARIABLE ALIASES
+
+────────────────────────────────────────────────────────────────────────────
+
+Syntax:
+  LEFT = RIGHT
+
+Description:
+  Defines an alias where all instances of RIGHT are replaced with LEFT
+  during assembly.
+
+  The $ prefix is optional and is stripped during processing.
+
+Example:
+  ; Define aliases
+  $0x0100 = IO_BASE
+  R10 = COUNTER
+  R20 = X_POS
+
+  ; Use aliases
+  start:
+      TARREG 2, LSB, DP
+      TARREG 3, MSB, DP
+      SETBYTE 2, IO_BASE        ; Assembler uses 0x0100
+      SETBYTE 3, IO_BASE
+
+      CLR COUNTER               ; Assembler uses R10
+
+  loop:
+      INC COUNTER
+      MOVDP X_POS               ; Assembler uses R20
+      JMR loop
+
+================================================================================
+
+4. PRESET F UPDATES
+
+4.1 SETTILE CHANGES
+
+The SETTILE instruction has been updated:
+
+Old Format:
+  SETTILE tileID            ; Immediate tile ID
+
+New Format:
+  SETTILE X, mode           ; Register X contains tile ID, mode selects format
+
+  X (6 bits):    Register containing tile ID (0-255)
+  mode (2 bits): Tile format mode (0-3)
+
+Tile Modes:
+  0: 16BBGR 4bpp  (16 colors, 4 bits per pixel)
+  1: 32RGBA 4bpp  (16 colors, 4 bits per pixel, full alpha)
+  2: 16BBGR 8bpp  (256 colors, 8 bits per pixel)
+  3: 32RGBA 8bpp  (256 colors, 8 bits per pixel, full alpha)
+
+Example:
+  TARREG 2, LSB, R30
+  SETBYTE 2, 1              ; R30 = tile ID 1
+  SETTILE R30, 3            ; Select tile 1, 32RGBA 8bpp mode
+
+4.2 TILEDRAW REPLACES STRTDEFTILE/ENDDEFTILE
+
+Old System:
+  STRTDEFTILE                ; Start defining tile
+  ; Write 64 bytes to 0x0300-0x033F
+  ENDDEFTILE tileID          ; Save as tile
+
+New System:
+  SETTILE reg, mode          ; Select current tile
+  ; Write tile data to 0x0300-0x033F
+  MOVDP tile_pos             ; Set position via 0x0200-0x0203
+  TILEDRAW                   ; Draw the tile
+
+Memory Map:
+  0x0100-0x010B: Pixel drawing I/O (X, Y, R, G, B, A)
+  0x0200-0x0201: X position (16-bit little-endian)
+  0x0202-0x0203: Y position (16-bit little-endian)
+  0x0300-0x033F: Tile data buffer (64 bytes)
+  0xE000-0xEFFF: Framebuffer (RGBA16 mode, 4 KiB, 256×8 pixels)
+  0xE000-0xFFFF: Framebuffer (RGBA32 mode, 8 KiB, 256×8 pixels)
+
+Rolling Framebuffer (Bank-Based):
+  The display uses an 8-bank rolling buffer (8 KiB total). Each bank is 1 KiB.
+  During H-Blank (end of each scanline), banks roll to make room for new data.
+
+  Bank Organization:
+  - RGBA16 mode: 2 scanlines per bank (512 bytes each) = 16 scanlines total
+  - RGBA32 mode: 1 scanline per bank (1024 bytes) = 8 scanlines total
+
+  H-Blank Rolling:
+  - RGBA32: Rolls 2 banks per H-Blank (each scanline uses 1 bank)
+  - RGBA16: Rolls 1 bank per H-Blank every 2 scanlines (2 scanlines share 1 bank)
+
+  Memory Access:
+  - The framebuffer is directly accessible at 0xE000-0xFFFF (always 8 KiB)
+  - You can read/write bytes via MOV/MOVDP instructions
+  - You can still write to any Y coordinate, but data outside the buffer window
+    is forgotten when banks roll
+
+Example:
+  ; Set current tile to ID 1, 32RGBA 8bpp
+  TARREG 2, LSB, R30
+  SETBYTE 2, 1
+  SETTILE R30, 3
+
+  ; Fill tile data at 0x0300
+  TARREG 2, LSB, DP
+  TARREG 3, MSB, DP
+  SETBYTE 2, 0x00
+  SETBYTE 3, 0x03            ; DP = 0x0300
+
+  ; Write tile pixels...
+  ; (64 bytes of pixel data)
+
+  ; Set tile position
+  SETBYTE 2, 0x00
+  SETBYTE 3, 0x02            ; DP = 0x0200
+  TARREG 2, LSB, R20
+  SETBYTE 2, 64              ; X = 64
+  MOVDP R20
+  INC DP
+  INC DP
+  TARREG 2, LSB, R21
+  SETBYTE 2, 64              ; Y = 64
+  MOVDP R21
+
+  ; Draw tile
+  TILEDRAW
+
+================================================================================
+
+5. REGISTER FILE UPDATE
+
+Updated register organization including interrupts:
+
+  ┌────────────────────────┐
+  │ R0  - R15              │  General purpose (16 registers)
+  │ R16 - R31              │  General purpose (16 registers)
+  │ R32 - R47              │  General purpose (16 registers)
+  │ R48 - R58              │  General purpose (11 registers)
+  │ R59                    │  V-Blank Interrupt Address
+  │ R60                    │  H-Blank Interrupt Address
+  │ R61 (SP)               │  Stack Pointer (conventional)
+  │ R62 (PC)               │  Program Counter (jump target)
+  │ R63 (DP)               │  Data Pointer
+  └────────────────────────┘
+
+INTERRUPT REGISTERS:
+  R59 - V-Blank Interrupt Address
+        If non-zero during V-Blank, PPU:
+        1. Pushes return address onto stack (using R61/SP)
+        2. Jumps to this address
+        Set to 0 to disable V-Blank interrupts
+
+  R60 - H-Blank Interrupt Address
+        If non-zero during H-Blank, PPU:
+        1. Pushes return address onto stack (using R61/SP)
+        2. Jumps to this address
+        Set to 0 to disable H-Blank interrupts
+
+  IMPORTANT: Interrupts automatically push the return address onto the stack.
+  Use RET to return from interrupt handlers - do NOT manually manage return addresses.
+
+Example:
+  ; Initialize stack pointer (grows downward)
+  TARREG 2, LSB, SP
+  TARREG 3, MSB, SP
+  SETBYTE 2, 0xFF
+  SETBYTE 3, 0xFF        ; SP = 0xFFFF (top of memory)
+
+  ; Set up V-Blank handler
+  TARREG 2, LSB, R59
+  TARREG 3, MSB, R59
+  SETBYTE 2, vblank_handler
+  SETBYTE 3, vblank_handler
+
+  main:
+      ; Your game logic
+      JMR main
+
+  vblank_handler:
+      ; Draw next frame during V-Blank
+      ; Update framebuffer banks ahead of display
+      ; ...
+
+      ; Return from interrupt (uses stack)
+      RET
+
+NOTE: SP (R61) is a convention. The hardware does not treat it specially.
+Software must manage the stack pointer using normal instructions.
+
+================================================================================
+
+6. COMPLETE EXAMPLE PROGRAM
+
+Pixel Drawing with All New Features:
+────────────────────────────────────────────────────────────────────────────
+
+; Aliases for clarity
+$0x0100 = IO_PIXEL
+R20 = X_POS
+R21 = Y_POS
+R22 = RED
+R23 = GREEN
+R24 = BLUE
+R25 = ALPHA
+
+main:
+    SETRENDMOD 1              ; 32-bit color mode
+
+    ; Load constants using target regs 2 and 3
+    ; (Preserving 0 and 1 for HLT shorthand)
+
+    ; Load X = 50
+    TARREG 2, LSB, X_POS
+    SETBYTE 2, 50
+
+    ; Load Y = 50
+    TARREG 2, LSB, Y_POS
+    SETBYTE 2, 50
+
+    ; Load RED = 255
+    TARREG 2, LSB, RED
+    SETBYTE 2, 255
+
+    ; Load GREEN = 128
+    TARREG 2, LSB, GREEN
+    SETBYTE 2, 128
+
+    ; Load BLUE = 64
+    TARREG 2, LSB, BLUE
+    SETBYTE 2, 64
+
+    ; Load ALPHA = 255
+    TARREG 2, LSB, ALPHA
+    SETBYTE 2, 255
+
+    ; Load DP = 0x0100 (I/O base)
+    TARREG 2, LSB, DP
+    TARREG 3, MSB, DP
+    SETBYTE 2, 0x00
+    SETBYTE 3, 0x01
+
+    ; Write color components to I/O
+    MOVDP X_POS               ; 0x0100: X pos
+    INC DP
+    INC DP
+    MOVDP Y_POS               ; 0x0102: Y pos
+    INC DP
+    INC DP
+    MOVDP RED                 ; 0x0104: Red
+    INC DP
+    INC DP
+    MOVDP GREEN               ; 0x0106: Green
+    INC DP
+    INC DP
+    MOVDP BLUE                ; 0x0108: Blue
+    INC DP
+    INC DP
+    MOVDP ALPHA               ; 0x010A: Alpha (triggers draw)
+
+    HLT                       ; Uses shorthand (targets 0 & 1)
+
+────────────────────────────────────────────────────────────────────────────
+
+This program demonstrates:
+  ✓ Aliases for better readability
+  ✓ Preset E constant loading with targets 2 & 3
+  ✓ HLT shorthand (safely uses targets 0 & 1)
+  ✓ Memory-mapped I/O access
+
+================================================================================
+
+7. MIGRATION GUIDE
+
+7.1 UPDATING OLD CODE
+
+If you have existing PPU assembly that uses the old constant-building method,
+you can update it incrementally:
+
+Step 1: Add aliases for commonly-used registers and constants
+Step 2: Replace constant-building sequences with TARREG + SETBYTE
+Step 3: Replace manual jump sequences with label-based jumps
+Step 4: Replace HALT infinite loops with HLT shorthand
+Step 5: Convert function calls to use JSR/RET if using a stack
+
+7.2 COMPATIBILITY
+
+All old instructions still work. The new features are purely additive:
+  ✓ All 0x0-0xD opcodes unchanged
+  ✓ Preset F instructions backward compatible (except SETTILE/TILEDRAW)
+  ✓ New Preset E uses previously unused opcode 0xE
+
+Breaking changes:
+  ✗ HALT opcode 0xE removed (use HLT shorthand instead)
+  ✗ SETTILE now takes register + mode instead of immediate
+  ✗ STRTDEFTILE/ENDDEFTILE removed (use TILEDRAW instead)
+
+================================================================================
+
+8. QUICK REFERENCE
+
+8.1 TARGET REGISTER SAFETY
+
+  WON'T BE CORRUPTED:            WILL BE OVERWRITTEN:
+  ┌─────────────────────┐        ┌────────────────────────┐
+  │ Target Register 2   │        │ Target Register 0      │
+  │ Target Register 3   │        │ Target Register 1      │
+  └─────────────────────┘        └────────────────────────┘
+
+  Shorthands that overwrite targets 0 & 1:
+    - JMR/JMZ/JNZ/JMG/JNG label
+    - JSR label
+    - RET
+    - HLT
+
+  Note: You CAN use targets 0 & 1 manually, but they'll get stomped on
+  the moment you use any of the above shorthands. Use 2 & 3 for safety.
+
+8.2 PRESET E OPCODE TABLE
+
+  ┌────────┬─────────┬──────────────────────────────────┐
+  │ Subop  │ Name    │ Format                           │
+  ├────────┼─────────┼──────────────────────────────────┤
+  │  00    │ TARREG  │ TARREG T, Y, X                   │
+  │  01    │ SETBYTE │ SETBYTE T, imm8                  │
+  │  10    │ BUILD   │ BUILD T1, T2, X                  │
+  │  11    │ CPREG   │ CPREG X, Y                       │
+  └────────┴─────────┴──────────────────────────────────┘
+
+8.3 COMMON IDIOMS
+
+Load 16-bit constant:
+  TARREG 2, LSB, RX
+  TARREG 3, MSB, RX
+  SETBYTE 2, <low byte>
+  SETBYTE 3, <high byte>
+
+Load 8-bit constant:
+  TARREG 2, LSB, RX
+  SETBYTE 2, <byte value>
+
+Jump to label:
+  JMR label              ; Or JMZ, JNZ, JMG, JNG
+
+Call function:
+  JSR function
+  ; ... work ...
+  RET
+
+Halt program:
+  HLT
+
+================================================================================
+
+END OF PRESET E & SHORTHANDS DOCUMENTATION
