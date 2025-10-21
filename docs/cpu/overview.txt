@@ -1,0 +1,265 @@
+DEF88186 Main CPU - Architecture Overview
+==========================================
+
+The DEF88186 is the main CPU of the ZeroPoint fantasy console system. It has arbitration
+over all system resources including the PPU, APU, memory, and I/O. While the PPU runs at
+64 MHz for graphics microcode execution, the main CPU operates independently to handle
+game logic, system coordination, and general-purpose computing.
+
+## Architecture
+
+**Base Architecture**: 65816-derived 16-bit processor
+**Instruction Set**: 256 opcodes (0x00-0xFF)
+**Data Bus**: 8/16-bit (configurable via M flag)
+**Index Registers**: 8/16-bit (configurable via X flag)
+**Address Bus**: 24-bit (16 MB addressable)
+**Endianness**: Little-endian
+
+## Key Features
+
+- **Full 65816 Compatibility**: Supports standard 65816 instruction set
+- **Hardware Multiply/Divide**: Fast arithmetic operations (8-12 cycles)
+- **Hardware Loops**: LOOP/LPEND instructions for efficient iteration
+- **Extended Branching**: Long absolute branches (4-byte addresses)
+- **Register Exchange**: XCHG instructions for fast register/memory swaps
+- **Block Moves**: MVN/MVP for fast memory copying
+- **Stack Relative Addressing**: Easy access to local variables
+- **Direct Page**: Fast zero-page-like addressing anywhere in memory
+
+## Registers
+
+### Data Registers
+- **A** (Accumulator): 16-bit accumulator (or 8-bit in M=1 mode)
+  - When 8-bit: A = low byte (AL), B = high byte (AH)
+  - XBA swaps AL and AH
+- **X** (Index X): 16-bit index register (or 8-bit in X=1 mode)
+- **Y** (Index Y): 16-bit index register (or 8-bit in X=1 mode)
+
+### Pointer Registers
+- **SP** (Stack Pointer): 16-bit stack pointer (grows downward)
+- **D** (Direct Page): 16-bit direct page base register
+- **PC** (Program Counter): 16-bit program counter
+
+### Bank Registers
+- **PB** (Program Bank): 8-bit program bank register
+- **DB** (Data Bank): 8-bit data bank register (set via SDB instruction)
+
+### Status Register
+- **P** (Processor Status): 8-bit flags register
+  - N: Negative flag
+  - V: Overflow flag
+  - M: Memory/Accumulator flag (0=16-bit, 1=8-bit)
+  - X: Index register flag (0=16-bit, 1=8-bit)
+  - D: Decimal mode flag
+  - I: Interrupt disable flag
+  - Z: Zero flag
+  - C: Carry flag
+
+## Memory Map
+
+**Total Address Space**: 16 MB (24-bit addressing)
+- Bank $00-$FF: 256 banks × 64 KB each
+- $00:0000-$00:FFFF: Bank 0 (typically system RAM)
+- Special regions defined by system (see main memory map documentation)
+
+## Addressing Modes
+
+The DEF88186 supports all standard 65816 addressing modes plus extensions:
+
+- **Implied**: Instruction operates on registers only
+- **Immediate**: Operand is a constant in the instruction stream
+- **Absolute**: 16-bit address in current data bank
+- **Absolute Long**: 24-bit address (any bank)
+- **Direct Page**: 8-bit offset from Direct Page register
+- **Indexed**: Add X or Y to address
+- **Indirect**: Load address from memory location
+- **Stack Relative**: Offset from stack pointer
+- **Block Move**: Special mode for MVN/MVP
+
+See addressing-modes.txt for complete reference.
+
+## Custom Extensions
+
+The DEF88186 includes several custom instructions not found in the standard 65816:
+
+### Hardware Loops (LOOP/LPEND)
+- **LOOP word**: Initialize hardware loop counter (16-bit value)
+- **LPEND**: Decrement counter, branch back if non-zero
+- Automatic hardware-managed loop iteration
+- More efficient than manual decrement/branch
+
+### Function Calls (CALL/RET)
+- **CALL long**: Call subroutine at 24-bit address (16 cycles)
+- **RET**: Return to operating system (8 cycles)
+- Enhanced calling convention for system functions
+
+### Register Exchange (XCHG)
+- **XCHG X,Y**: Exchange X and Y registers
+- **XCHG X,dp**: Exchange X with direct page memory
+- **XCHG X,long**: Exchange X with long address memory
+- **XCHG Y,dp**: Exchange Y with direct page memory
+- **XCHG Y,long**: Exchange Y with long address memory
+- **XCHG long,dp**: Exchange two memory locations
+- Fast register/memory swaps (8 cycles)
+
+### Hardware Multiply/Divide
+- **MUL**: Multiply accumulator by memory/register (8-13 cycles)
+  - Supports all standard addressing modes
+  - Much faster than software multiplication
+- **DIV X,Y**: Divide (8 cycles)
+- **DIV long,X**: Divide by memory indexed by X
+- **DIV long,Y**: Divide by memory indexed by Y
+
+### Bit Shifts (Extended)
+- **SHL X/Y**: Shift X or Y register left
+- **SHR X/Y**: Shift X or Y register right
+- **RCL A**: Rotate through carry flag
+- Complement standard ASL/LSR/ROL/ROR
+
+### Set Data Bank
+- **SDB byte**: Set data bank register directly
+- Faster than PHA/PLB sequence
+
+### Halt
+- **HLT**: Halt processor execution (stops all cycles)
+- Can only be restarted by interrupt or reset
+
+## Instruction Timing
+
+Most instructions execute in 2-6 cycles, with some exceptions:
+- Simple operations (NOP, SEC, CLC): 2 cycles
+- Register loads/stores: 2-7 cycles depending on addressing mode
+- Hardware multiply: 8-13 cycles
+- Hardware divide: 8 cycles
+- CALL: 16 cycles (system call overhead)
+- Block moves (MVN/MVP): 1 cycle per byte transferred
+
+Notes on cycle counts from CSV:
+- Some cycle counts have bracketed annotations [1]-[14]
+- Annotations indicate conditional timing (see instruction-set.txt)
+- Actual timing may vary based on processor flags (M/X)
+
+## Interrupts
+
+The DEF88186 supports standard 65816 interrupt handling:
+- **BRK**: Software interrupt (break)
+- **COP**: Co-processor interrupt
+- **IRQ**: Hardware interrupt (maskable via I flag)
+- **NMI**: Non-maskable interrupt
+- **RESET**: System reset
+
+When an interrupt occurs:
+1. Push Program Bank (PB)
+2. Push Program Counter (PC)
+3. Push Processor Status (P)
+4. Set I flag (disable interrupts)
+5. Jump to interrupt vector
+
+Use **RTI** to return from interrupt (restores P, PC, PB).
+
+## Processor Status Flags
+
+**Format**: NV-MXDIZC
+
+- **N** (Negative): Set if result is negative (bit 7 set in 8-bit, bit 15 in 16-bit)
+- **V** (Overflow): Set on signed arithmetic overflow
+- **M** (Memory): 0=16-bit accumulator, 1=8-bit accumulator
+- **X** (Index): 0=16-bit index registers, 1=8-bit index registers
+- **D** (Decimal): 0=binary mode, 1=decimal (BCD) mode
+- **I** (Interrupt): 0=IRQ enabled, 1=IRQ disabled
+- **Z** (Zero): Set if result is zero
+- **C** (Carry): Set on arithmetic carry/borrow, used by shifts/rotates
+
+### Flag Control
+- **SEP #const**: Set processor status bits (OR with constant)
+- **REP #const**: Reset processor status bits (AND with ~constant)
+- **SEC/CLC**: Set/clear carry flag
+- **SED/CLD**: Set/clear decimal flag
+- **SEI/CLI**: Set/clear interrupt disable flag
+- **CLV**: Clear overflow flag
+
+## Performance Characteristics
+
+The DEF88186 is designed for efficient general-purpose computing with these strengths:
+
+1. **Fast Arithmetic**: Hardware MUL/DIV much faster than software
+2. **Efficient Loops**: LOOP/LPEND reduces loop overhead
+3. **Memory Access**: Multiple addressing modes for flexible memory access
+4. **Block Transfers**: MVN/MVP for fast memory copies
+5. **Flexible Data Sizes**: 8/16-bit mode switching via M/X flags
+
+## Comparison with PPU/APU
+
+| Feature | DEF88186 (CPU) | PPU | APU |
+|---------|----------------|-----|-----|
+| Architecture | 16-bit CISC | 16-bit microcode | 8-bit RISC |
+| Clock Speed | TBD | 64 MHz | 4.2 MHz |
+| Instructions/Cycle | ~1 | 1 | 0.25 (4 CPI) |
+| Purpose | General computing | Graphics racing beam | Audio synthesis |
+| Memory | 16 MB addressable | 64 KB | 64 KB + 448 KB AROM |
+| Registers | A, X, Y + banks | 64 × 16-bit | 256 × 8-bit |
+
+The DEF88186 is the system master:
+- Coordinates PPU graphics operations
+- Manages APU audio playback
+- Handles game logic and physics
+- Controls I/O and system resources
+- Arbitrates memory access
+
+## Programming Model
+
+### Typical Initialization
+```asm
+; Set to 16-bit mode for both accumulator and indexes
+REP #$30        ; Clear M and X flags (M=0, X=0)
+
+; Set up stack pointer
+LDA #$1FFF      ; Top of bank 0
+TCS             ; Transfer to stack pointer
+
+; Set data bank to 0
+LDA #$00
+SDB             ; Set data bank
+
+; Set direct page to 0
+LDA #$0000
+TCD             ; Transfer to direct page
+
+; Enable interrupts
+CLI             ; Clear interrupt disable
+```
+
+### Common Patterns
+```asm
+; 16-bit addition
+REP #$20        ; 16-bit accumulator
+LDA $1000       ; Load value
+ADC $1002       ; Add with carry
+STA $1004       ; Store result
+
+; Hardware multiply
+LDA #100        ; Load multiplier
+MUL #50         ; Multiply by 50 (result in A)
+
+; Hardware loop
+LOOP #1000      ; Loop 1000 times
+  ; ... loop body ...
+LPEND           ; Decrement and branch back if non-zero
+
+; Block copy
+LDX #$0000      ; Source offset
+LDY #$0000      ; Dest offset
+LDA #$0FFF      ; Count-1 (4096 bytes)
+MVP $01,$02     ; Copy from bank 1 to bank 2
+```
+
+## Development Notes
+
+This documentation is based on the DEF88186.csv specification. Some cycle counts and
+details may be incomplete or contain errors (noted in CSV as "some cycle counts are
+accurate, some are blank, some are broken"). Always verify timing-critical code with
+actual hardware testing or emulator cycle-accurate mode.
+
+For complete instruction reference, see instruction-set.txt.
+For addressing mode details, see addressing-modes.txt.
+For programming examples, see programming-guide.txt.

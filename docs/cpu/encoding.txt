@@ -1,0 +1,686 @@
+DEF88186 Main CPU - Binary Encoding Reference
+==============================================
+
+This document describes the binary encoding of DEF88186 instructions in detail,
+including opcode format, operand encoding, and little-endian byte ordering.
+
+================================================================================
+INSTRUCTION FORMAT
+================================================================================
+
+General Format:
+    [Opcode] [Operand Bytes...]
+
+- Opcode: 1 byte (determines instruction and addressing mode)
+- Operands: 0-3 additional bytes depending on addressing mode
+- Total instruction length: 1-4 bytes
+
+Endianness: LITTLE-ENDIAN
+- Multi-byte values are stored with least significant byte first
+- Example: $1234 is stored as: $34 $12
+
+================================================================================
+OPCODE BYTE ENCODING
+================================================================================
+
+The opcode byte ($00-$FF) encodes both the operation AND addressing mode:
+
+    Bits: 7  6  5  4  3  2  1  0
+          [  Instruction bits   ]
+
+Different instructions use different encoding schemes. There is no uniform
+bit field structure - the 65816 heritage means opcodes are somewhat irregular.
+
+Example Encodings:
+
+LDA Variants:
+    0x37 = LDA #const         (Immediate)
+    0x38 = LDA addr           (Absolute)
+    0x39 = LDA addr,X         (Absolute Indexed X)
+    0x3A = LDA addr,Y         (Absolute Indexed Y)
+    0x3B = LDA dp             (Direct Page)
+    0x3C = LDA dp,X           (DP Indexed X)
+    0x3D = LDA long           (Absolute Long)
+    0x3E = LDA long,X         (Absolute Long Indexed)
+    0x3F = LDA sr,S           (Stack Relative)
+
+Notice: The base opcode changes for each addressing mode. This is different
+from some architectures where addressing mode is encoded in separate bits.
+
+================================================================================
+OPERAND ENCODING BY ADDRESSING MODE
+================================================================================
+
+IMPLIED / REGISTER
+------------------
+Format: [Opcode]
+Length: 1 byte
+Operands: None
+
+Example:
+    NOP     : 00
+    INX     : 6F
+    DEX     : 77
+    RTS     : 19
+
+ACCUMULATOR
+-----------
+Format: [Opcode]
+Length: 1 byte
+Operands: None (operation on accumulator)
+
+Example:
+    INC A   : 69
+    ASL A   : 98
+    ROL A   : 80
+
+IMMEDIATE (8-bit)
+-----------------
+Format: [Opcode] [Value]
+Length: 2 bytes
+Operands: 1 byte immediate value
+
+Example:
+    LDA #$42    : 37 42
+    ADC #$10    : B6 10
+    CMP #$FF    : A6 FF
+
+IMMEDIATE (16-bit)
+------------------
+Format: [Opcode] [Low] [High]
+Length: 3 bytes
+Operands: 2 bytes, little-endian
+
+When M=0 (16-bit accumulator):
+    LDA #$1234  : 37 34 12
+
+When X=0 (16-bit index):
+    LDX #$5678  : 40 78 56
+
+ABSOLUTE
+--------
+Format: [Opcode] [Low] [High]
+Length: 3 bytes
+Operands: 16-bit address, little-endian
+
+Example:
+    LDA $1234   : 38 34 12
+    STA $8000   : 51 00 80
+    JMP $2000   : 0F 00 20
+
+Memory address calculation:
+    Effective Address = (DB << 16) | $1234
+    If DB=$02: EA = $021234
+
+ABSOLUTE LONG
+-------------
+Format: [Opcode] [Low] [High] [Bank]
+Length: 4 bytes
+Operands: 24-bit address, little-endian (bank last)
+
+Example:
+    LDA $7E8000 : 3D 00 80 7E
+                  ^^ offset low
+                     ^^ offset high
+                        ^^ bank
+
+    JMP $010000 : 10 00 00 01
+
+Memory address: $7E8000 (bank $7E, offset $8000)
+
+DIRECT PAGE
+-----------
+Format: [Opcode] [Offset]
+Length: 2 bytes
+Operands: 8-bit offset from D register
+
+Example:
+    LDA $10     : 3B 10
+    STA $42     : 54 42
+
+Memory address calculation:
+    Effective Address = D + $10
+    If D=$2000: EA = $2010
+
+DIRECT PAGE INDEXED (X or Y)
+-----------------------------
+Format: [Opcode] [Offset]
+Length: 2 bytes
+Operands: 8-bit offset from D register
+
+Example:
+    LDA $10,X   : 3C 10
+    STY $20,X   : 5D 20
+    LDX $30,Y   : 44 30
+
+Memory address calculation:
+    LDA $10,X:  EA = D + $10 + X
+    If D=$2000, X=$05: EA = $2015
+
+ABSOLUTE INDEXED (X or Y)
+--------------------------
+Format: [Opcode] [Low] [High]
+Length: 3 bytes
+Operands: 16-bit base address, little-endian
+
+Example:
+    LDA $1000,X : 39 00 10
+    STA $2000,Y : 53 00 20
+
+Memory address calculation:
+    LDA $1000,X: EA = (DB << 16) | ($1000 + X)
+    If DB=$01, X=$0050: EA = $011050
+
+ABSOLUTE LONG INDEXED (X)
+--------------------------
+Format: [Opcode] [Low] [High] [Bank]
+Length: 4 bytes
+Operands: 24-bit base address
+
+Example:
+    LDA $7E0000,X : 3E 00 00 7E
+
+Memory address calculation:
+    24-bit addition: $7E0000 + X
+    If X=$0100: EA = $7E0100
+    Note: Can cross bank boundaries!
+
+DIRECT PAGE INDIRECT
+--------------------
+Format: [Opcode] [Offset]
+Length: 2 bytes
+Operands: 8-bit DP offset (points to 16-bit pointer)
+
+Example:
+    LDA ($10)   : ?? 10
+
+Encoding steps:
+    1. Read pointer address: Pointer_Addr = D + $10
+    2. Read 16-bit pointer from bank 0: Pointer = [Bank0:Pointer_Addr]
+    3. Effective address: EA = (DB << 16) | Pointer
+
+Memory layout:
+    Assume D=$0200, value at Bank0:$0210 = $34 $50 (little-endian = $5034)
+    LDA ($10) reads from (DB << 16) | $5034
+
+DIRECT PAGE INDIRECT LONG
+--------------------------
+Format: [Opcode] [Offset]
+Length: 2 bytes
+Operands: 8-bit DP offset (points to 24-bit pointer)
+
+Example:
+    LDA [$10]   : 35 10
+
+Encoding steps:
+    1. Read pointer address: Pointer_Addr = D + $10
+    2. Read 24-bit pointer from bank 0: Pointer = [Bank0:Pointer_Addr] (3 bytes)
+    3. Effective address: EA = 24-bit Pointer
+
+Memory layout:
+    Assume D=$0200, value at Bank0:$0210 = $00 $80 $7E (little-endian = $7E8000)
+    LDA [$10] reads from $7E8000
+
+DP INDEXED INDIRECT (DP,X)
+---------------------------
+Format: [Opcode] [Offset]
+Length: 2 bytes
+Operands: 8-bit DP offset
+
+Example:
+    LDA ($10,X) : ?? 10
+
+Encoding steps:
+    1. Calculate pointer address: Pointer_Addr = D + $10 + X
+    2. Read 16-bit pointer from bank 0: Pointer = [Bank0:Pointer_Addr]
+    3. Effective address: EA = (DB << 16) | Pointer
+
+Use case: Array of pointers at DP, indexed by X
+
+DP INDIRECT INDEXED (DP),Y
+---------------------------
+Format: [Opcode] [Offset]
+Length: 2 bytes
+Operands: 8-bit DP offset
+
+Example:
+    LDA ($10),Y : ?? 10
+
+Encoding steps:
+    1. Read pointer address: Pointer_Addr = D + $10
+    2. Read 16-bit pointer from bank 0: Pointer = [Bank0:Pointer_Addr]
+    3. Add Y: Effective address: EA = (DB << 16) | (Pointer + Y)
+
+Use case: Pointer at DP, access array element via Y offset
+
+DP INDIRECT LONG INDEXED [DP],Y
+--------------------------------
+Format: [Opcode] [Offset]
+Length: 2 bytes
+Operands: 8-bit DP offset (points to 24-bit pointer)
+
+Example:
+    LDA [$10],Y : 36 10
+
+Encoding steps:
+    1. Read pointer address: Pointer_Addr = D + $10
+    2. Read 24-bit pointer from bank 0: Pointer = [Bank0:Pointer_Addr] (3 bytes)
+    3. Add Y: Effective address: EA = Pointer + Y (24-bit addition)
+
+STACK RELATIVE
+--------------
+Format: [Opcode] [Offset]
+Length: 2 bytes
+Operands: 8-bit offset from stack pointer
+
+Example:
+    LDA $04,S   : 3F 04
+
+Memory address calculation:
+    EA = S + $04
+    Always accesses bank 0
+
+STACK RELATIVE INDIRECT INDEXED
+--------------------------------
+Format: [Opcode] [Offset]
+Length: 2 bytes
+Operands: 8-bit offset from SP
+
+Example:
+    LDA ($04,S),Y : 34 04
+
+Encoding steps:
+    1. Calculate pointer address: Pointer_Addr = S + $04
+    2. Read 16-bit pointer from bank 0: Pointer = [Bank0:Pointer_Addr]
+    3. Add Y: EA = (DB << 16) | (Pointer + Y)
+
+ABSOLUTE INDIRECT
+-----------------
+Format: [Opcode] [Low] [High]
+Length: 3 bytes
+Operands: 16-bit pointer address
+
+Example:
+    JMP ($2000) : 0D 00 20
+
+Encoding steps:
+    1. Pointer address in current bank: Ptr_Addr = (DB << 16) | $2000
+    2. Read 16-bit target: Target = [Ptr_Addr]
+    3. Jump to: (PB << 16) | Target
+
+ABSOLUTE INDIRECT LONG
+-----------------------
+Format: [Opcode] [Low] [High]
+Length: 3 bytes
+Operands: 16-bit pointer address
+
+Example:
+    JMP [$2000] : 0E 00 20
+
+Encoding steps:
+    1. Pointer address in bank 0: Ptr_Addr = $002000
+    2. Read 24-bit target: Target = [Ptr_Addr] (3 bytes)
+    3. Jump to: Target (24-bit)
+
+ABSOLUTE INDEXED INDIRECT
+--------------------------
+Format: [Opcode] [Low] [High]
+Length: 3 bytes
+Operands: 16-bit base address
+
+Example:
+    JMP ($2000,X) : 0C 00 20
+
+Encoding steps:
+    1. Calculate pointer address: Ptr_Addr = (PB << 16) | ($2000 + X)
+    2. Read 16-bit target: Target = [Ptr_Addr]
+    3. Jump to: (PB << 16) | Target
+
+PC RELATIVE LONG
+----------------
+Format: [Opcode] [Low] [High]
+Length: 3 bytes
+Operands: Signed 16-bit offset
+
+Example:
+    BRL label   : 08 XX XX
+
+Encoding:
+    Offset = label - (PC + 3)
+    Stored as signed 16-bit value, little-endian
+
+Target calculation:
+    New PC = Current PC + 3 + Offset
+
+BLOCK MOVE
+----------
+Format: [Opcode] [SrcBank] [DestBank]
+Length: 3 bytes
+Operands: Source bank, destination bank
+
+Example:
+    MVP $7E,$7F : 68 7E 7F
+                     ^^ source bank
+                        ^^ destination bank
+
+Registers before execution:
+    X = source offset
+    Y = dest offset
+    A = count - 1
+
+================================================================================
+PROCESSOR STATUS REGISTER (P) ENCODING
+================================================================================
+
+Format:
+    Bit 7: N (Negative)
+    Bit 6: V (Overflow)
+    Bit 5: M (Memory/Accumulator size)
+    Bit 4: X (Index register size)
+    Bit 3: D (Decimal mode)
+    Bit 2: I (Interrupt disable)
+    Bit 1: Z (Zero)
+    Bit 0: C (Carry)
+
+Example values:
+    $00 = 0000 0000 : All flags clear, 16-bit A/X/Y, binary, IRQ enabled
+    $30 = 0011 0000 : 8-bit A/X/Y mode
+    $20 = 0010 0000 : 8-bit A, 16-bit X/Y
+    $10 = 0001 0000 : 16-bit A, 8-bit X/Y
+    $04 = 0000 0100 : IRQ disabled
+    $08 = 0000 1000 : Decimal mode
+    $81 = 1000 0001 : Negative and Carry set
+
+SEP/REP Encoding:
+    SEP #$30    : 1A 30    ; Set M and X flags (8-bit mode)
+    REP #$30    : 7F 30    ; Clear M and X flags (16-bit mode)
+
+The immediate value is a bitmask:
+    Bit set in operand -> flag will be set (SEP) or cleared (REP)
+
+================================================================================
+DETAILED ENCODING EXAMPLES
+================================================================================
+
+Example 1: Simple Load
+----------------------
+Assembly: LDA #$42
+Binary:   37 42
+         [OP][IM]
+
+Breakdown:
+    $37 = LDA immediate opcode
+    $42 = Immediate value
+
+If M=0 (16-bit):
+    Assembly: LDA #$1234
+    Binary:   37 34 12
+             [OP][LO][HI]
+
+Example 2: Absolute Store
+--------------------------
+Assembly: STA $2000
+Binary:   51 00 20
+         [OP][LO][HI]
+
+Breakdown:
+    $51 = STA absolute opcode
+    $00 $20 = Address $2000 (little-endian)
+
+Memory access: (DB << 16) | $2000
+
+Example 3: Long Addressing
+---------------------------
+Assembly: LDA $7E8000
+Binary:   3D 00 80 7E
+         [OP][LO][HI][BK]
+
+Breakdown:
+    $3D = LDA absolute long opcode
+    $00 $80 = Offset $8000
+    $7E = Bank $7E
+
+Full address: $7E8000
+
+Example 4: Indexed Access
+--------------------------
+Assembly: LDA $1000,X
+Binary:   39 00 10
+         [OP][LO][HI]
+
+If X=$0050 and DB=$01:
+    Effective address = $01 << 16 | ($1000 + $0050) = $011050
+
+Example 5: Direct Page
+-----------------------
+Assembly: LDA $10
+Binary:   3B 10
+         [OP][OF]
+
+If D=$2000:
+    Effective address = $2000 + $10 = $2010
+
+Example 6: Indirect
+--------------------
+Assembly: LDA ($10)
+Binary:   ?? 10
+         [OP][OF]
+
+If D=$0200:
+    Pointer address = $0200 + $10 = $0210
+    Read pointer from Bank 0: Assume [$00:0210] = $34 $50 = $5034
+    Effective address = (DB << 16) | $5034
+
+Example 7: Hardware Multiply
+-----------------------------
+Assembly: MUL #$0A
+Binary:   EF 0A
+         [OP][IM]
+
+If M=0 (16-bit):
+    Assembly: MUL #$1234
+    Binary:   EF 34 12
+
+Example 8: Block Move
+----------------------
+Assembly: MVP $01,$02
+Binary:   68 01 02
+         [OP][SR][DS]
+
+Setup:
+    X = $0000 (source offset)
+    Y = $0000 (dest offset)
+    A = $0FFF (4095 = 4096-1 bytes)
+
+Copies 4096 bytes from $01:0000 to $02:0000
+
+Example 9: Branch Long
+-----------------------
+Assembly:
+    start:
+        ; code at $1000
+        BRL target
+        ; ...
+    target:     ; at $1100
+
+At address $1000:
+    Offset = $1100 - ($1000 + 3) = $1100 - $1003 = $00FD
+    Binary: 08 FD 00
+
+Backward branch:
+    At $1100:
+        BRL start   ; target at $1000
+    Offset = $1000 - ($1100 + 3) = $1000 - $1103 = $-103 = $FEFD
+    Binary: 08 FD FE
+
+Example 10: Stack Operations
+-----------------------------
+Assembly: PHA
+Binary:   2B
+
+If M=0 (16-bit A = $1234):
+    Stack before: SP = $1FF0
+    Stack after:  SP = $1FEE
+    Memory[$1FEF] = $34 (low byte)
+    Memory[$1FF0] = $12 (high byte)
+
+If M=1 (8-bit A = $34):
+    Stack before: SP = $1FF0
+    Stack after:  SP = $1FEF
+    Memory[$1FF0] = $34
+
+Example 11: SEP/REP
+--------------------
+Assembly: SEP #$30
+Binary:   1A 30
+
+Action: P = P OR $30
+    Sets bits 5 and 4 (M and X flags)
+    Changes to 8-bit mode
+
+Assembly: REP #$30
+Binary:   7F 30
+
+Action: P = P AND ~$30
+    Clears bits 5 and 4 (M and X flags)
+    Changes to 16-bit mode
+
+Example 12: Hardware Loop
+--------------------------
+Assembly:
+    LOOP #1000
+loop_body:
+    ; ... code ...
+    LPEND
+
+Binary:
+    13 E8 03        ; LOOP #1000 (1000 = $03E8)
+    ...
+    14              ; LPEND
+
+LOOP encoding:
+    $13 = LOOP opcode
+    $E8 $03 = 1000 in little-endian
+
+================================================================================
+SPECIAL ENCODING NOTES
+================================================================================
+
+Signature Bytes
+---------------
+Some instructions include signature bytes:
+
+BRK:
+    Format: [BRK] [Signature]
+    Binary: 62 XX
+    The signature byte can be used to identify the break type
+
+COP:
+    Format: [COP] [Signature]
+    Binary: AF XX
+    The signature byte identifies the co-processor operation
+
+Variable-Length Instructions
+-----------------------------
+Instruction length depends on:
+1. Addressing mode (determined by opcode)
+2. Processor flags (M and X)
+
+Examples:
+    LDA #const:
+        M=1 (8-bit):  2 bytes (37 XX)
+        M=0 (16-bit): 3 bytes (37 XX XX)
+
+    LDX #const:
+        X=1 (8-bit):  2 bytes (40 XX)
+        X=0 (16-bit): 3 bytes (40 XX XX)
+
+This means disassemblers MUST track processor state to correctly
+decode instruction lengths!
+
+Opcode Holes
+------------
+Not all 256 opcode values are used. Some opcodes may be:
+- Reserved (undefined behavior)
+- Aliases of other instructions
+- Implementation-specific
+
+Known aliases:
+    EOR = XOR (different mnemonics, same functionality)
+
+================================================================================
+ENCODING VERIFICATION
+================================================================================
+
+To verify correct encoding:
+
+1. Check opcode matches intended operation and addressing mode
+2. Verify operand byte count matches addressing mode
+3. Ensure multi-byte values are little-endian
+4. Confirm M/X flag state for variable-length instructions
+5. Validate signed offsets for branches are correct
+
+Common Encoding Errors:
+
+1. Big-endian instead of little-endian:
+    WRONG: LDA $1234 encoded as 38 12 34
+    RIGHT: LDA $1234 encoded as 38 34 12
+
+2. Wrong immediate size:
+    If M=0, LDA #$12 should be 37 12 00 (16-bit)
+    Not 37 12 (8-bit)
+
+3. Incorrect bank byte position:
+    WRONG: LDA $7E8000 as 3D 7E 80 00
+    RIGHT: LDA $7E8000 as 3D 00 80 7E
+
+4. Branch offset miscalculation:
+    Must calculate from address of NEXT instruction
+    BRL at $1000: offset from $1003, not $1000
+
+5. Forgetting signature bytes:
+    BRK needs signature byte: 62 XX (2 bytes total)
+
+================================================================================
+BINARY TOOLS
+================================================================================
+
+Hexdump Example:
+----------------
+Assembly code:
+    LDA #$42
+    ADC #$10
+    STA $2000
+
+Binary:
+    37 42 B6 10 51 00 20
+
+Hexdump format:
+    0000: 37 42 B6 10 51 00 20                    7B.Q.
+
+Annotated:
+    0000: 37 42        LDA #$42
+    0002: B6 10        ADC #$10
+    0004: 51 00 20     STA $2000
+
+Disassembly Tips:
+-----------------
+1. Track processor state (M, X flags)
+2. Follow control flow for state changes
+3. Handle variable-length instructions
+4. Recognize patterns (initialization, loops, calls)
+
+Assembler Considerations:
+--------------------------
+When writing an assembler:
+1. Parse addressing mode from syntax
+2. Look up opcode from (mnemonic, addressing mode) pair
+3. Encode operands in little-endian
+4. Handle M/X flag state for size
+5. Calculate PC-relative offsets correctly
+
+================================================================================
+
+For instruction details, see instruction-set.txt
+For addressing mode details, see addressing-modes.txt
+For programming examples, see programming-guide.txt

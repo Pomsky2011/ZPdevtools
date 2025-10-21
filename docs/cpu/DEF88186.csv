@@ -1,0 +1,257 @@
+Assembler Example,Alias,Proper Name,HEX,HEX,Addressing Mode,Flags Set,Bytes,Cycles
+NOP,,No Operation,0,0x00,Implied,,1,2
+BIT #const,,Test Bits,1,0x01,Immediate,------Z-,2[12],2[1]
+BIT addr,,Test Bits,2,0x02,Absolute,NV----Z-,,3
+"BIT addr,X",,Test Bits,3,0x03,"Absolute Indexed,X",NV----Z-,,3
+BIT dp,,Test Bits,4,0x04,Direct Page,NV----Z-,2,3[1][2]
+"BIT dp,X",,Test Bits,5,0x05,"DP Indexed,X",NV----Z-,2,4[1][2]
+BMI long,,Branch if Minus,6,0x06,Absolute Long,,4,2[5][6]
+BRA long,,Branch Always,7,0x07,Absolute Long,,2,3[6]
+BRL label,,Branch Long Always,8,0x08,Program Counter Relative Long,,3,4
+BVS long,,Branch if Overflow Set,9,0x09,Absolute Long,,2,2[5][6]
+BCS long,BGE,Branch if Carry Set,0A,0x0A,Absolute Long,,4,2[5][6]
+BEQ long,,Branch if Equal,0B,0x0B,Absolute Long,,4,2[5][6]
+"JMP (addr,X)",,Jump,0C,0x0C,Absolute Indexed Indirect,,3,4
+JMP (addr),,Jump,0D,0x0D,Absolute Indirect,,3,4
+JMP [addr],JML,Jump,0E,0x0E,Absolute Indirect Long,,3,4
+JMP addr,,Jump,0F,0x0F,Absolute,,3,4
+JMP long,JML,Jump,10,0x10,Absolute Long,,4,4
+"JSR (addr,X))",,Jump to Subroutine,11,0x11,Absolute Indexed Indirect,,,4
+JSR addr,,Jump to Subroutine,12,0x12,Absolute,,3,4
+LOOP word,LP,Loop,13,0x13,Immediate,,3,2
+LPEND,,Loop End,14,0x14,Immediate,,1,1
+CALL long,,Call,15,0x15,Absolute Long,,4,16
+RET,,Return to OS,16,0x16,Implied,,1,8
+RTI,,Return from Interrupt,17,0x17,Stack (RTI),NVMXDIZC,1,6[7]
+RTL,,Return from Subroutine Long,18,0x18,Stack (RTL),,1,6
+RTS,,Return from Subroutine,19,0x19,Stack (RTS),,1,6
+SEP #const,,Set Processor Status Bits,1A,0x1A,Immediate,NVMXDIZC,2,3
+SDB byte,,Set Data Bank,1B,0x1B,Immediate,,2,2
+WAI,,Wait for Interrupt,1C,0x1C,Implied,,1,3[10]
+XBA,,Exchange Accumulator Bytes,1D,0x1D,Implied,,1,2
+"XCHG long,dp",,Exchange Operands,1E,0x1E,"Absolute Long, DP Indexed",,4,8
+"XCHG X,dp",,Exchange Operands,1F,0x1F,"DP Indexed,X",,1,8
+"XCHG X,long",,Exchange Operands,20,0x20,"X,Absolute Long",,4,8
+"XCHG X,Y",,Exchange Operands,21,0x21,"X,Y",,1,8
+"XCHG Y,dp",,Exchange Operands,22,0x22,"DP Indexed,Y",,1,8
+"XCHG Y,long",,Exchange Operands,23,0x23,"Y,Absolute Long Indexed",,4,8
+TXY,,Transfer Index Register X to Index Register Y,24,0x24,Implied,N-----Z-,1,2
+TYA,,Transfer Index Register Y to Accumulator,25,0x25,Implied,N-----Z-,1,2
+TYX,,Transfer Index Register Y to Index Register X,26,0x26,Implied,N-----Z-,1,2
+PUSH word,,Push Value,27,0x27,Stack (Push),,3,3
+PEA addr,,Push Effective Absolute Address,28,0x28,Stack (Absolute),,,3
+PEI (dp),,Push Effective Indirect Address,29,0x29,Stack (DP Indirect),,2,6[2]
+PER label,,Push Effective PC Relative Indirect Address,2A,0x2A,Stack (PC Relative Long),,3,6
+PHA,,Push Accumulator,2B,0x2B,Stack (Push),,1,3[1]
+PHB,,Push Data Bank Register,2C,0x2C,Stack (Push),,1,3
+PHD,,Push Direct Page Register,2D,0x2D,Stack (Push),,1,4
+PHK,,Push Program Bank Register,2E,0x2E,Stack (Push),,1,3
+PHP,PUSHF,Push Processor Status Register,2F,0x2F,Stack (Push),,1,3
+PHX,,Push Index Register X,30,0x30,Stack (Push),,1,3[8]
+PHY,,Push Index Register Y,31,0x31,Stack (Push),,1,3[8]
+PLA,,Pull Accumulator,32,0x32,Stack (Pull),N-----Z-,1,4[1]
+POPF,PPP,Pop Processor Status Register,33,0x33,Stack (Pull),,1,3
+"LDA (sr,S),Y",,Load Accumulator from Memory,34,0x34,"SR Indirect Indexed,Y",N-----Z-,2,7[1]
+LDA [dp],,Load Accumulator from Memory,35,0x35,DP Indirect Long,N-----Z-,2,6[1][2]
+"LDA [dp],Y",,Load Accumulator from Memory,36,0x36,"DP Indirect Long Indexed, Y",N-----Z-,2,6[1][2]
+LDA #const,,Load Accumulator from Memory,37,0x37,Immediate,N-----Z-,2[12],2[1]
+LDA addr,,Load Accumulator from Memory,38,0x38,Absolute,N-----Z-,,3
+"LDA addr,X",,Load Accumulator from Memory,39,0x39,"Absolute Indexed,X",N-----Z-,,3
+"LDA addr,Y",,Load Accumulator from Memory,3A,0x3A,"Absolute Indexed,Y",N-----Z-,,3
+LDA dp,,Load Accumulator from Memory,3B,0x3B,Direct Page,N-----Z-,2,3[1][2]
+"LDA dp,X",,Load Accumulator from Memory,3C,0x3C,"DP Indexed,X",N-----Z-,2,4[1][2]
+LDA long,,Load Accumulator from Memory,3D,0x3D,Absolute Long,N-----Z-,4,5[1]
+"LDA long,X",,Load Accumulator from Memory,3E,0x3E,"Absolute Long Indexed,X",N-----Z-,4,5[1]
+"LDA sr,S",,Load Accumulator from Memory,3F,0x3F,Stack Relative,N-----Z-,2,4[1]
+LDX #const,,Load Index Register X from Memory,40,0x40,Immediate,N-----Z-,2[14],2[8]
+LDX addr,,Load Index Register X from Memory,41,0x41,Absolute,N-----Z-,,3
+"LDX addr,Y",,Load Index Register X from Memory,42,0x42,"Absolute Indexed,Y",N-----Z-,,3
+LDX dp,,Load Index Register X from Memory,43,0x43,Direct Page,N-----Z-,2,3[2][8]
+"LDX dp,Y",,Load Index Register X from Memory,44,0x44,"DP Indexed,Y",N-----Z-,2,4[2][8]
+LDY #const,,Load Index Register Y from Memory,45,0x45,Immediate,N-----Z-,2[14],2[8]
+LDY addr,,Load Index Register Y from Memory,46,0x46,Absolute,N-----Z-,,3
+"LDY addr,X",,Load Index Register Y from Memory,47,0x47,"Absolute Indexed,X",N-----Z-,,3
+LDY dp,,Load Index Register Y from Memory,48,0x48,Direct Page,N-----Z-,2,3[2][8]
+"LDY dp,X",,Load Index Register Y from Memory,49,0x49,"DP Indexed,X",N-----Z-,2,4[2][8]
+STA _dp_X,,Store Accumulator to Memory,4A,0x4A,"DP Indexed,X",,2,4[1][2]
+"STA (dp,X)",,Store Accumulator to Memory,4B,0x4B,"DP Indexed Indirect,X",,2,6[1][2]
+STA (dp),,Store Accumulator to Memory,4C,0x4C,DP Indirect,,2,5[1][2]
+"STA (dp),Y",,Store Accumulator to Memory,4D,0x4D,"DP Indirect Indexed, Y",,2,6[1][2]
+"STA (sr,S),Y",,Store Accumulator to Memory,4E,0x4E,"SR Indirect Indexed,Y",,2,7[1]
+STA [dp],,Store Accumulator to Memory,4F,0x4F,DP Indirect Long,,2,6[1][2]
+"STA [dp],Y",,Store Accumulator to Memory,50,0x50,"DP Indirect Long Indexed, Y",,2,6[1][2]
+STA addr,,Store Accumulator to Memory,51,0x51,Absolute,,,3
+"STA addr,X",,Store Accumulator to Memory,52,0x52,"Absolute Indexed,X",,,3
+"STA addr,Y",,Store Accumulator to Memory,53,0x53,"Absolute Indexed,Y",,,3
+STA dp,,Store Accumulator to Memory,54,0x54,Direct Page,,2,3[1][2]
+STA long,,Store Accumulator to Memory,55,0x55,Absolute Long,,4,5[1]
+"STA long,X",,Store Accumulator to Memory,56,0x56,"Absolute Long Indexed,X",,4,5[1]
+"STA sr,S",,Store Accumulator to Memory,57,0x57,Stack Relative,,2,4[1]
+STX addr,,Store Index Register X to Memory,58,0x58,Absolute,,,3
+STX dp,,Store Index Register X to Memory,59,0x59,Direct Page,,2,3[2][8]
+"STX dp,Y",,Store Index Register X to Memory,5A,0x5A,"DP Indexed,Y",,2,4[2][8]
+STY addr,,Store Index Register Y to Memory,5B,0x5B,Absolute,,,3
+STY dp,,Store Index Register Y to Memory,5C,0x5C,Direct Page,,2,3[2][8]
+"STY dp,X",,Store Index Register Y to Memory,5D,0x5D,"DP Indexed,X",,2,4[2][8]
+STZ addr,,Store Zero to Memory,5E,0x5E,Absolute,,,3
+"STZ addr,X",,Store Zero to Memory,5F,0x5F,"Absolute Indexed,X",,,3
+STZ dp,,Store Zero to Memory,60,0x60,Direct Page,,2,3[1][2]
+"STZ dp,X",,Store Zero to Memory,61,0x61,"DP Indexed,X",,2,4[1][2]
+BRK,,Break,62,0x62,Stack/Interrupt,----DI--,2[13],7[7]
+SEC,,Set Carry Flag,63,0x63,Implied,-------C,1,2
+SED,,Set Decimal Flag,64,0x64,Implied,----D---,1,2
+SEI,,Set Interrupt Disable Flag,65,0x65,Implied,-----I--,1,2
+ADC dp,,Add With Carry,66,0x66,Direct Page,NV----ZC,2,3[1][2]
+"MVN srcbk,destbk",,Block Move Negative,67,0x67,Block Move,,3,1[3]
+"MVP srcbk,destbk",,Block Move Positive,68,0x68,Block Move,,3,1[3]
+INC A,INA,Increment,69,0x69,Accumulator,N-----Z-,1,2
+INC addr,,Increment,6A,0x6A,Absolute,N-----Z-,,3
+"INC addr,X",,Increment,6B,0x6B,"Absolute Indexed,X",N-----Z-,,3
+INC dp,,Increment,6C,0x6C,Direct Page,N-----Z-,2,5[2][4]
+"INC dp,X",,Increment,6D,0x6D,"DP Indexed,X",N-----Z-,2,6[2][4]
+INC long,,Increment,6E,0x6E,Absolute,N-----Z-,4,6[4]
+INX,,Increment Index Register X,6F,0x6F,Implied,N-----Z-,1,2
+INY,,Increment Index Register Y,70,0x70,Implied,N-----Z-,1,2
+DEC A,DEA,Decrement,71,0x71,Accumulator,N-----Z-,2,2
+DEC addr,,Decrement,72,0x72,Absolute,N-----Z-,,3
+"DEC addr,X",,Decrement,73,0x73,"Absolute Indexed,X",N-----Z-,,3
+DEC dp,,Decrement,74,0x74,Direct Page,N-----Z-,2,5[2][4]
+"DEC dp,X",,Decrement,75,0x75,"DP Indexed,X",N-----Z-,2,6[2][4]
+DEC long,,Decrement,76,0x76,Absolute,N-----Z-,4,6[4]
+DEX,,Decrement Index Register X,77,0x77,Implied,N-----Z-,1,2
+DEY,,Decrement Index Register Y,78,0x78,Implied,N-----Z-,1,2
+CPX addr,,Compare Index Register X with Memory,79,0x79,Absolute,N-----ZC,,3
+CPY addr,,Compare Index Register Y with Memory,7A,0x7A,Absolute,N-----ZC,,3
+CLD,,Clear Decimal Mode Flag,7B,0x7B,Implied,----D---,1,2
+CLI,,Clear Interrupt Disable Flag,7C,0x7C,Implied,-----I--,1,2
+CLV,,Clear Overflow Flag,7D,0x7D,Implied,-V------,1,2
+CLC,,Clear Carry,7E,0x7E,Implied,-------C,1,2
+REP #const,,Reset Processor Status Bits,7F,0x7F,Immediate,NVMXDIZC,2,3
+ROL A,,Rotate Memory or Accumulator Left,80,0x80,Accumulator,N-----ZC,1,2
+ROL addr,,Rotate Memory or Accumulator Left,81,0x81,Absolute,N-----ZC,,3
+"ROL addr,X",,Rotate Memory or Accumulator Left,82,0x82,"Absolute Indexed,X",N-----Z,,3
+ROL dp,,Rotate Memory or Accumulator Left,83,0x83,Direct Page,N-----ZC,2,5[2][4]
+ROR A,,Rotate Memory or Accumulator Right,84,0x84,Accumulator,N-----ZC,1,2
+ROR addr,,Rotate Memory or Accumulator Right,85,0x85,Absolute,N-----ZC,,3
+"ROR addr,X",,Rotate Memory or Accumulator Right,86,0x86,"Absolute Indexed,X",N-----ZC,,3
+ROR dp,,Rotate Memory or Accumulator Right,87,0x87,Direct Page,N-----ZC,2,5[2][4]
+SHL X,,Shift Left,88,0x88,Immediate,-------C,1,2
+SHL Y,,Shift Left,89,0x89,Immediate,-------C,1,2
+SHR X,,Shift Right,8A,0x8A,Immediate,-------C,1,2
+SHR Y,,Shift Right,8B,0x8B,Immediate,-------C,1,2
+RCL A,,Rotate through Carry Flag,8C,0x8C,Accumulator,N-----ZC,2,4
+LSR A,,Logical Shift Memory or Accumulator Right,8D,0x8D,Accumulator,N-----ZC,1,2
+LSR addr,,Logical Shift Memory or Accumulator Right,8E,0x8E,Absolute,N-----ZC,,3
+"LSR addr,X",,Logical Shift Memory or Accumulator Right,8F,0x8F,"Absolute Indexed,X",N-----ZC,,3
+LSR dp,,Logical Shift Memory or Accumulator Right,90,0x90,Direct Page,N-----ZC,2,5[2][4]
+"LSR dp,X",,Logical Shift Memory or Accumulator Right,91,0x91,"DP Indexed,X",N-----ZC,2,6[2][4]
+"DIV X,Y",,Divide,92,0x92,"X,Y",-------C,1,8
+"DIV long,X",,Divide,93,0x93,"Absolute Long Indexed,X",-------C,4,8
+"DIV long,Y",,Divide,94,0x94,"Absolute Long Indexed,Y",-------C,4,8
+EOR addr,,Exclusive-OR Accumulator with Memory,95,0x95,Absolute,N-----Z-,,3
+"EOR addr,X",,Exclusive-OR Accumulator with Memory,96,0x96,"Absolute Indexed,X",N-----Z-,,3
+"EOR addr,Y",,Exclusive-OR Accumulator with Memory,97,0x97,"Absolute Indexed,Y",N-----Z-,,3
+ASL A,,Arithmetic Shift Left,98,0x98,Accumulator,N-----ZC,1,2
+ASL addr,,Arithmetic Shift Left,99,0x99,Absolute,N-----ZC,,3
+"ASL addr,X",,Arithmetic Shift Left,9A,0x9A,"Absolute Indexed,X",N-----ZC,,3
+ASL dp,,Arithmetic Shift Left,9B,0x9B,Direct Page,N-----ZC,2,5[2][4]
+"ASL dp,X",,Arithmetic Shift Left,9C,0x9C,"DP Indexed,X",N-----ZC,2,6[2][4]
+"XOR (dp,X)",,Exclusive-OR Accumulator with Memory,9D,0x9D,"DP Indexed Indirect,X",N-----Z-,2,6[1][2]
+XOR (dp),,Exclusive-OR Accumulator with Memory,9E,0x9E,DP Indirect,N-----Z-,2,5[1][2]
+"XOR (dp),Y",,Exclusive-OR Accumulator with Memory,9F,0x9F,"DP Indirect Indexed, Y",N-----Z-,2,5[1][2][3]
+"CMP (dp,X)",,Compare Accumulator with Memory,A0,0xA0,"DP Indexed Indirect,X",N-----ZC,2,6[1][2]
+CMP (dp),,Compare Accumulator with Memory,A1,0xA1,DP Indirect,N-----ZC,2,5[1][2]
+"CMP (dp),Y",,Compare Accumulator with Memory,A2,0xA2,"DP Indirect Indexed, Y",N-----ZC,2,5[1][2][3]
+"CMP (sr,S),Y",,Compare Accumulator with Memory,A3,0xA3,"SR Indirect Indexed,Y",N-----ZC,2,7[1]
+CMP [dp],,Compare Accumulator with Memory,A4,0xA4,DP Indirect Long,N-----ZC,2,6[1][2]
+"CMP [dp],Y",,Compare Accumulator with Memory,A5,0xA5,"DP Indirect Long Indexed, Y",N-----ZC,2,6[1][2]
+CMP #const,,Compare Accumulator with Memory,A6,0xA6,Immediate,N-----ZC,2[12],2[1]
+CMP addr,,Compare Accumulator with Memory,A7,0xA7,Absolute,N-----ZC,,3
+"CMP addr,X",,Compare Accumulator with Memory,A8,0xA8,"Absolute Indexed,X",N-----ZC,,3
+"CMP addr,Y",,Compare Accumulator with Memory,A9,0xA9,"Absolute Indexed,Y",N-----ZC,,3
+CMP dp,,Compare Accumulator with Memory,AA,0xAA,Direct Page,N-----ZC,2,3[1][2]
+"CMP dp,X",,Compare Accumulator with Memory,AB,0xAB,"DP Indexed,X",N-----ZC,2,4[1][2]
+CMP long,,Compare Accumulator with Memory,AC,0xAC,Absolute Long,N-----ZC,4,5[1]
+"CMP long,X",,Compare Accumulator with Memory,AD,0xAD,"Absolute Long Indexed,X",N-----ZC,4,5[1]
+"CMP sr,S",,Compare Accumulator with Memory,AE,0xAE,Stack Relative,N-----ZC,2,4[1]
+COP #const,,Co-Processor,AF,0xAF,Stack/Interrupt,----DI--,2[13],7[7]
+"ADC ( dp),Y",,Add With Carry,B0,0xB0,"DP Indirect Indexed, Y",NV----ZC,2,5[1][2][3]
+"ADC (dp,X)",,Add With Carry,B1,0xB1,"DP Indexed Indirect,X",NV----ZC,2,6[1][2]
+ADC (dp),,Add With Carry,B2,0xB2,DP Indirect,NV----ZC,2,5[1][2]
+"ADC (sr,S),Y",,Add With Carry,B3,0xB3,"SR Indirect Indexed,Y",NV----ZC,2,7[1]
+ADC [dp],,Add With Carry,B4,0xB4,DP Indirect Long,NV----ZC,2,6[1][2]
+"ADC [dp],Y",,Add With Carry,B5,0xB5,"DP Indirect Long Indexed, Y",NV----ZC,2,6[1][2]
+ADC #const,,Add With Carry,B6,0xB6,Immediate,NV----ZC,2[12],2[1]
+ADC addr,,Add With Carry,B7,0xB7,Absolute,NV----ZC,,3
+"ADC addr,X",,Add With Carry,B8,0xB8,"Absolute Indexed,X",NV----ZC,,3
+"ADC addr,Y",,Add With Carry,B9,0xB9,"Absolute Indexed,Y",NV----ZC,,3
+"ADC dp,X",,Add With Carry,BA,0xBA,"DP Indexed,X",NV----ZC,2,4[1][2]
+ADC long,,Add With Carry,BB,0xBB,Absolute Long,NV----ZC,4,5[1]
+"ADC long,X",,Add With Carry,BC,0xBC,"Absolute Long Indexed,X",NV----ZC,4,5[1]
+"ADC sr,S",,Add With Carry,BD,0xBD,Stack Relative,NV----ZC,2,4[1]
+"AND (dp,X)",,AND Accumulator with Memory,BE,0xBE,"DP Indexed Indirect,X",N-----Z-,2,6[1][2]
+AND (dp),,AND Accumulator with Memory,BF,0xBF,DP Indirect,N-----Z-,2,5[1][2]
+"AND (dp),Y",,AND Accumulator with Memory,C0,0xC0,"DP Indirect Indexed, Y",N-----Z-,2,5[1][2][3]
+"AND (sr,S),Y",,AND Accumulator with Memory,C1,0xC1,"SR Indirect Indexed,Y",N-----Z-,2,7[1]
+AND [dp],,AND Accumulator with Memory,C2,0xC2,DP Indirect Long,N-----Z-,2,6[1][2]
+"AND [dp],Y",,AND Accumulator with Memory,C3,0xC3,"DP Indirect Long Indexed, Y",N-----Z-,2,6[1][2]
+AND #const,,AND Accumulator with Memory,C4,0xC4,Immediate,N-----Z-,2[12],2[1]
+AND addr,,AND Accumulator with Memory,C5,0xC5,Absolute,N-----Z-,,3
+"AND addr,X",,AND Accumulator with Memory,C6,0xC6,"Absolute Indexed,X",N-----Z-,,3
+"AND addr,Y",,AND Accumulator with Memory,C7,0xC7,"Absolute Indexed,Y",N-----Z-,,3
+AND dp,,AND Accumulator with Memory,C8,0xC8,Direct Page,N-----Z-,2,3[1][2]
+"AND dp,X",,AND Accumulator with Memory,C9,0xC9,"DP Indexed,X",N-----Z-,2,4[1][2]
+AND long,,AND Accumulator with Memory,CA,0xCA,Absolute Long,N-----Z-,4,5[1]
+"AND long,X",,AND Accumulator with Memory,CB,0xCB,"Absolute Long Indexed,X",N-----Z-,4,5[1]
+"AND sr,S",,AND Accumulator with Memory,CC,0xCC,Stack Relative,N-----Z-,2,4[1]
+"ORA (dp,X)",,OR Accumulator with Memory,CD,0xCD,"DP Indexed Indirect,X",N-----Z-,2,6[1][2]
+ORA (dp),,OR Accumulator with Memory,CE,0xCE,DP Indirect,N-----Z-,2,5[1][2]
+"ORA (dp),Y",,OR Accumulator with Memory,CF,0xCF,"DP Indirect Indexed, Y",N-----Z-,2,5[1][2][3]
+"ORA (sr,S),Y",,OR Accumulator with Memory,D0,0xD0,"SR Indirect Indexed,Y",N-----Z-,2,7[1]
+ORA [dp],,OR Accumulator with Memory,D1,0xD1,DP Indirect Long,N-----Z-,2,6[1][2]
+"ORA [dp],Y",,OR Accumulator with Memory,D2,0xD2,"DP Indirect Long Indexed, Y",N-----Z-,2,6[1][2]
+ORA #const,,OR Accumulator with Memory,D3,0xD3,Immediate,N-----Z-,2[12],2[1]
+ORA addr,,OR Accumulator with Memory,D4,0xD4,Absolute,N-----Z-,,3
+"ORA addr,X",,OR Accumulator with Memory,D5,0xD5,"Absolute Indexed,X",N-----Z-,,3
+"ORA addr,Y",,OR Accumulator with Memory,D6,0xD6,"Absolute Indexed,Y",N-----Z-,,3
+ORA dp,,OR Accumulator with Memory,D7,0xD7,Direct Page,N-----Z-,2,3[1][2]
+"ORA dp,X",,OR Accumulator with Memory,D8,0xD8,"DP Indexed,X",N-----Z-,2,4[1][2]
+ORA long,,OR Accumulator with Memory,D9,0xD9,Absolute Long,N-----Z-,4,5[1]
+"ORA long,X",,OR Accumulator with Memory,DA,0xDA,"Absolute Long Indexed,X",N-----Z-,4,5[1]
+"ORA sr,S",,OR Accumulator with Memory,DB,0xDB,Stack Relative,N-----Z-,2,4[1]
+"SBC (dp,X)",,Subtract with Borrow from Accumulator,DC,0xDC,"DP Indexed Indirect,X",NV----ZC,2,6[1][2]
+"SBC (dp),Y",,Subtract with Borrow from Accumulator,DD,0xDD,"DP Indirect Indexed, Y",NV----ZC,2,5[1][2][3]
+"SBC (sr,S),Y",,Subtract with Borrow from Accumulator,DE,0xDE,"SR Indirect Indexed,Y",NV----ZC,2,7[1]
+SBC [dp],,Subtract with Borrow from Accumulator,DF,0xDF,DP Indirect Long,NV----ZC,2,6[1][2]
+"SBC [dp],Y",,Subtract with Borrow from Accumulator,E0,0xE0,"DP Indirect Long Indexed, Y",NV----ZC,2,6[1][2]
+SBC #const,,Subtract with Borrow from Accumulator,E1,0xE1,Immediate,NV----ZC,2[12],2[1]
+SBC addr,,Subtract with Borrow from Accumulator,E2,0xE2,Absolute,NV----ZC,,3
+"SBC addr,X",,Subtract with Borrow from Accumulator,E3,0xE3,"Absolute Indexed,X",NV----ZC,,3
+"SBC addr,Y",,Subtract with Borrow from Accumulator,E4,0xE4,"Absolute Indexed,Y",NV----ZC,,3
+SBC dp,,Subtract with Borrow from Accumulator,E5,0xE5,Direct Page,NV----ZC,2,3[1][2]
+"SBC dp,X",,Subtract with Borrow from Accumulator,E6,0xE6,"DP Indexed,X",NV----ZC,2,4[1][2]
+SBC long,,Subtract with Borrow from Accumulator,E7,0xE7,Absolute Long,NV----ZC,4,5[1]
+"SBC long,X",,Subtract with Borrow from Accumulator,E8,0xE8,"Absolute Long Indexed,X",NV----ZC,4,5[1]
+"SBC sr,S",,Subtract with Borrow from Accumulator,E9,0xE9,Stack Relative,NV----ZC,2,4[1]
+"MUL (dp,X)",,Multiply Accumulator by Memory or Register,EA,0xEA,"DP Indexed Indirect,X",NV----ZC,2,12
+"MUL (dp),Y",,Multiply Accumulator by Memory or Register,EB,0xEB,"DP Indirect Indexed, Y",NV----ZC,2,11
+"MUL (sr,S),Y",,Multiply Accumulator by Memory or Register,EC,0xEC,"SR Indirect Indexed,Y",NV----ZC,2,13
+MUL [dp],,Multiply Accumulator by Memory or Register,ED,0xED,DP Indirect Long,NV----ZC,2,12
+"MUL [dp],Y",,Multiply Accumulator by Memory or Register,EE,0xEE,"DP Indirect Long Indexed, Y",NV----ZC,2,12
+MUL #const,,Multiply Accumulator by Memory or Register,EF,0xEF,Immediate,NV----ZC,2[12],8
+MUL addr,,Multiply Accumulator by Memory or Register,F0,0xF0,Absolute,NV----ZC,,9
+"MUL addr,X",,Multiply Accumulator by Memory or Register,F1,0xF1,"Absolute Indexed,X",NV----ZC,,9
+"MUL addr,Y",,Multiply Accumulator by Memory or Register,F2,0xF2,"Absolute Indexed,Y",NV----ZC,,9
+MUL dp,,Multiply Accumulator by Memory or Register,F3,0xF3,Direct Page,NV----ZC,2,9
+"MUL dp,X",,Multiply Accumulator by Memory or Register,F4,0xF4,"DP Indexed,X",NV----ZC,2,10
+MUL long,,Multiply Accumulator by Memory or Register,F5,0xF5,Absolute Long,NV----ZC,4,11
+"MUL long,X",,Multiply Accumulator by Memory or Register,F6,0xF6,"Absolute Long Indexed,X",NV----ZC,4,11
+"MUL sr,S",,Multiply Accumulator by Memory or Register,F7,0xF7,Stack Relative,NV----ZC,2,10
+"XOR (sr,S),Y",,Exclusive-OR Accumulator with Memory,F8,0xF8,"SR Indirect Indexed,Y",N-----Z-,2,7[1]
+XOR #const,,Exclusive-OR Accumulator with Memory,F9,0xF9,Immediate,N-----Z-,2[12],2[1]
+XOR dp,,Exclusive-OR Accumulator with Memory,FA,0xFA,Direct Page,N-----Z-,2,3[1][2]
+"XOR dp,X",,Exclusive-OR Accumulator with Memory,FB,0xFB,"DP Indexed,X",N-----Z-,2,4[1][2]
+XOR long,,Exclusive-OR Accumulator with Memory,FC,0xFC,Absolute Long,N-----Z-,4,5[1]
+"XOR long,X",,Exclusive-OR Accumulator with Memory,FD,0xFD,"Absolute Long Indexed,X",N-----Z-,4,5[1]
+"XOR sr,S",,Exclusive-OR Accumulator with Memory,FE,0xFE,Stack Relative,N-----Z-,2,4[1]
+HLT,STP/KIL,Halt,FF,0xFF,Implied,,1,0

@@ -1,0 +1,631 @@
+DEF88186 Main CPU - Complete Instruction Set Reference
+======================================================
+
+This document lists all 256 instructions of the DEF88186 CPU, organized by category.
+Notation: [n] indicates conditional cycle count (see footnotes at end).
+
+Flags: N=Negative, V=Overflow, M=Memory/Acc size, X=Index size, D=Decimal, I=Interrupt, Z=Zero, C=Carry
+Sizes: # means size varies with M/X flag
+
+================================================================================
+DATA TRANSFER - Load/Store Operations
+================================================================================
+
+LOAD ACCUMULATOR (LDA)
+----------------------
+LDA #const                0x37    Immediate              2[12] bytes  2[1] cycles    N-----Z-
+LDA addr                  0x38    Absolute               3 bytes      3 cycles       N-----Z-
+LDA addr,X                0x39    Absolute Indexed,X     3 bytes      3 cycles       N-----Z-
+LDA addr,Y                0x3A    Absolute Indexed,Y     3 bytes      3 cycles       N-----Z-
+LDA dp                    0x3B    Direct Page            2 bytes      3[1][2] cycles N-----Z-
+LDA dp,X                  0x3C    DP Indexed,X           2 bytes      4[1][2] cycles N-----Z-
+LDA (dp,X)                0x?     DP Indexed Indirect,X  2 bytes      ? cycles       N-----Z-
+LDA (dp)                  0x?     DP Indirect            2 bytes      ? cycles       N-----Z-
+LDA (dp),Y                0x?     DP Indirect Indexed,Y  2 bytes      ? cycles       N-----Z-
+LDA long                  0x3D    Absolute Long          4 bytes      5[1] cycles    N-----Z-
+LDA long,X                0x3E    Absolute Long Indexed  4 bytes      5[1] cycles    N-----Z-
+LDA [dp]                  0x35    DP Indirect Long       2 bytes      6[1][2] cycles N-----Z-
+LDA [dp],Y                0x36    DP Indirect Long Idx,Y 2 bytes      6[1][2] cycles N-----Z-
+LDA sr,S                  0x3F    Stack Relative         2 bytes      4[1] cycles    N-----Z-
+LDA (sr,S),Y              0x34    SR Indirect Indexed,Y  2 bytes      7[1] cycles    N-----Z-
+
+LOAD INDEX X (LDX)
+------------------
+LDX #const                0x40    Immediate              2[14] bytes  2[8] cycles    N-----Z-
+LDX addr                  0x41    Absolute               3 bytes      3 cycles       N-----Z-
+LDX addr,Y                0x42    Absolute Indexed,Y     3 bytes      3 cycles       N-----Z-
+LDX dp                    0x43    Direct Page            2 bytes      3[2][8] cycles N-----Z-
+LDX dp,Y                  0x44    DP Indexed,Y           2 bytes      4[2][8] cycles N-----Z-
+
+LOAD INDEX Y (LDY)
+------------------
+LDY #const                0x45    Immediate              2[14] bytes  2[8] cycles    N-----Z-
+LDY addr                  0x46    Absolute               3 bytes      3 cycles       N-----Z-
+LDY addr,X                0x47    Absolute Indexed,X     3 bytes      3 cycles       N-----Z-
+LDY dp                    0x48    Direct Page            2 bytes      3[2][8] cycles N-----Z-
+LDY dp,X                  0x49    DP Indexed,X           2 bytes      4[2][8] cycles N-----Z-
+
+STORE ACCUMULATOR (STA)
+-----------------------
+STA addr                  0x51    Absolute               3 bytes      3 cycles
+STA addr,X                0x52    Absolute Indexed,X     3 bytes      3 cycles
+STA addr,Y                0x53    Absolute Indexed,Y     3 bytes      3 cycles
+STA dp                    0x54    Direct Page            2 bytes      3[1][2] cycles
+STA dp,X                  0x4A    DP Indexed,X           2 bytes      4[1][2] cycles
+STA (dp,X)                0x4B    DP Indexed Indirect,X  2 bytes      6[1][2] cycles
+STA (dp)                  0x4C    DP Indirect            2 bytes      5[1][2] cycles
+STA (dp),Y                0x4D    DP Indirect Indexed,Y  2 bytes      6[1][2] cycles
+STA long                  0x55    Absolute Long          4 bytes      5[1] cycles
+STA long,X                0x56    Absolute Long Indexed  4 bytes      5[1] cycles
+STA [dp]                  0x4F    DP Indirect Long       2 bytes      6[1][2] cycles
+STA [dp],Y                0x50    DP Indirect Long Idx,Y 2 bytes      6[1][2] cycles
+STA sr,S                  0x57    Stack Relative         2 bytes      4[1] cycles
+STA (sr,S),Y              0x4E    SR Indirect Indexed,Y  2 bytes      7[1] cycles
+
+STORE INDEX X (STX)
+-------------------
+STX addr                  0x58    Absolute               3 bytes      3 cycles
+STX dp                    0x59    Direct Page            2 bytes      3[2][8] cycles
+STX dp,Y                  0x5A    DP Indexed,Y           2 bytes      4[2][8] cycles
+
+STORE INDEX Y (STY)
+-------------------
+STY addr                  0x5B    Absolute               3 bytes      3 cycles
+STY dp                    0x5C    Direct Page            2 bytes      3[2][8] cycles
+STY dp,X                  0x5D    DP Indexed,X           2 bytes      4[2][8] cycles
+
+STORE ZERO (STZ)
+----------------
+STZ addr                  0x5E    Absolute               3 bytes      3 cycles
+STZ addr,X                0x5F    Absolute Indexed,X     3 bytes      3 cycles
+STZ dp                    0x60    Direct Page            2 bytes      3[1][2] cycles
+STZ dp,X                  0x61    DP Indexed,X           2 bytes      4[1][2] cycles
+
+================================================================================
+ARITHMETIC OPERATIONS
+================================================================================
+
+ADD WITH CARRY (ADC)
+--------------------
+ADC #const                0xB6    Immediate              2[12] bytes  2[1] cycles    NV----ZC
+ADC addr                  0xB7    Absolute               3 bytes      3 cycles       NV----ZC
+ADC addr,X                0xB8    Absolute Indexed,X     3 bytes      3 cycles       NV----ZC
+ADC addr,Y                0xB9    Absolute Indexed,Y     3 bytes      3 cycles       NV----ZC
+ADC dp                    0x66    Direct Page            2 bytes      3[1][2] cycles NV----ZC
+ADC dp,X                  0xBA    DP Indexed,X           2 bytes      4[1][2] cycles NV----ZC
+ADC (dp,X)                0xB1    DP Indexed Indirect,X  2 bytes      6[1][2] cycles NV----ZC
+ADC (dp)                  0xB2    DP Indirect            2 bytes      5[1][2] cycles NV----ZC
+ADC (dp),Y                0xB0    DP Indirect Indexed,Y  2 bytes      5[1][2][3] cyc NV----ZC
+ADC long                  0xBB    Absolute Long          4 bytes      5[1] cycles    NV----ZC
+ADC long,X                0xBC    Absolute Long Indexed  4 bytes      5[1] cycles    NV----ZC
+ADC [dp]                  0xB4    DP Indirect Long       2 bytes      6[1][2] cycles NV----ZC
+ADC [dp],Y                0xB5    DP Indirect Long Idx,Y 2 bytes      6[1][2] cycles NV----ZC
+ADC sr,S                  0xBD    Stack Relative         2 bytes      4[1] cycles    NV----ZC
+ADC (sr,S),Y              0xB3    SR Indirect Indexed,Y  2 bytes      7[1] cycles    NV----ZC
+
+SUBTRACT WITH BORROW (SBC)
+--------------------------
+SBC #const                0xE1    Immediate              2[12] bytes  2[1] cycles    NV----ZC
+SBC addr                  0xE2    Absolute               3 bytes      3 cycles       NV----ZC
+SBC addr,X                0xE3    Absolute Indexed,X     3 bytes      3 cycles       NV----ZC
+SBC addr,Y                0xE4    Absolute Indexed,Y     3 bytes      3 cycles       NV----ZC
+SBC dp                    0xE5    Direct Page            2 bytes      3[1][2] cycles NV----ZC
+SBC dp,X                  0xE6    DP Indexed,X           2 bytes      4[1][2] cycles NV----ZC
+SBC (dp,X)                0xDC    DP Indexed Indirect,X  2 bytes      6[1][2] cycles NV----ZC
+SBC (dp),Y                0xDD    DP Indirect Indexed,Y  2 bytes      5[1][2][3] cyc NV----ZC
+SBC long                  0xE7    Absolute Long          4 bytes      5[1] cycles    NV----ZC
+SBC long,X                0xE8    Absolute Long Indexed  4 bytes      5[1] cycles    NV----ZC
+SBC [dp]                  0xDF    DP Indirect Long       2 bytes      6[1][2] cycles NV----ZC
+SBC [dp],Y                0xE0    DP Indirect Long Idx,Y 2 bytes      6[1][2] cycles NV----ZC
+SBC sr,S                  0xE9    Stack Relative         2 bytes      4[1] cycles    NV----ZC
+SBC (sr,S),Y              0xDE    SR Indirect Indexed,Y  2 bytes      7[1] cycles    NV----ZC
+
+MULTIPLY (MUL) - Hardware Multiply
+-----------------------------------
+MUL #const                0xEF    Immediate              2[12] bytes  8 cycles       NV----ZC
+MUL addr                  0xF0    Absolute               3 bytes      9 cycles       NV----ZC
+MUL addr,X                0xF1    Absolute Indexed,X     3 bytes      9 cycles       NV----ZC
+MUL addr,Y                0xF2    Absolute Indexed,Y     3 bytes      9 cycles       NV----ZC
+MUL dp                    0xF3    Direct Page            2 bytes      9 cycles       NV----ZC
+MUL dp,X                  0xF4    DP Indexed,X           2 bytes      10 cycles      NV----ZC
+MUL (dp,X)                0xEA    DP Indexed Indirect,X  2 bytes      12 cycles      NV----ZC
+MUL (dp),Y                0xEB    DP Indirect Indexed,Y  2 bytes      11 cycles      NV----ZC
+MUL long                  0xF5    Absolute Long          4 bytes      11 cycles      NV----ZC
+MUL long,X                0xF6    Absolute Long Indexed  4 bytes      11 cycles      NV----ZC
+MUL [dp]                  0xED    DP Indirect Long       2 bytes      12 cycles      NV----ZC
+MUL [dp],Y                0xEE    DP Indirect Long Idx,Y 2 bytes      12 cycles      NV----ZC
+MUL sr,S                  0xF7    Stack Relative         2 bytes      10 cycles      NV----ZC
+MUL (sr,S),Y              0xEC    SR Indirect Indexed,Y  2 bytes      13 cycles      NV----ZC
+
+DIVIDE (DIV) - Hardware Divide
+-------------------------------
+DIV X,Y                   0x92    X,Y                    1 byte       8 cycles       -------C
+DIV long,X                0x93    Absolute Long Idx,X    4 bytes      8 cycles       -------C
+DIV long,Y                0x94    Absolute Long Idx,Y    4 bytes      8 cycles       -------C
+
+INCREMENT (INC)
+---------------
+INC A                     0x69    Accumulator            1 byte       2 cycles       N-----Z-
+INC addr                  0x6A    Absolute               3 bytes      3 cycles       N-----Z-
+INC addr,X                0x6B    Absolute Indexed,X     3 bytes      3 cycles       N-----Z-
+INC dp                    0x6C    Direct Page            2 bytes      5[2][4] cycles N-----Z-
+INC dp,X                  0x6D    DP Indexed,X           2 bytes      6[2][4] cycles N-----Z-
+INC long                  0x6E    Absolute Long          4 bytes      6[4] cycles    N-----Z-
+INX                       0x6F    Implied                1 byte       2 cycles       N-----Z-
+INY                       0x70    Implied                1 byte       2 cycles       N-----Z-
+
+DECREMENT (DEC)
+---------------
+DEC A                     0x71    Accumulator            2 bytes      2 cycles       N-----Z-
+DEC addr                  0x72    Absolute               3 bytes      3 cycles       N-----Z-
+DEC addr,X                0x73    Absolute Indexed,X     3 bytes      3 cycles       N-----Z-
+DEC dp                    0x74    Direct Page            2 bytes      5[2][4] cycles N-----Z-
+DEC dp,X                  0x75    DP Indexed,X           2 bytes      6[2][4] cycles N-----Z-
+DEC long                  0x76    Absolute Long          4 bytes      6[4] cycles    N-----Z-
+DEX                       0x77    Implied                1 byte       2 cycles       N-----Z-
+DEY                       0x78    Implied                1 byte       2 cycles       N-----Z-
+
+================================================================================
+LOGICAL OPERATIONS
+================================================================================
+
+AND ACCUMULATOR WITH MEMORY (AND)
+----------------------------------
+AND #const                0xC4    Immediate              2[12] bytes  2[1] cycles    N-----Z-
+AND addr                  0xC5    Absolute               3 bytes      3 cycles       N-----Z-
+AND addr,X                0xC6    Absolute Indexed,X     3 bytes      3 cycles       N-----Z-
+AND addr,Y                0xC7    Absolute Indexed,Y     3 bytes      3 cycles       N-----Z-
+AND dp                    0xC8    Direct Page            2 bytes      3[1][2] cycles N-----Z-
+AND dp,X                  0xC9    DP Indexed,X           2 bytes      4[1][2] cycles N-----Z-
+AND (dp,X)                0xBE    DP Indexed Indirect,X  2 bytes      6[1][2] cycles N-----Z-
+AND (dp)                  0xBF    DP Indirect            2 bytes      5[1][2] cycles N-----Z-
+AND (dp),Y                0xC0    DP Indirect Indexed,Y  2 bytes      5[1][2][3] cyc N-----Z-
+AND long                  0xCA    Absolute Long          4 bytes      5[1] cycles    N-----Z-
+AND long,X                0xCB    Absolute Long Indexed  4 bytes      5[1] cycles    N-----Z-
+AND [dp]                  0xC2    DP Indirect Long       2 bytes      6[1][2] cycles N-----Z-
+AND [dp],Y                0xC3    DP Indirect Long Idx,Y 2 bytes      6[1][2] cycles N-----Z-
+AND sr,S                  0xCC    Stack Relative         2 bytes      4[1] cycles    N-----Z-
+AND (sr,S),Y              0xC1    SR Indirect Indexed,Y  2 bytes      7[1] cycles    N-----Z-
+
+OR ACCUMULATOR WITH MEMORY (ORA)
+---------------------------------
+ORA #const                0xD3    Immediate              2[12] bytes  2[1] cycles    N-----Z-
+ORA addr                  0xD4    Absolute               3 bytes      3 cycles       N-----Z-
+ORA addr,X                0xD5    Absolute Indexed,X     3 bytes      3 cycles       N-----Z-
+ORA addr,Y                0xD6    Absolute Indexed,Y     3 bytes      3 cycles       N-----Z-
+ORA dp                    0xD7    Direct Page            2 bytes      3[1][2] cycles N-----Z-
+ORA dp,X                  0xD8    DP Indexed,X           2 bytes      4[1][2] cycles N-----Z-
+ORA (dp,X)                0xCD    DP Indexed Indirect,X  2 bytes      6[1][2] cycles N-----Z-
+ORA (dp)                  0xCE    DP Indirect            2 bytes      5[1][2] cycles N-----Z-
+ORA (dp),Y                0xCF    DP Indirect Indexed,Y  2 bytes      5[1][2][3] cyc N-----Z-
+ORA long                  0xD9    Absolute Long          4 bytes      5[1] cycles    N-----Z-
+ORA long,X                0xDA    Absolute Long Indexed  4 bytes      5[1] cycles    N-----Z-
+ORA [dp]                  0xD1    DP Indirect Long       2 bytes      6[1][2] cycles N-----Z-
+ORA [dp],Y                0xD2    DP Indirect Long Idx,Y 2 bytes      6[1][2] cycles N-----Z-
+ORA sr,S                  0xDB    Stack Relative         2 bytes      4[1] cycles    N-----Z-
+ORA (sr,S),Y              0xD0    SR Indirect Indexed,Y  2 bytes      7[1] cycles    N-----Z-
+
+EXCLUSIVE-OR ACCUMULATOR WITH MEMORY (XOR/EOR)
+-----------------------------------------------
+XOR #const                0xF9    Immediate              2[12] bytes  2[1] cycles    N-----Z-
+XOR addr                  0x95    Absolute               3 bytes      3 cycles       N-----Z-
+XOR addr,X                0x96    Absolute Indexed,X     3 bytes      3 cycles       N-----Z-
+XOR addr,Y                0x97    Absolute Indexed,Y     3 bytes      3 cycles       N-----Z-
+XOR dp                    0xFA    Direct Page            2 bytes      3[1][2] cycles N-----Z-
+XOR dp,X                  0xFB    DP Indexed,X           2 bytes      4[1][2] cycles N-----Z-
+XOR (dp,X)                0x9D    DP Indexed Indirect,X  2 bytes      6[1][2] cycles N-----Z-
+XOR (dp)                  0x9E    DP Indirect            2 bytes      5[1][2] cycles N-----Z-
+XOR (dp),Y                0x9F    DP Indirect Indexed,Y  2 bytes      5[1][2][3] cyc N-----Z-
+XOR long                  0xFC    Absolute Long          4 bytes      5[1] cycles    N-----Z-
+XOR long,X                0xFD    Absolute Long Indexed  4 bytes      5[1] cycles    N-----Z-
+XOR sr,S                  0xFE    Stack Relative         2 bytes      4[1] cycles    N-----Z-
+XOR (sr,S),Y              0xF8    SR Indirect Indexed,Y  2 bytes      7[1] cycles    N-----Z-
+
+TEST BITS (BIT)
+---------------
+BIT #const                0x01    Immediate              2[12] bytes  2[1] cycles    ------Z-
+BIT addr                  0x02    Absolute               3 bytes      3 cycles       NV----Z-
+BIT addr,X                0x03    Absolute Indexed,X     3 bytes      3 cycles       NV----Z-
+BIT dp                    0x04    Direct Page            2 bytes      3[1][2] cycles NV----Z-
+BIT dp,X                  0x05    DP Indexed,X           2 bytes      4[1][2] cycles NV----Z-
+
+Note: BIT #const only sets Z flag. Other BIT modes set N,V,Z.
+
+================================================================================
+SHIFTS AND ROTATES
+================================================================================
+
+ARITHMETIC SHIFT LEFT (ASL)
+----------------------------
+ASL A                     0x98    Accumulator            1 byte       2 cycles       N-----ZC
+ASL addr                  0x99    Absolute               3 bytes      3 cycles       N-----ZC
+ASL addr,X                0x9A    Absolute Indexed,X     3 bytes      3 cycles       N-----ZC
+ASL dp                    0x9B    Direct Page            2 bytes      5[2][4] cycles N-----ZC
+ASL dp,X                  0x9C    DP Indexed,X           2 bytes      6[2][4] cycles N-----ZC
+
+LOGICAL SHIFT RIGHT (LSR)
+--------------------------
+LSR A                     0x8D    Accumulator            1 byte       2 cycles       N-----ZC
+LSR addr                  0x8E    Absolute               3 bytes      3 cycles       N-----ZC
+LSR addr,X                0x8F    Absolute Indexed,X     3 bytes      3 cycles       N-----ZC
+LSR dp                    0x90    Direct Page            2 bytes      5[2][4] cycles N-----ZC
+LSR dp,X                  0x91    DP Indexed,X           2 bytes      6[2][4] cycles N-----ZC
+
+ROTATE LEFT (ROL)
+-----------------
+ROL A                     0x80    Accumulator            1 byte       2 cycles       N-----ZC
+ROL addr                  0x81    Absolute               3 bytes      3 cycles       N-----ZC
+ROL addr,X                0x82    Absolute Indexed,X     3 bytes      3 cycles       N-----Z-
+ROL dp                    0x83    Direct Page            2 bytes      5[2][4] cycles N-----ZC
+
+ROTATE RIGHT (ROR)
+------------------
+ROR A                     0x84    Accumulator            1 byte       2 cycles       N-----ZC
+ROR addr                  0x85    Absolute               3 bytes      3 cycles       N-----ZC
+ROR addr,X                0x86    Absolute Indexed,X     3 bytes      3 cycles       N-----ZC
+ROR dp                    0x87    Direct Page            2 bytes      5[2][4] cycles N-----ZC
+
+SHIFT LEFT (SHL) - Extended
+----------------------------
+SHL X                     0x88    Implied                1 byte       2 cycles       -------C
+SHL Y                     0x89    Implied                1 byte       2 cycles       -------C
+
+SHIFT RIGHT (SHR) - Extended
+-----------------------------
+SHR X                     0x8A    Implied                1 byte       2 cycles       -------C
+SHR Y                     0x8B    Implied                1 byte       2 cycles       -------C
+
+ROTATE THROUGH CARRY LEFT (RCL) - Extended
+-------------------------------------------
+RCL A                     0x8C    Accumulator            2 bytes      4 cycles       N-----ZC
+
+================================================================================
+BRANCHES
+================================================================================
+
+BRANCH IF MINUS (BMI)
+---------------------
+BMI long                  0x06    Absolute Long          4 bytes      2[5][6] cycles
+
+BRANCH ALWAYS (BRA)
+-------------------
+BRA long                  0x07    Absolute Long          2 bytes      3[6] cycles
+
+BRANCH LONG ALWAYS (BRL)
+------------------------
+BRL label                 0x08    PC Relative Long       3 bytes      4 cycles
+
+BRANCH IF OVERFLOW SET (BVS)
+----------------------------
+BVS long                  0x09    Absolute Long          2 bytes      2[5][6] cycles
+
+BRANCH IF CARRY SET (BCS) / BRANCH IF GREATER OR EQUAL (BGE)
+-------------------------------------------------------------
+BCS long                  0x0A    Absolute Long          4 bytes      2[5][6] cycles
+BGE long                  0x0A    Absolute Long          4 bytes      2[5][6] cycles
+
+BRANCH IF EQUAL (BEQ)
+---------------------
+BEQ long                  0x0B    Absolute Long          4 bytes      2[5][6] cycles
+
+================================================================================
+JUMPS AND SUBROUTINES
+================================================================================
+
+JUMP (JMP)
+----------
+JMP addr                  0x0F    Absolute               3 bytes      4 cycles
+JMP long                  0x10    Absolute Long          4 bytes      4 cycles
+JMP (addr)                0x0D    Absolute Indirect      3 bytes      4 cycles
+JMP [addr]                0x0E    Absolute Indirect Long 3 bytes      4 cycles
+JMP (addr,X)              0x0C    Absolute Indexed Indir 3 bytes      4 cycles
+
+Alias: JML = JMP long (0x10)
+
+JUMP TO SUBROUTINE (JSR)
+------------------------
+JSR addr                  0x12    Absolute               3 bytes      4 cycles
+JSR (addr,X)              0x11    Absolute Indexed Indir 3 bytes      4 cycles
+
+CALL (Extended)
+---------------
+CALL long                 0x15    Absolute Long          4 bytes      16 cycles
+
+RETURN FROM SUBROUTINE (RTS)
+-----------------------------
+RTS                       0x19    Stack (RTS)            1 byte       6 cycles
+
+RETURN FROM SUBROUTINE LONG (RTL)
+----------------------------------
+RTL                       0x18    Stack (RTL)            1 byte       6 cycles
+
+RETURN FROM INTERRUPT (RTI)
+----------------------------
+RTI                       0x17    Stack (RTI)            1 byte       6[7] cycles    NVMXDIZC
+
+RETURN TO OS (RET) - Extended
+------------------------------
+RET                       0x16    Implied                1 byte       8 cycles
+
+================================================================================
+STACK OPERATIONS
+================================================================================
+
+PUSH ACCUMULATOR (PHA)
+----------------------
+PHA                       0x2B    Stack (Push)           1 byte       3[1] cycles
+
+PUSH INDEX X (PHX)
+------------------
+PHX                       0x30    Stack (Push)           1 byte       3[8] cycles
+
+PUSH INDEX Y (PHY)
+------------------
+PHY                       0x31    Stack (Push)           1 byte       3[8] cycles
+
+PUSH PROCESSOR STATUS (PHP) / PUSH FLAGS (PUSHF)
+-------------------------------------------------
+PHP                       0x2F    Stack (Push)           1 byte       3 cycles
+PUSHF                     0x2F    Stack (Push)           1 byte       3 cycles
+
+PUSH DATA BANK (PHB)
+--------------------
+PHB                       0x2C    Stack (Push)           1 byte       3 cycles
+
+PUSH DIRECT PAGE (PHD)
+----------------------
+PHD                       0x2D    Stack (Push)           1 byte       4 cycles
+
+PUSH PROGRAM BANK (PHK)
+-----------------------
+PHK                       0x2E    Stack (Push)           1 byte       3 cycles
+
+PUSH VALUE (PUSH) - Extended
+----------------------------
+PUSH word                 0x27    Stack (Push)           3 bytes      3 cycles
+
+PUSH EFFECTIVE ABSOLUTE ADDRESS (PEA)
+--------------------------------------
+PEA addr                  0x28    Stack (Absolute)       3 bytes      3 cycles
+
+PUSH EFFECTIVE INDIRECT ADDRESS (PEI)
+--------------------------------------
+PEI (dp)                  0x29    Stack (DP Indirect)    2 bytes      6[2] cycles
+
+PUSH EFFECTIVE PC RELATIVE ADDRESS (PER)
+-----------------------------------------
+PER label                 0x2A    Stack (PC Rel Long)    3 bytes      6 cycles
+
+PULL ACCUMULATOR (PLA)
+----------------------
+PLA                       0x32    Stack (Pull)           1 byte       4[1] cycles    N-----Z-
+
+POP PROCESSOR STATUS (POPF) / PULL PROCESSOR STATUS (PPP)
+----------------------------------------------------------
+POPF                      0x33    Stack (Pull)           1 byte       3 cycles       NVMXDIZC
+PPP                       0x33    Stack (Pull)           1 byte       3 cycles       NVMXDIZC
+
+================================================================================
+COMPARISON
+================================================================================
+
+COMPARE ACCUMULATOR (CMP)
+-------------------------
+CMP #const                0xA6    Immediate              2[12] bytes  2[1] cycles    N-----ZC
+CMP addr                  0xA7    Absolute               3 bytes      3 cycles       N-----ZC
+CMP addr,X                0xA8    Absolute Indexed,X     3 bytes      3 cycles       N-----ZC
+CMP addr,Y                0xA9    Absolute Indexed,Y     3 bytes      3 cycles       N-----ZC
+CMP dp                    0xAA    Direct Page            2 bytes      3[1][2] cycles N-----ZC
+CMP dp,X                  0xAB    DP Indexed,X           2 bytes      4[1][2] cycles N-----ZC
+CMP (dp,X)                0xA0    DP Indexed Indirect,X  2 bytes      6[1][2] cycles N-----ZC
+CMP (dp)                  0xA1    DP Indirect            2 bytes      5[1][2] cycles N-----ZC
+CMP (dp),Y                0xA2    DP Indirect Indexed,Y  2 bytes      5[1][2][3] cyc N-----ZC
+CMP long                  0xAC    Absolute Long          4 bytes      5[1] cycles    N-----ZC
+CMP long,X                0xAD    Absolute Long Indexed  4 bytes      5[1] cycles    N-----ZC
+CMP [dp]                  0xA4    DP Indirect Long       2 bytes      6[1][2] cycles N-----ZC
+CMP [dp],Y                0xA5    DP Indirect Long Idx,Y 2 bytes      6[1][2] cycles N-----ZC
+CMP sr,S                  0xAE    Stack Relative         2 bytes      4[1] cycles    N-----ZC
+CMP (sr,S),Y              0xA3    SR Indirect Indexed,Y  2 bytes      7[1] cycles    N-----ZC
+
+COMPARE INDEX X (CPX)
+---------------------
+CPX addr                  0x79    Absolute               3 bytes      3 cycles       N-----ZC
+
+COMPARE INDEX Y (CPY)
+---------------------
+CPY addr                  0x7A    Absolute               3 bytes      3 cycles       N-----ZC
+
+================================================================================
+REGISTER TRANSFER AND EXCHANGE
+================================================================================
+
+TRANSFER X TO Y (TXY)
+---------------------
+TXY                       0x24    Implied                1 byte       2 cycles       N-----Z-
+
+TRANSFER Y TO ACCUMULATOR (TYA)
+--------------------------------
+TYA                       0x25    Implied                1 byte       2 cycles       N-----Z-
+
+TRANSFER Y TO X (TYX)
+---------------------
+TYX                       0x26    Implied                1 byte       2 cycles       N-----Z-
+
+EXCHANGE ACCUMULATOR BYTES (XBA)
+---------------------------------
+XBA                       0x1D    Implied                1 byte       2 cycles
+
+Swaps low and high bytes of accumulator (AL <-> AH).
+
+EXCHANGE OPERANDS (XCHG) - Extended
+------------------------------------
+XCHG X,Y                  0x21    X,Y                    1 byte       8 cycles
+XCHG X,dp                 0x1F    DP Indexed,X           1 byte       8 cycles
+XCHG X,long               0x20    X,Absolute Long        4 bytes      8 cycles
+XCHG Y,dp                 0x22    DP Indexed,Y           1 byte       8 cycles
+XCHG Y,long               0x23    Y,Absolute Long        4 bytes      8 cycles
+XCHG long,dp              0x1E    Absolute Long, DP Idx  4 bytes      8 cycles
+
+================================================================================
+PROCESSOR STATUS FLAGS
+================================================================================
+
+SET PROCESSOR STATUS BITS (SEP)
+--------------------------------
+SEP #const                0x1A    Immediate              2 bytes      3 cycles       NVMXDIZC
+
+ORs the constant with P register to set flag bits.
+
+RESET PROCESSOR STATUS BITS (REP)
+----------------------------------
+REP #const                0x7F    Immediate              2 bytes      3 cycles       NVMXDIZC
+
+ANDs the complement of constant with P to clear flag bits.
+
+SET CARRY (SEC)
+---------------
+SEC                       0x63    Implied                1 byte       2 cycles       -------C
+
+CLEAR CARRY (CLC)
+-----------------
+CLC                       0x7E    Implied                1 byte       2 cycles       -------C
+
+SET DECIMAL (SED)
+-----------------
+SED                       0x64    Implied                1 byte       2 cycles       ----D---
+
+CLEAR DECIMAL (CLD)
+-------------------
+CLD                       0x7B    Implied                1 byte       2 cycles       ----D---
+
+SET INTERRUPT DISABLE (SEI)
+---------------------------
+SEI                       0x65    Implied                1 byte       2 cycles       -----I--
+
+CLEAR INTERRUPT DISABLE (CLI)
+------------------------------
+CLI                       0x7C    Implied                1 byte       2 cycles       -----I--
+
+CLEAR OVERFLOW (CLV)
+--------------------
+CLV                       0x7D    Implied                1 byte       2 cycles       -V------
+
+================================================================================
+CONTROL FLOW AND SPECIAL
+================================================================================
+
+NO OPERATION (NOP)
+------------------
+NOP                       0x00    Implied                1 byte       2 cycles
+
+BREAK (BRK)
+-----------
+BRK                       0x62    Stack/Interrupt        2[13] bytes  7[7] cycles    ----DI--
+
+Triggers software interrupt (break).
+
+CO-PROCESSOR (COP)
+------------------
+COP #const                0xAF    Stack/Interrupt        2[13] bytes  7[7] cycles    ----DI--
+
+Triggers co-processor interrupt.
+
+WAIT FOR INTERRUPT (WAI)
+------------------------
+WAI                       0x1C    Implied                1 byte       3[10] cycles
+
+Halts CPU until interrupt occurs.
+
+HALT (HLT) / STOP (STP) / KILL (KIL)
+-------------------------------------
+HLT                       0xFF    Implied                1 byte       0 cycles
+STP                       0xFF    Implied                1 byte       0 cycles
+KIL                       0xFF    Implied                1 byte       0 cycles
+
+Halts processor execution. CPU stops consuming cycles.
+
+LOOP (Extended)
+---------------
+LOOP word                 0x13    Immediate              3 bytes      2 cycles
+
+Initializes hardware loop counter with 16-bit value.
+
+LOOP END (LPEND) - Extended
+---------------------------
+LPEND                     0x14    Implied                1 byte       1 cycle
+
+Decrements hardware loop counter. Branches back to instruction after LOOP if non-zero.
+
+DEFINE CALLABLE (DEFCALL) - Extended
+-------------------------------------
+DEFCALL X,Y               0x00    X, Y                   ? bytes      ? cycles
+
+Define callable function: address in RX, ID in RY.LSB
+
+SET DATA BANK (SDB) - Extended
+-------------------------------
+SDB byte                  0x1B    Immediate              2 bytes      2 cycles
+
+Set data bank register to immediate 8-bit value.
+
+================================================================================
+BLOCK MOVE
+================================================================================
+
+BLOCK MOVE NEGATIVE (MVN)
+-------------------------
+MVN srcbk,destbk          0x67    Block Move             3 bytes      1[3] cycles
+
+Move memory from higher to lower addresses. X=source offset, Y=dest offset, A=count-1.
+Moves (A+1) bytes from bank srcbk to bank destbk, decrementing X and Y.
+
+BLOCK MOVE POSITIVE (MVP)
+-------------------------
+MVP srcbk,destbk          0x68    Block Move             3 bytes      1[3] cycles
+
+Move memory from lower to higher addresses. X=source offset, Y=dest offset, A=count-1.
+Moves (A+1) bytes from bank srcbk to bank destbk, incrementing X and Y.
+
+================================================================================
+FOOTNOTES - Cycle Count Annotations
+================================================================================
+
+[1] - Add 1 cycle if M=0 (16-bit accumulator mode)
+[2] - Add 1 cycle if low byte of D is non-zero (direct page not page-aligned)
+[3] - Add 1 cycle if adding index crosses page boundary
+[4] - Add 2 cycles if M=0 (16-bit accumulator mode)
+[5] - Add 1 cycle if branch not taken
+[6] - Add 1 cycle if E=0 (native mode)
+[7] - Add 1 cycle if E=0 (native mode)
+[8] - Add 1 cycle if X=0 (16-bit index mode)
+[10] - Cycle count varies based on when interrupt arrives
+[12] - 3 bytes if M=0 (16-bit accumulator mode)
+[13] - First byte is signature byte, not part of opcode
+[14] - 3 bytes if X=0 (16-bit index mode)
+
+================================================================================
+ADDRESSING MODE SUMMARY
+================================================================================
+
+Implied           - No operand, register operation
+Immediate         - Operand is constant: LDA #$42
+Accumulator       - Operation on accumulator: ASL A
+Absolute          - 16-bit address in current data bank: LDA $1234
+Absolute Long     - 24-bit address: LDA $012345
+Absolute Indexed  - Base + X or Y: LDA $1234,X
+Direct Page       - 8-bit offset from DP: LDA $10
+DP Indexed        - DP + X or Y: LDA $10,X
+DP Indirect       - Address at DP location: LDA ($10)
+DP Indirect Long  - 24-bit address at DP: LDA [$10]
+DP Indexed Indir  - (DP+X) points to address: LDA ($10,X)
+DP Indir Indexed  - Address at DP, then +Y: LDA ($10),Y
+Stack Relative    - Offset from stack pointer: LDA $10,S
+SR Indir Indexed  - Address at (S+offset)+Y: LDA ($10,S),Y
+PC Relative Long  - Offset from PC: BRL label
+Block Move        - Special for MVN/MVP
+
+================================================================================
+
+For more details on addressing modes, see addressing-modes.txt
+For programming examples, see programming-guide.txt
+For architecture overview, see overview.txt

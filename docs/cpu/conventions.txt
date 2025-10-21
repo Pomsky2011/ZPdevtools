@@ -1,0 +1,691 @@
+DEF88186 Main CPU - Register Usage Conventions and ABI
+=======================================================
+
+This document defines standard calling conventions, register usage rules, and
+Application Binary Interface (ABI) guidelines for DEF88186 software development.
+Following these conventions ensures compatibility between code modules.
+
+================================================================================
+REGISTER ROLES
+================================================================================
+
+Data Registers:
+---------------
+A (Accumulator):
+    - Primary working register
+    - Function return values
+    - Arithmetic and logic operations
+    - Caller-saved (volatile)
+
+X (Index X):
+    - Array indexing
+    - Loop counters
+    - Source pointer for block operations
+    - Caller-saved (volatile)
+
+Y (Index Y):
+    - Secondary array indexing
+    - Destination pointer for block operations
+    - Struct field offsets
+    - Caller-saved (volatile)
+
+Pointer/Special Registers:
+---------------------------
+SP (Stack Pointer):
+    - Points to top of stack
+    - Grows downward
+    - System-managed (don't modify except for allocation)
+
+D (Direct Page):
+    - Base for fast variable access
+    - Typically $0000 or $2000
+    - Callee-saved (preserve across calls)
+
+ - Unless documented otherwise
+
+PB (Program Bank):
+    - Current code bank
+    - System-managed (set by JMP long, JSR long, etc.)
+    - Don't modify directly
+
+DB (Data Bank):
+    - Default data access bank
+    - Callee-saved (preserve across calls)
+    - Save/restore if function changes it
+
+P (Processor Status):
+    - CPU flags
+    - M and X bits control register sizes
+    - I flag controls interrupts
+    - Some flags caller-saved, others preserved
+
+================================================================================
+CALLING CONVENTION
+================================================================================
+
+Standard C-Style Convention:
+-----------------------------
+
+Parameters:
+    - Small parameters (1-4 bytes): Pass in registers
+        - First parameter: A
+        - Second parameter: X
+        - Third parameter: Y
+    - Additional parameters: Pass on stack (right to left)
+    - Large parameters (>4 bytes): Pass by pointer
+
+Return Values:
+    - 8/16-bit values: Return in A
+    - 32-bit values: Return in A (low word) and X (high word)
+    - Larger values: Return by pointer (passed as parameter)
+    - Error codes: Return in A, with carry flag for success/failure
+
+Register Preservation:
+    - Caller-saved (volatile): A, X, Y
+        - Caller must save these if needed after call
+    - Callee-saved (non-volatile): D, DB
+        - Function must save and restore these
+    - System-managed: SP, PB, PC, P (flags vary)
+
+Stack Cleanup:
+    - Caller cleans up stack after call
+    - Function does not adjust SP for parameters
+
+Example Function Signature:
+----------------------------
+; uint16_t add(uint16_t a, uint16_t b)
+; Parameters: A = a, X = b
+; Returns: A = a + b
+; Preserves: D, DB
+; Destroys: A, X, Y, flags
+
+add_function:
+    REP #$30            ; 16-bit mode
+    STX temp            ; Save X to temp
+    CLC
+    ADC temp            ; A = A + X
+    RTS                 ; Return with result in A
+
+; uint32_t multiply32(uint16_t a, uint16_t b)
+; Parameters: A = a, X = b
+; Returns: A = low word, X = high word
+; Preserves: D, DB
+; Destroys: Y, flags
+
+multiply32:
+    REP #$30
+    MUL X               ; A = A * X (hardware multiply)
+    ; Assume result split into A (low) and X (high) by hardware
+    RTS
+
+Example Call with Stack Parameters:
+------------------------------------
+; int complex_function(int a, int b, int c, int d, int e)
+; Parameters:
+;   A = a (register)
+;   X = b (register)
+;   Y = c (register)
+;   Stack: d, e (pushed right to left)
+
+; Caller:
+caller:
+    REP #$30
+
+    ; Push parameters d and e (right to left)
+    LDA param_e
+    PHA                 ; Push e
+    LDA param_d
+    PHA                 ; Push d
+
+    ; Load register parameters
+    LDA param_a
+    LDX param_b
+    LDY param_c
+
+    JSR complex_function
+
+    ; Clean up stack (remove d and e)
+    TSC
+    CLC
+    ADC #$04            ; Remove 4 bytes (2 params × 2 bytes)
+    TCS
+
+    ; Result in A
+    STA result
+    ; Continue...
+
+; Function:
+complex_function:
+    ; Access stack parameters
+    ; Stack layout after JSR:
+    ; SP+1,SP+2: Return address (2 bytes)
+    ; SP+3,SP+4: param d
+    ; SP+5,SP+6: param e
+
+    ; A, X, Y already contain a, b, c
+    STA local_a
+    STX local_b
+    STY local_c
+
+    LDA 3,S             ; Load d from stack
+    STA local_d
+    LDA 5,S             ; Load e from stack
+    STA local_e
+
+    ; ... function body ...
+
+    LDA result_value
+    RTS                 ; Return with result in A
+
+================================================================================
+PROCESSOR MODE CONVENTIONS
+================================================================================
+
+Standard Mode Settings:
+-----------------------
+Most code should use:
+    REP #$30            ; 16-bit A, 16-bit X/Y (M=0, X=0)
+
+This provides:
+- Maximum register capacity
+- Consistent behavior
+- Easier debugging
+
+When to Use 8-bit Mode:
+------------------------
+Use SEP #$20 (8-bit A) for:
+- Byte-oriented I/O
+- Character processing
+- Small data values
+- Memory savings
+
+Use SEP #$10 (8-bit X/Y) for:
+- Byte array indexing
+- Small loops (counter < 256)
+
+Mode Preservation:
+------------------
+Functions should preserve M/X flags OR document changes:
+
+; Standard function - preserves mode
+function1:
+    PHP                 ; Save flags (including M/X)
+    REP #$30            ; Set to 16-bit
+    ; ... function body ...
+    PLP                 ; Restore original mode
+    RTS
+
+; Fast function - documents mode requirement
+; REQUIRES: M=0, X=0 (16-bit mode)
+; PRESERVES: M=0, X=0
+function2:
+    ; Assumes 16-bit mode, doesn't preserve
+    LDA data16
+    ADC #$1000
+    RTS
+
+================================================================================
+FLAG PRESERVATION
+================================================================================
+
+Flags After Function Call:
+---------------------------
+Preserved flags:
+    - M, X (mode flags) - function preserves via PHP/PLP or documentation
+    - D (decimal) - typically cleared, document if using BCD
+    - I (interrupt) - typically preserved
+
+Destroyed flags:
+    - N, V, Z, C - Not preserved, set according to result
+    - Function can use these for return status
+
+Return Status via Carry:
+-------------------------
+Convention: C flag indicates success/failure
+
+    CLC             ; Clear carry = success
+    RTS
+
+    SEC             ; Set carry = error
+    RTS
+
+Caller checks:
+    JSR function
+    BCS error       ; Branch if carry set (error)
+    ; Success path
+
+Example:
+file_open:
+    ; ... attempt to open file ...
+    LDA file_handle
+    BNE open_success
+
+    ; Failed
+    LDA #ERROR_NOT_FOUND
+    SEC                 ; Set carry = error
+    RTS
+
+open_success:
+    CLC                 ; Clear carry = success
+    RTS
+
+================================================================================
+STACK FRAME LAYOUT
+================================================================================
+
+Standard Stack Frame:
+---------------------
+Functions with local variables should create a stack frame:
+
+function_with_locals:
+    ; Prologue - save registers
+    PHD                 ; Save D
+    PHB                 ; Save DB
+
+    ; Create stack frame
+    TSC                 ; Transfer SP to A
+    SEC
+    SBC #LOCAL_SIZE     ; Allocate locals
+    TCS                 ; Update SP
+    TCD                 ; Set D = SP (frame pointer)
+
+    ; Now can access locals via direct page
+    ; D+0 to D+(LOCAL_SIZE-1) are local variables
+
+    ; ... function body ...
+    LDA #$42
+    STA $00             ; Store to first local (D+0)
+
+    ; Epilogue - restore
+    TDC                 ; Get D (frame pointer)
+    CLC
+    ADC #LOCAL_SIZE     ; Deallocate locals
+    TCS                 ; Restore SP
+
+    PLB                 ; Restore DB
+    PLD                 ; Restore D
+    RTS
+
+Alternative (D as frame pointer):
+----------------------------------
+function_with_frame:
+    PHD                 ; Save old D
+    TSC
+    TCD                 ; D = current SP
+
+    ; Allocate locals
+    TSC
+    SEC
+    SBC #16
+    TCS
+
+    ; Access parameters via D
+    ; D+1: Return address (2 bytes)
+    ; D+3: First stack parameter
+    ; D+5: Second stack parameter
+
+    ; Access locals via negative offset
+    ; D-1, D-2: First local
+    ; D-3, D-4: Second local
+
+    LDA 3,S             ; Parameter (via SP)
+    STA -1,S            ; Local (via negative offset)
+
+    ; Clean up
+    TDC
+    TCS                 ; SP = D (deallocate locals)
+    PLD                 ; Restore D
+    RTS
+
+================================================================================
+REGISTER ALLOCATION GUIDELINES
+================================================================================
+
+Priority Order:
+---------------
+For temporary values in order of preference:
+
+1. A - Fastest, most instructions, use first
+2. X - Good for indexing, use for counters/indices
+3. Y - Similar to X, use for secondary index
+4. Direct Page - Fast memory (3 cycles), use for spills
+5. Absolute Memory - Slower, last resort
+
+Example Register Allocation:
+-----------------------------
+; Calculate: result = (a * b) + (c * d)
+
+efficient_calc:
+    REP #$30
+
+    ; First multiply: a * b
+    LDA param_a         ; A = a
+    LDX param_b         ; X = b
+    MUL X               ; A = a * b
+    STA temp_result     ; Save to memory (D used up)
+
+    ; Second multiply: c * d
+    LDA param_c         ; A = c (reuse A)
+    LDX param_d         ; X = d (reuse X)
+    MUL X               ; A = c * d
+
+    ; Add results
+    CLC
+    ADC temp_result     ; A = (a*b) + (c*d)
+
+    RTS
+
+Loop Counter Allocation:
+-------------------------
+; Prefer X or Y for loop counters
+    LDX #$0000
+loop:
+    LDA array,X
+    ; ... process ...
+    INX
+    INX                 ; Increment by 2 (word size)
+    CPX #ARRAY_SIZE
+    BNE loop
+
+================================================================================
+NAMING CONVENTIONS
+================================================================================
+
+Function Names:
+---------------
+- lowercase_with_underscores
+- Verb-based for actions: calculate_sum, read_file
+- Prefix for modules: mem_copy, str_length, math_sqrt
+
+Examples:
+    init_system
+    load_sprite
+    play_sound
+    check_collision
+
+Constants:
+----------
+- UPPERCASE_WITH_UNDERSCORES
+- Prefix with purpose: IO_, MEM_, CFG_
+
+Examples:
+    IO_PPUCTRL      = $00C000
+    MEM_RAM_START   = $002000
+    CFG_STACK_SIZE  = $0800
+
+Variables:
+----------
+- lowercase_with_underscores
+- Descriptive names
+
+Examples:
+    player_x_pos
+    enemy_count
+    frame_counter
+
+Labels:
+-------
+- Descriptive, lowercase
+- Prefix with function name for local labels
+
+Examples:
+    load_data:
+    load_data_loop:
+    load_data_error:
+    load_data_done:
+
+================================================================================
+CODE ORGANIZATION
+================================================================================
+
+Module Structure:
+-----------------
+; ========================================
+; Module: Math Library
+; Purpose: Mathematical functions
+; ========================================
+
+.export math_add, math_sub, math_mul
+
+; ----------------------------------------
+; math_add
+; Add two 16-bit numbers
+; Parameters: A = first, X = second
+; Returns: A = sum, C = overflow
+; Preserves: D, DB
+; Destroys: A, flags
+; ----------------------------------------
+math_add:
+    CLC
+    STX temp
+    ADC temp
+    RTS                 ; C set if overflow
+
+; ----------------------------------------
+; math_sub
+; Subtract two 16-bit numbers
+; Parameters: A = first, X = second (subtract)
+; Returns: A = difference, C = no borrow
+; Preserves: D, DB
+; Destroys: A, flags
+; ----------------------------------------
+math_sub:
+    SEC
+    STX temp
+    SBC temp
+    RTS
+
+Function Comments:
+------------------
+Always include:
+1. Brief description
+2. Parameters (register and stack)
+3. Return value(s)
+4. Preserved registers
+5. Destroyed registers
+6. Special notes (mode requirements, side effects)
+
+================================================================================
+COMMON PATTERNS
+================================================================================
+
+Pattern: Save/Restore Registers
+--------------------------------
+function:
+    ; Save all registers we'll modify
+    PHA
+    PHX
+    PHY
+    PHD
+    PHB
+
+    ; ... function body ...
+
+    ; Restore in reverse order
+    PLB
+    PLD
+    PLY
+    PLX
+    PLA
+    RTS
+
+Pattern: Check Parameters
+--------------------------
+function:
+    ; Validate parameter in A
+    BEQ invalid_param   ; Check for zero
+    CMP #MAX_VALUE
+    BCS invalid_param   ; Check for too large
+
+    ; Valid parameter
+    ; ... continue ...
+
+invalid_param:
+    LDA #ERROR_INVALID
+    SEC                 ; Set carry = error
+    RTS
+
+Pattern: Multiple Return Points
+--------------------------------
+function:
+    ; Check condition 1
+    LDA status1
+    BNE return_early
+
+    ; Check condition 2
+    LDA status2
+    BNE return_early
+
+    ; Normal processing
+    ; ...
+    CLC                 ; Success
+    RTS
+
+return_early:
+    LDA #ERROR_CODE
+    SEC                 ; Error
+    RTS
+
+Pattern: Table Dispatch
+------------------------
+dispatch_function:
+    ; A = function ID
+    CMP #NUM_FUNCTIONS
+    BCS invalid_function
+
+    ASL A               ; Multiply by 2 (word size)
+    TAX
+    JSR (function_table,X)
+    RTS
+
+function_table:
+    .word function_0
+    .word function_1
+    .word function_2
+    ; ...
+
+invalid_function:
+    LDA #ERROR_INVALID
+    SEC
+    RTS
+
+================================================================================
+PERFORMANCE TIPS
+================================================================================
+
+1. Keep Hot Variables in Direct Page
+   - Faster access (3 cycles vs 4-5)
+   - Smaller code (2 bytes vs 3-4)
+
+2. Use Hardware Instructions
+   - MUL instead of loops
+   - DIV instead of shift-subtract
+   - LOOP/LPEND instead of manual counter
+
+3. Minimize Bank Switching
+   - Keep related code/data in same bank
+   - Batch cross-bank access
+
+4. Register Allocation
+   - Keep values in registers when possible
+   - Avoid unnecessary loads/stores
+
+5. Inline Small Functions
+   - Save JSR/RTS overhead (8+ cycles)
+   - Trade code size for speed
+
+6. Use 16-bit Mode by Default
+   - More efficient for most operations
+   - Switch to 8-bit only when needed
+
+================================================================================
+COMPATIBILITY GUIDELINES
+================================================================================
+
+For Library Functions:
+----------------------
+1. Document all requirements (mode, banks, etc.)
+2. Preserve D and DB unless documented
+3. Use standard calling convention
+4. Return errors via carry flag
+5. Don't assume interrupt state
+6. Don't modify system registers without saving
+
+For Application Code:
+---------------------
+1. Initialize all registers at startup
+2. Set up interrupt vectors
+3. Don't rely on undefined behavior
+4. Test with interrupts enabled
+5. Validate all inputs
+6. Handle all error cases
+
+For System Code:
+----------------
+1. Minimize interrupt latency
+2. Be reentrant if possible
+3. Save ALL registers in interrupt handlers
+4. Clear interrupt sources before RTI
+5. Don't assume application state
+
+================================================================================
+EXAMPLES
+================================================================================
+
+Complete Function Example:
+--------------------------
+; ========================================
+; memcpy
+; Copy memory from source to destination
+; Parameters:
+;   A = source address (low word)
+;   X = source bank
+;   Y = destination address (low word)
+;   Stack+1,2: destination bank
+;   Stack+3,4: byte count
+; Returns:
+;   A = bytes copied
+;   C = 0 (success)
+; Preserves: D, original DB
+; Destroys: A, X, Y, flags
+; Notes: Uses block move instruction
+; ========================================
+memcpy:
+    ; Save DB
+    PHB
+
+    ; Get parameters from stack
+    ; Stack: [ret_addr] [dest_bank] [count]
+    LDA 3,S             ; Get dest bank
+    STA dest_bank
+    LDA 5,S             ; Get count
+    STA count
+
+    ; Set up for block move
+    ; A = count - 1
+    LDA count
+    DEC A
+
+    ; X already has source offset
+    ; Y already has dest offset
+    ; Need to set banks
+
+    ; Use MVP to copy
+    MVP source_bank, dest_bank
+
+    ; Return count
+    LDA count
+    CLC                 ; Success
+    PLB                 ; Restore DB
+    RTS
+
+source_bank:    .byte 0
+dest_bank:      .byte 0
+count:          .word 0
+
+================================================================================
+
+For more examples, see programming-guide.txt
+For instruction details, see instruction-set.txt
+For memory layout, see memory-map.txt
+For interrupt handling, see interrupts.txt

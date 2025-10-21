@@ -1,0 +1,490 @@
+DEF88186 Main CPU - Addressing Modes Reference
+==============================================
+
+The DEF88186 supports a rich set of addressing modes inherited from the 65816,
+allowing flexible and efficient memory access patterns.
+
+================================================================================
+BASIC ADDRESSING MODES
+================================================================================
+
+IMPLIED / REGISTER
+------------------
+Operation uses only CPU registers, no memory access.
+
+Syntax:     NOP, SEC, INX, DEX
+Encoding:   Opcode only (1 byte)
+Cycles:     Typically 2
+Example:    INX         ; Increment X register
+
+Operations: NOP, SEC, CLC, SED, CLD, SEI, CLI, CLV, INX, INY, DEX, DEY,
+            TXY, TYA, TYX, XBA, RTI, RTS, RTL, WAI, HLT
+
+ACCUMULATOR
+-----------
+Operation acts on the accumulator register directly.
+
+Syntax:     INC A, DEC A, ASL A, LSR A, ROL A, ROR A, RCL A
+Encoding:   Opcode only (1 byte)
+Cycles:     2 (RCL A is 4 cycles)
+Example:    ASL A       ; Shift accumulator left
+
+Note: Some assemblers allow omitting "A" for accumulator mode.
+
+IMMEDIATE
+---------
+Operand is a constant value in the instruction stream.
+
+Syntax:     LDA #$42, ADC #$1000
+Encoding:   Opcode + 1 or 2 byte constant
+Size:       2 bytes (8-bit value or M=1)
+            3 bytes (16-bit value and M=0)
+Cycles:     Typically 2
+Example:    LDA #$1234  ; Load accumulator with literal $1234
+
+            Instruction stream:
+            $1000: 37 34 12    ; LDA #$1234 (little-endian)
+
+8-bit vs 16-bit immediate:
+- LDA/ADC/SBC/CMP/AND/ORA/XOR: Size depends on M flag
+- LDX/LDY/CPX/CPY: Size depends on X flag
+- BIT/SEP/REP/COP: Always 8-bit immediate
+
+================================================================================
+DIRECT ADDRESSING
+================================================================================
+
+ABSOLUTE
+--------
+16-bit address in the current data bank.
+
+Syntax:     LDA $1234
+Encoding:   Opcode + 16-bit address (little-endian)
+Bytes:      3
+Cycles:     3 (load/store), varies for RMW
+Address:    (DB << 16) | $1234
+Example:    LDA $5000   ; Load from address $xx5000 (xx = data bank)
+
+            If DB=$02, accesses $025000
+            Instruction stream:
+            $1000: 38 00 50    ; LDA $5000
+
+ABSOLUTE LONG
+-------------
+24-bit address, can access any bank.
+
+Syntax:     LDA $012345, STA long
+Encoding:   Opcode + 24-bit address (little-endian)
+Bytes:      4
+Cycles:     Typically 5
+Address:    $012345 (bank $01, offset $2345)
+Example:    LDA $7E8000 ; Load from bank $7E, offset $8000
+
+            Instruction stream:
+            $1000: 3D 00 80 7E ; LDA $7E8000
+
+Note: Bank byte comes last in encoding (little-endian style).
+
+DIRECT PAGE (DP)
+----------------
+8-bit offset from Direct Page register (like 6502 zero page, but relocatable).
+
+Syntax:     LDA $10, STA dp
+Encoding:   Opcode + 8-bit offset
+Bytes:      2
+Cycles:     3 base, +1 if D.low ≠ 0
+Address:    D + offset
+Example:    LDA $42     ; Load from (D + $42)
+
+            If D=$0100, accesses $0142
+            If D=$2000, accesses $2042
+            Instruction stream:
+            $1000: 3B 42       ; LDA $42
+
+Performance: Direct page is fastest when D is page-aligned ($xx00).
+             Non-aligned DP adds 1 cycle to most DP instructions.
+
+Best Practice: Initialize D to $0000 or another page boundary.
+               SEP #$20        ; 8-bit accumulator
+               LDA #$00
+               TCD             ; Transfer to D
+
+================================================================================
+INDEXED ADDRESSING
+================================================================================
+
+ABSOLUTE INDEXED (X or Y)
+--------------------------
+16-bit base address + index register.
+
+Syntax:     LDA $1234,X    LDA $1234,Y
+Encoding:   Opcode + 16-bit address
+Bytes:      3
+Cycles:     3 base, +1 if page boundary crossed (some instructions)
+Address:    (DB << 16) | ($1234 + X)  or  (DB << 16) | ($1234 + Y)
+Example:    LDX #$0010
+            LDA $5000,X ; Load from $xx5010 (xx = data bank)
+
+Note: Index wraps within the bank (16-bit addition only).
+
+ABSOLUTE LONG INDEXED (X)
+--------------------------
+24-bit base address + X register.
+
+Syntax:     LDA $012345,X
+Encoding:   Opcode + 24-bit address
+Bytes:      4
+Cycles:     Typically 5
+Address:    $012345 + X (24-bit addition, can cross banks)
+Example:    LDX #$0100
+            LDA $7E0000,X ; Load from $7E0100
+
+Note: 24-bit addition, so X can cross bank boundaries.
+
+DIRECT PAGE INDEXED (X or Y)
+-----------------------------
+Direct page offset + index register.
+
+Syntax:     LDA $10,X      STY $20,X      LDX $30,Y      STX $40,Y
+Encoding:   Opcode + 8-bit offset
+Bytes:      2
+Cycles:     4 base, +1 if D.low ≠ 0
+Address:    D + offset + X  or  D + offset + Y
+Example:    LDX #$05
+            LDA $20,X   ; Load from (D + $20 + $05) = (D + $25)
+
+Note: Index wraps within 64KB bank containing D.
+      Most instructions use X; STX and LDX can use Y.
+
+================================================================================
+INDIRECT ADDRESSING
+================================================================================
+
+INDIRECT
+--------
+Address is loaded from memory location.
+
+Syntax:     JMP ($1234)
+Encoding:   Opcode + 16-bit pointer address
+Bytes:      3
+Cycles:     Varies
+Address:    Contents of ($001234) and ($001235) in current bank
+Example:    JMP ($2000)
+
+            If $xx2000 contains: 00 30 (little-endian)
+            Jumps to $xx3000
+
+Note: Uses current data bank for pointer lookup.
+      Only available for JMP.
+
+INDIRECT LONG
+-------------
+24-bit address loaded from memory.
+
+Syntax:     JMP [$1234]
+Encoding:   Opcode + 16-bit pointer address
+Bytes:      3
+Cycles:     Varies
+Address:    24-bit value at ($001234-$001236) in bank 0
+Example:    JMP [$2000]
+
+            If $002000 contains: 00 40 7E (little-endian)
+            Jumps to $7E4000
+
+Note: Always uses bank 0 for pointer lookup.
+      Alias: JML [$1234]
+
+ABSOLUTE INDEXED INDIRECT
+--------------------------
+Address loaded from (base + X).
+
+Syntax:     JMP ($1234,X)    JSR ($1234,X)
+Encoding:   Opcode + 16-bit base address
+Bytes:      3
+Cycles:     4
+Address:    Contents of ($001234 + X) in program bank
+Example:    LDX #$0010
+            JMP ($2000,X)   ; Load jump address from ($2010)
+
+Note: Uses program bank (PB) for pointer lookup.
+      Index added before indirection.
+
+DP INDIRECT
+-----------
+Address loaded from direct page location.
+
+Syntax:     LDA ($10)
+Encoding:   Opcode + 8-bit DP offset
+Bytes:      2
+Cycles:     5 base, +1 if M=0, +1 if D.low ≠ 0
+Address:    16-bit address at (D + offset) in bank 0
+Example:    LDA ($40)
+
+            If D=$0200, reads pointer from $000240-$000241
+            If pointer contains $5000, loads from (DB << 16) | $5000
+
+Memory access:
+Step 1: Read pointer from bank 0 at (D + offset)
+Step 2: Access (DB << 16) | pointer
+
+Note: Pointer is always in bank 0, regardless of D.
+      Data access uses current data bank.
+
+DP INDIRECT LONG
+----------------
+24-bit address loaded from direct page location.
+
+Syntax:     LDA [$10]
+Encoding:   Opcode + 8-bit DP offset
+Bytes:      2
+Cycles:     6 base, +1 if M=0, +1 if D.low ≠ 0
+Address:    24-bit address at (D + offset) in bank 0
+Example:    LDA [$40]
+
+            If D=$0200, reads pointer from $000240-$000242 (3 bytes)
+            If pointer contains $7E8000, loads from $7E8000
+
+Note: Pointer is 3 bytes in bank 0.
+      Can access any bank without changing DB.
+
+DP INDEXED INDIRECT (DP,X)
+---------------------------
+Index added before indirection.
+
+Syntax:     LDA ($10,X)
+Encoding:   Opcode + 8-bit DP offset
+Bytes:      2
+Cycles:     6 base, +1 if M=0, +1 if D.low ≠ 0
+Address:    16-bit pointer at (D + offset + X) in bank 0
+Example:    LDX #$08
+            LDA ($40,X) ; Read pointer from (D + $40 + $08)
+
+Step 1: Calculate pointer address: D + offset + X
+Step 2: Read 16-bit pointer from bank 0
+Step 3: Access (DB << 16) | pointer
+
+Use case: Array of pointers indexed by X.
+
+DP INDIRECT INDEXED (DP),Y
+---------------------------
+Indirection first, then index added.
+
+Syntax:     LDA ($10),Y
+Encoding:   Opcode + 8-bit DP offset
+Bytes:      2
+Cycles:     5-6 base, +1 if M=0, +1 if D.low ≠ 0, +1 if page crossed
+Address:    (16-bit pointer at D + offset) + Y
+Example:    LDY #$10
+            LDA ($40),Y
+
+Step 1: Read 16-bit pointer from bank 0 at (D + $40)
+Step 2: Add Y to pointer
+Step 3: Access (DB << 16) | (pointer + Y)
+
+Use case: Accessing fields in a structure pointed to by ($10).
+
+DP INDIRECT LONG INDEXED [DP],Y
+--------------------------------
+24-bit indirection, then Y added.
+
+Syntax:     LDA [$10],Y
+Encoding:   Opcode + 8-bit DP offset
+Bytes:      2
+Cycles:     6 base, +1 if M=0, +1 if D.low ≠ 0
+Address:    (24-bit pointer at D + offset) + Y
+Example:    LDY #$20
+            LDA [$40],Y
+
+Step 1: Read 24-bit pointer from bank 0 at (D + $40)
+Step 2: Add Y to 24-bit address
+Step 3: Access 24-bit address
+
+Note: 24-bit addition means Y can cross banks.
+
+================================================================================
+STACK ADDRESSING
+================================================================================
+
+STACK RELATIVE (SR)
+-------------------
+Offset from stack pointer.
+
+Syntax:     LDA $10,S
+Encoding:   Opcode + 8-bit offset
+Bytes:      2
+Cycles:     4 base, +1 if M=0
+Address:    S + offset
+Example:    LDA $04,S   ; Load from (S + $04)
+
+Note: Always accesses bank 0.
+      Stack grows downward, so positive offset accesses older data.
+      Offset 1 = byte pushed most recently
+      Useful for accessing function parameters.
+
+STACK RELATIVE INDIRECT INDEXED (SR,S),Y
+-----------------------------------------
+Pointer at stack offset, then indexed by Y.
+
+Syntax:     LDA ($10,S),Y
+Encoding:   Opcode + 8-bit offset
+Bytes:      2
+Cycles:     7, +1 if M=0
+Address:    (16-bit pointer at S + offset) + Y
+Example:    LDA ($04,S),Y
+
+Step 1: Read 16-bit pointer from bank 0 at (S + $04)
+Step 2: Add Y
+Step 3: Access (DB << 16) | (pointer + Y)
+
+Use case: Indirect access via stack-based pointer.
+
+STACK (PUSH/PULL)
+-----------------
+Implicit stack addressing for push/pull operations.
+
+Push operations:
+    PHA, PHX, PHY, PHP, PHB, PHD, PHK, PEA, PEI, PER
+
+Pull operations:
+    PLA, POPF/PPP
+
+Stack grows downward:
+    PUSH: S = S - size; memory[S+1] = data
+    PULL: data = memory[S+1]; S = S + size
+
+Size: 1 byte (8-bit mode) or 2 bytes (16-bit mode)
+
+================================================================================
+PROGRAM COUNTER RELATIVE
+================================================================================
+
+PC RELATIVE LONG
+----------------
+Signed 16-bit offset from program counter.
+
+Syntax:     BRL label
+Encoding:   Opcode + 16-bit signed offset
+Bytes:      3
+Cycles:     4
+Address:    PC + offset
+Example:    BRL forward
+
+            ; Assembler calculates offset automatically
+forward:
+            NOP
+
+Range: -32768 to +32767 bytes from the instruction after BRL.
+
+Note: Only BRL uses this mode.
+      Other branches use absolute long addressing in DEF88186.
+
+================================================================================
+BLOCK MOVE
+================================================================================
+
+BLOCK MOVE (MVN/MVP)
+--------------------
+Special addressing for bulk memory moves.
+
+Syntax:     MVN srcbank,destbank    MVP srcbank,destbank
+Encoding:   Opcode + source bank + dest bank
+Bytes:      3
+Cycles:     1 per byte transferred (+ overhead)
+Setup:      X = source offset
+            Y = dest offset
+            A = count - 1 (transfers A+1 bytes)
+
+Example:    ; Copy 256 bytes from $7E0000 to $7F0000
+            LDX #$0000      ; Source offset
+            LDY #$0000      ; Dest offset
+            LDA #$00FF      ; 256-1 = $FF
+            MVP $7E,$7F     ; Move positive (increment)
+
+MVN: Move Negative - Decrements X and Y (high to low addresses)
+MVP: Move Positive - Increments X and Y (low to high addresses)
+
+After execution:
+    X = X ± (A+1)
+    Y = Y ± (A+1)
+    A = $FFFF
+    DB = destination bank
+
+================================================================================
+ADDRESSING MODE SELECTION GUIDE
+================================================================================
+
+Task                          Best Mode               Example
+--------------------------------------------------------------------------------
+Load constant                 Immediate               LDA #$42
+Access fixed address          Absolute                LDA $2000
+Access any bank               Absolute Long           LDA $7E2000
+Array element                 Absolute Indexed        LDA $2000,X
+Fast local variable           Direct Page             LDA $10
+Array in DP                   DP Indexed              LDA $10,X
+Pointer dereference           DP Indirect             LDA ($10)
+Pointer + offset              DP Indirect Indexed     LDA ($10),Y
+Pointer to any bank           DP Indirect Long        LDA [$10]
+Function parameter            Stack Relative          LDA $04,S
+Indirect via stack            SR Indirect Indexed     LDA ($04,S),Y
+Table of pointers             DP Indexed Indirect     LDA ($10,X)
+Jump through vector           Absolute Indirect       JMP ($FFFC)
+Jump to any bank              Absolute Indirect Long  JMP [$0000]
+Computed jump (switch)        Indexed Indirect        JMP ($2000,X)
+Large memory copy             Block Move              MVP $01,$02
+
+================================================================================
+PERFORMANCE NOTES
+================================================================================
+
+1. Direct Page is fastest for frequently-accessed variables
+   - Keep DP page-aligned ($xx00) to avoid +1 cycle penalty
+   - Typical setup: LDA #$0000 / TCD
+
+2. Indexed modes may add cycles on page boundary crossing
+   - Applies to some instructions in some modes
+   - See instruction set reference for [3] annotation
+
+3. Indirect modes are slower due to extra memory access
+   - DP Indirect: 5+ cycles
+   - DP Indirect Long: 6+ cycles
+   - Stack Relative Indirect: 7+ cycles
+
+4. Absolute Long is slower than Absolute
+   - Use Absolute when data is in current bank
+   - Use Absolute Long when crossing banks
+
+5. Block Move is very efficient for bulk transfers
+   - 1 cycle per byte (+ minimal overhead)
+   - Much faster than loops
+
+================================================================================
+ASSEMBLER SYNTAX NOTES
+================================================================================
+
+Most assemblers determine addressing mode automatically:
+
+LDA #$42        ; Immediate (# prefix)
+LDA $42         ; Direct Page (8-bit address)
+LDA $1234       ; Absolute (16-bit address)
+LDA $123456     ; Absolute Long (24-bit address)
+LDA $12,X       ; DP Indexed (8-bit + ,X)
+LDA $1234,X     ; Absolute Indexed (16-bit + ,X)
+LDA ($10)       ; DP Indirect (parentheses)
+LDA [$10]       ; DP Indirect Long (brackets)
+LDA ($10,X)     ; DP Indexed Indirect
+LDA ($10),Y     ; DP Indirect Indexed
+LDA [$10],Y     ; DP Indirect Long Indexed
+LDA $10,S       ; Stack Relative (,S suffix)
+
+Some assemblers require hints for ambiguous cases:
+LDA <$1234      ; Force DP even though value > $FF
+LDA >$12        ; Force Absolute even though value < $100
+LDA.L $1234     ; Force Long mode
+
+Consult your assembler documentation for specific syntax.
+
+================================================================================
+
+For instruction details, see instruction-set.txt
+For programming examples, see programming-guide.txt
+For architecture overview, see overview.txt

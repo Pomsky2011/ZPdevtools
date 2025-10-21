@@ -1,0 +1,694 @@
+DEF88186 Main CPU - Timing and Performance Deep Dive
+=====================================================
+
+This document provides detailed timing information, cycle counts, performance
+optimization strategies, and benchmarking data for the DEF88186 processor.
+
+================================================================================
+CYCLE COUNTING FUNDAMENTALS
+================================================================================
+
+Basic Timing:
+-------------
+- Most simple instructions: 2 cycles (NOP, SEC, CLC, INX, etc.)
+- Memory access adds cycles: typically 1-3 additional cycles
+- Complex operations slower: MUL (8-13), DIV (8), CALL (16)
+
+Cycle Count Notation:
+---------------------
+From the CSV data, cycle counts use bracketed annotations:
+
+Base cycles: The number shown (e.g., "2" means 2 cycles)
+
+Conditional additions:
+[1] - Add 1 cycle if M=0 (16-bit accumulator mode)
+[2] - Add 1 cycle if low byte of D is non-zero (DP not page-aligned)
+[3] - Add 1 cycle if adding index crosses page boundary
+[4] - Add 2 cycles if M=0 (16-bit accumulator mode)
+[5] - Add 1 cycle if branch not taken
+[6] - Add 1 cycle if E=0 (native mode)
+[7] - Add 1 cycle if E=0 (native mode)
+[8] - Add 1 cycle if X=0 (16-bit index mode)
+[10] - Cycle count varies based on when interrupt arrives
+[12] - 3 bytes if M=0 (16-bit accumulator mode)
+[13] - First byte is signature byte
+[14] - 3 bytes if X=0 (16-bit index mode)
+
+Example:
+    LDA #const: 2[1] cycles means:
+        - 2 cycles if M=1 (8-bit)
+        - 3 cycles if M=0 (16-bit)
+
+    LDA dp: 3[1][2] cycles means:
+        - 3 cycles base
+        - +1 if M=0 (4 cycles)
+        - +1 if D.low != 0 (4 or 5 cycles total)
+
+================================================================================
+INSTRUCTION TIMING BY CATEGORY
+================================================================================
+
+SIMPLE OPERATIONS (2 cycles)
+-----------------------------
+NOP                 2 cycles
+SEC, CLC            2 cycles
+SED, CLD            2 cycles
+SEI, CLI            2 cycles
+CLV                 2 cycles
+INX, INY            2 cycles
+DEX, DEY            2 cycles
+TXY, TYA, TYX       2 cycles
+XBA                 2 cycles
+INC A, DEC A        2 cycles
+ASL A, LSR A        2 cycles
+ROL A, ROR A        2 cycles
+SHL X, SHL Y        2 cycles
+SHR X, SHR Y        2 cycles
+
+IMMEDIATE LOADS (2-3 cycles)
+-----------------------------
+LDA #const          2 cycles (M=1) or 3 cycles (M=0)
+LDX #const          2 cycles (X=1) or 3 cycles (X=0)
+LDY #const          2 cycles (X=1) or 3 cycles (X=0)
+ADC #const          2 cycles (M=1) or 3 cycles (M=0)
+SBC #const          2 cycles (M=1) or 3 cycles (M=0)
+CMP #const          2 cycles (M=1) or 3 cycles (M=0)
+
+ABSOLUTE MEMORY (3 cycles)
+---------------------------
+LDA addr            3 cycles
+STA addr            3 cycles
+LDX addr            3 cycles
+STX addr            3 cycles
+LDY addr            3 cycles
+STY addr            3 cycles
+STZ addr            3 cycles
+INC addr            3 cycles
+DEC addr            3 cycles
+ADC addr            3 cycles
+SBC addr            3 cycles
+AND addr            3 cycles
+ORA addr            3 cycles
+XOR addr            3 cycles
+CMP addr            3 cycles
+BIT addr            3 cycles
+ASL addr            3 cycles
+LSR addr            3 cycles
+ROL addr            3 cycles
+ROR addr            3 cycles
+
+DIRECT PAGE (3-5 cycles)
+-------------------------
+Base: 3 cycles
++1 if M=0 for load/store accumulator operations
++1 if D.low != 0 (not page-aligned)
+
+Optimal (D=$0000, M=1): 3 cycles
+Worst (D=$0101, M=0): 5 cycles
+
+LDA dp              3[1][2] = 3-5 cycles
+STA dp              3[1][2] = 3-5 cycles
+ADC dp              3[1][2] = 3-5 cycles
+
+INDEXED ABSOLUTE (3+ cycles)
+-----------------------------
+Base: 3 cycles
++1 if page boundary crossed (some instructions)
+
+LDA addr,X          3 cycles
+STA addr,X          3 cycles
+LDA addr,Y          3 cycles
+
+ABSOLUTE LONG (4-5 cycles)
+---------------------------
+Base addressing: 4 bytes, 5 cycles typically
+
+LDA long            5[1] = 5-6 cycles
+STA long            5[1] = 5-6 cycles
+ADC long            5[1] = 5-6 cycles
+LDA long,X          5[1] = 5-6 cycles
+
+INDIRECT (5-7 cycles)
+---------------------
+Extra memory access for pointer lookup
+
+LDA (dp)            5[1][2] = 5-7 cycles
+LDA [$dp]           6[1][2] = 6-8 cycles
+LDA (dp),Y          5[1][2][3] = 5-8 cycles
+LDA [$dp],Y         6[1][2] = 6-8 cycles
+LDA (dp,X)          6[1][2] = 6-8 cycles
+
+STACK OPERATIONS (3-6 cycles)
+------------------------------
+PHA                 3[1] = 3-4 cycles
+PLA                 4[1] = 4-5 cycles
+PHX, PHY            3[8] = 3-4 cycles
+PHP                 3 cycles
+PLP                 3 cycles
+PHD                 4 cycles
+PHB                 3 cycles
+
+JUMPS AND CALLS (4-6 cycles)
+-----------------------------
+JMP addr            4 cycles
+JMP long            4 cycles
+JMP (addr)          4 cycles
+JMP [addr]          4 cycles
+JMP (addr,X)        4 cycles
+JSR addr            4 cycles
+JSR (addr,X)        4 cycles
+RTS                 6 cycles
+RTL                 6 cycles
+RTI                 6[7] = 6-7 cycles
+BRL label           4 cycles
+
+BRANCHES (2-3 cycles)
+---------------------
+Base: 2 cycles if taken
++1 if not taken (some)
++1 if E=0 (native mode)
+
+BRA long            3[6] = 3-4 cycles
+BMI long            2[5][6] = 2-4 cycles
+BEQ long            2[5][6] = 2-4 cycles
+
+HARDWARE MULTIPLY (8-13 cycles)
+--------------------------------
+MUL #const          8 cycles (immediate - fastest!)
+MUL addr            9 cycles
+MUL addr,X          9 cycles
+MUL dp              9 cycles
+MUL dp,X            10 cycles
+MUL (dp,X)          12 cycles
+MUL (dp),Y          11 cycles
+MUL long            11 cycles
+MUL long,X          11 cycles
+MUL [dp]            12 cycles
+MUL sr,S            10 cycles
+MUL (sr,S),Y        13 cycles (slowest)
+
+HARDWARE DIVIDE (8 cycles)
+---------------------------
+DIV X,Y             8 cycles
+DIV long,X          8 cycles
+DIV long,Y          8 cycles
+
+HARDWARE LOOPS (1-2 cycles)
+----------------------------
+LOOP #word          2 cycles (initialization)
+LPEND               1 cycle (decrement & branch)
+
+Much faster than manual loops:
+    Manual loop overhead: ~5 cycles/iteration (DEC, CMP, BNE)
+    Hardware loop: 1 cycle/iteration
+    Savings: 4 cycles per iteration!
+
+REGISTER EXCHANGE (8 cycles)
+-----------------------------
+XCHG X,Y            8 cycles
+XCHG X,dp           8 cycles
+XCHG X,long         8 cycles
+XCHG Y,dp           8 cycles
+XCHG Y,long         8 cycles
+XCHG long,dp        8 cycles
+
+BLOCK MOVE (1 cycle per byte + overhead)
+-----------------------------------------
+MVN srcbk,destbk    1[3] cycle per byte
+MVP srcbk,destbk    1[3] cycle per byte
+
+Total time: ~1 cycle per byte transferred
+Plus initial setup and final cleanup
+
+SYSTEM CALLS (8-16 cycles)
+---------------------------
+CALL long           16 cycles
+RET                 8 cycles
+
+SPECIAL OPERATIONS
+------------------
+SEP #const          3 cycles
+REP #const          3 cycles
+BRK                 7[7] cycles
+COP #const          7[7] cycles
+WAI                 3[10] cycles (+ wait time)
+HLT                 0 cycles (stops clock)
+
+================================================================================
+PROCESSOR MODE IMPACT
+================================================================================
+
+8-bit vs 16-bit Accumulator:
+-----------------------------
+M=1 (8-bit):
+    - Faster: -1 cycle on many memory ops
+    - Smaller: Immediate values are 1 byte
+    - Limited: Only 0-255 values
+
+M=0 (16-bit):
+    - Slower: +1 cycle on many memory ops
+    - Larger: Immediate values are 2 bytes
+    - Powerful: 0-65535 values
+
+Example:
+    LDA #$42        M=1: 2 cycles, 2 bytes
+    LDA #$42        M=0: 3 cycles, 3 bytes (value is $0042)
+
+Choose based on:
+- Data range: 8-bit for bytes, 16-bit for words
+- Performance: 8-bit slightly faster
+- Code size: 8-bit smaller
+
+8-bit vs 16-bit Index:
+----------------------
+X=1 (8-bit X/Y):
+    - Smaller immediate loads
+    - Limited to 256-byte arrays
+    - Slightly faster
+
+X=0 (16-bit X/Y):
+    - Full 64KB array indexing
+    - More flexible
+    - Standard for most code
+
+Direct Page Alignment:
+----------------------
+D=$xx00 (page-aligned):
+    - Optimal: No penalty
+    - DP instructions run at base speed
+
+D=$xxyy (not aligned, yy != 00):
+    - Penalty: +1 cycle on all DP operations
+    - Affects all DP addressing modes
+
+Example:
+    D=$0000: LDA $10 = 3 cycles
+    D=$0100: LDA $10 = 3 cycles
+    D=$0101: LDA $10 = 4 cycles (penalty!)
+
+Best practice: Always set D to page boundary!
+
+    LDA #$0000
+    TCD             ; D = $0000 (optimal)
+
+    ; Or
+    LDA #$2000
+    TCD             ; D = $2000 (also optimal)
+
+================================================================================
+MEMORY ACCESS TIMING
+================================================================================
+
+Access Time by Region:
+----------------------
+Assuming no wait states:
+
+RAM (Bank $00-$7F):     Base cycles (fast)
+ROM (Bank $80-$FF):     Base cycles or +1 (slower for some systems)
+I/O Registers:          Variable (1-many cycles depending on hardware)
+
+Cache Effects:
+--------------
+If system has cache:
+- Cache hit: Base cycles
+- Cache miss: +N cycles (fetch from main memory)
+- Sequential access: Better cache hit rate
+- Random access: More cache misses
+
+DMA Impact:
+-----------
+During DMA transfer:
+- CPU is stalled (can't access bus)
+- DMA runs at ~1 cycle per byte
+- Total stall = transfer size in bytes
+
+Example:
+    4 KB DMA transfer = 4096 cycle stall
+
+Plan DMA during V-Blank or other idle time!
+
+================================================================================
+OPTIMIZATION STRATEGIES
+================================================================================
+
+Strategy 1: Use Optimal Addressing Modes
+-----------------------------------------
+Fastest to slowest:
+
+1. Implied/Register (2 cycles)
+   INX, DEX, TXY
+
+2. Immediate (2-3 cycles)
+   LDA #$42
+
+3. Direct Page - aligned (3 cycles)
+   LDA $10     (when D=$xx00)
+
+4. Absolute (3 cycles)
+   LDA $2000
+
+5. Absolute Indexed (3-4 cycles)
+   LDA $2000,X
+
+6. Direct Page - unaligned (4 cycles)
+   LDA $10     (when D=$xx01-$xxFF)
+
+7. Absolute Long (5-6 cycles)
+   LDA $7E8000
+
+8. Indirect (5-8 cycles)
+   LDA ($10)
+
+Optimization:
+    Use DP for frequently-accessed variables
+    Keep D page-aligned
+    Avoid long/indirect when possible
+
+Strategy 2: Hardware Instructions
+----------------------------------
+Software multiply (16×16):
+    ~100-150 cycles
+
+Hardware multiply:
+    8-13 cycles
+
+Speedup: ~10-15x faster!
+
+Always use MUL for multiplication
+Always use DIV for division
+
+Strategy 3: Hardware Loops
+---------------------------
+Manual loop:
+    loop:
+        ; body (10 cycles)
+        DEC counter     ; 2 cycles
+        BNE loop        ; 3 cycles
+    ; Total: 15 cycles/iteration
+
+Hardware loop:
+    LOOP #count         ; 2 cycles (one-time)
+    loop:
+        ; body (10 cycles)
+        LPEND           ; 1 cycle
+    ; Total: 11 cycles/iteration
+
+Savings: 4 cycles per iteration
+For 1000 iterations: 4000 cycles saved!
+
+Strategy 4: Register Allocation
+--------------------------------
+Keep hot values in registers:
+
+Poor:
+    LDA counter
+    INC A
+    STA counter
+    LDA counter
+    CMP #100
+    ; ... (loads counter multiple times)
+
+Good:
+    LDA counter         ; Load once
+    INC A               ; Work in register
+    CMP #100
+    ; ... (stays in A)
+    STA counter         ; Store once at end
+
+Strategy 5: Unroll Small Loops
+-------------------------------
+Loop overhead: ~5 cycles (counter management)
+
+Small loop (4 iterations):
+    LDX #4
+    loop:
+        LDA data,X
+        STA output,X
+        DEX
+        BNE loop
+    ; Total: 4 × (body + 5 overhead) = 4×body + 20
+
+Unrolled:
+    LDA data+0
+    STA output+0
+    LDA data+1
+    STA output+1
+    LDA data+2
+    STA output+2
+    LDA data+3
+    STA output+3
+    ; Total: 4×body (no overhead!)
+    ; Savings: 20 cycles
+
+Trade-off: Larger code, faster execution
+
+Strategy 6: Minimize Mode Switches
+-----------------------------------
+Each mode switch costs cycles:
+
+    REP #$20        ; 3 cycles
+    ; ... 16-bit work ...
+    SEP #$20        ; 3 cycles
+    ; ... 8-bit work ...
+
+If possible, batch operations of same mode:
+
+    REP #$20        ; 3 cycles (once)
+    ; All 16-bit work here
+    ; ...
+    SEP #$20        ; 3 cycles (once)
+    ; All 8-bit work here
+
+Strategy 7: Block Moves for Bulk Copy
+--------------------------------------
+Byte-by-byte loop:
+    LDX #0
+    loop:
+        LDA source,X
+        STA dest,X
+        INX
+        CPX #1000
+        BNE loop
+    ; ~10 cycles per byte × 1000 = 10,000 cycles
+
+Block move:
+    LDX #$0000
+    LDY #$0000
+    LDA #999
+    MVP srcbank,dstbank
+    ; ~1 cycle per byte × 1000 = 1,000 cycles
+
+Speedup: 10x faster!
+
+Strategy 8: Inline Small Functions
+-----------------------------------
+Function call overhead:
+    JSR function    ; 4 cycles
+    ; ... function body ...
+    RTS             ; 6 cycles
+    ; Total overhead: 10 cycles
+
+For small functions (< 10 cycles), inline:
+
+    ; Instead of JSR add_one
+    INC A           ; Inline (2 cycles)
+    ; Saves 8 cycles per call!
+
+Trade-off: Code duplication vs speed
+
+================================================================================
+BENCHMARKING
+================================================================================
+
+Common Operation Timings:
+--------------------------
+
+Copy 1 KB memory:
+    Loop method:        ~10,000 cycles
+    Block move (MVP):   ~1,000 cycles
+    DMA (if available): ~1,000 cycles
+
+16×16 multiply:
+    Software:           ~100-150 cycles
+    Hardware (MUL):     8-13 cycles
+
+32-bit addition:
+    Two 16-bit ADC:     ~10 cycles
+
+Zero 1 KB memory:
+    Loop with STA:      ~5,000 cycles
+    Hardware loop:      ~1,000 cycles
+
+Search 256 bytes:
+    Linear:             ~3,000 cycles (average)
+    Binary (sorted):    ~100 cycles
+
+Typical Frame Budget (60 Hz):
+------------------------------
+If CPU clock is 10 MHz:
+    10,000,000 cycles/sec ÷ 60 fps = 166,666 cycles/frame
+
+Example breakdown:
+    Game logic:         50,000 cycles
+    Physics:            30,000 cycles
+    AI:                 20,000 cycles
+    Rendering prep:     40,000 cycles
+    Audio:              10,000 cycles
+    System:             16,666 cycles
+    Total:              166,666 cycles
+
+================================================================================
+PROFILING TECHNIQUES
+================================================================================
+
+Cycle Counting:
+---------------
+; Count cycles for code section
+    LDA timer_start
+    STA start_time
+
+    ; ... code to profile ...
+
+    LDA timer_end
+    SEC
+    SBC start_time
+    STA elapsed_cycles
+
+Instruction Counting:
+---------------------
+; Manually count instructions
+    ; This loop: 15 cycles/iteration
+    LOOP #1000          ; 2 cycles
+    loop:
+        LDA data,X      ; 3 cycles
+        ADC #1          ; 2 cycles
+        STA result,X    ; 3 cycles
+        INX             ; 2 cycles
+        INX             ; 2 cycles
+        LPEND           ; 1 cycle
+    ; Total: 2 + (1000 × 13) + overhead = ~13,002 cycles
+
+Hot Spot Analysis:
+------------------
+1. Find slowest functions
+2. Optimize them first (80/20 rule)
+3. Use faster instructions/modes
+4. Consider algorithmic improvements
+
+Example optimization:
+    Before: 100,000 cycles (software multiply in loop)
+    After:  10,000 cycles (hardware MUL)
+    Speedup: 10x
+
+================================================================================
+PERFORMANCE CHECKLIST
+================================================================================
+
+General:
+[ ] Use 16-bit mode by default (REP #$30)
+[ ] Keep D page-aligned ($xx00)
+[ ] Use hardware MUL/DIV
+[ ] Use hardware LOOP/LPEND
+[ ] Minimize mode switches
+
+Memory:
+[ ] Hot variables in direct page
+[ ] Use absolute for same-bank access
+[ ] Use long only when crossing banks
+[ ] Batch bank switches
+
+Loops:
+[ ] Use LOOP/LPEND for simple iteration
+[ ] Unroll small loops (< 10 iterations)
+[ ] Keep loop body tight
+[ ] Hoist invariant calculations
+
+Functions:
+[ ] Inline small functions
+[ ] Minimize register saves
+[ ] Use registers for locals
+[ ] Return errors via carry
+
+Data:
+[ ] Align data on even boundaries
+[ ] Group related data together
+[ ] Use tables for complex calculations
+[ ] Precompute when possible
+
+Code Organization:
+[ ] Keep hot paths short
+[ ] Minimize branches
+[ ] Use computed jumps for switch
+[ ] Profile and optimize bottlenecks
+
+================================================================================
+TIMING EXAMPLES
+================================================================================
+
+Example 1: Pixel Drawing
+-------------------------
+; Draw pixel at (X, Y) with color in A
+draw_pixel:
+    ; Calculate offset: Y × 256 + X
+    REP #$30
+    TYA                 ; 2 cycles
+    ASL A               ; 2 cycles (Y × 2)
+    ASL A               ; 2 cycles (Y × 4)
+    ASL A               ; 2 cycles (Y × 8)
+    ; ... more shifts...
+    ; Better: use MUL!
+
+    ; Using MUL:
+    TYA                 ; 2 cycles
+    MUL #256            ; 8 cycles
+    ADD X               ; 3 cycles (assuming in DP)
+    ; ... store pixel ...
+
+    RTS
+
+Total: ~20-30 cycles per pixel
+
+Example 2: Memory Clear
+------------------------
+; Clear 1 KB to zero
+clear_1kb:
+    REP #$30
+    LDA #$0000
+    LDX #$0000
+    LOOP #512           ; 2 cycles
+clear_loop:
+    STA buffer,X        ; 3 cycles
+    INX                 ; 2 cycles
+    INX                 ; 2 cycles
+    LPEND               ; 1 cycle
+    ; Loop body: 8 cycles
+    ; Total: 2 + (512 × 8) = 4,098 cycles
+    RTS
+
+Example 3: String Copy
+-----------------------
+; Copy null-terminated string
+strcpy:
+    REP #$20            ; 3 cycles
+    SEP #$10            ; 3 cycles (8-bit index for bytes)
+    LDY #$00            ; 2 cycles
+
+strcpy_loop:
+    LDA (src),Y         ; 5 cycles
+    STA (dest),Y        ; 5 cycles
+    BEQ strcpy_done     ; 2-3 cycles
+    INY                 ; 2 cycles
+    BRA strcpy_loop     ; 3 cycles
+    ; Loop: ~17 cycles per character
+
+strcpy_done:
+    RTS                 ; 6 cycles
+
+For 20 character string: ~350 cycles
+
+================================================================================
+
+For instruction details, see instruction-set.txt
+For optimization patterns, see programming-guide.txt
+For flag timing effects, see flags.txt
+For memory access patterns, see memory-map.txt

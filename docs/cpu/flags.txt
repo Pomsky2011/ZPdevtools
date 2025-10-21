@@ -1,0 +1,549 @@
+DEF88186 Main CPU - Processor Status Flags Reference
+====================================================
+
+The Processor Status Register (P) is an 8-bit register containing flags that
+control CPU behavior and reflect the results of operations.
+
+================================================================================
+FLAG REGISTER LAYOUT
+================================================================================
+
+Bit:    7  6  5  4  3  2  1  0
+Flag:   N  V  M  X  D  I  Z  C
+
+N = Negative
+V = Overflow
+M = Memory/Accumulator size (0=16-bit, 1=8-bit)
+X = Index register size (0=16-bit, 1=8-bit)
+D = Decimal mode
+I = Interrupt disable
+Z = Zero
+C = Carry
+
+================================================================================
+INDIVIDUAL FLAG DESCRIPTIONS
+================================================================================
+
+CARRY FLAG (C) - Bit 0
+----------------------
+
+Set by:
+- Arithmetic carry out (ADC, SBC)
+- Bit shifted out (ASL, LSR, ROL, ROR, SHL, SHR, RCL)
+- Comparison results (CMP, CPX, CPY)
+- DIV operations
+
+Cleared by:
+- No carry/borrow
+- CLC instruction
+
+Usage:
+    ; Multi-byte addition
+    CLC             ; Clear carry before first addition
+    LDA $00
+    ADC $02         ; Add low bytes
+    STA $04
+    LDA $01
+    ADC $03         ; Add high bytes with carry
+    STA $05
+
+    ; Comparison
+    LDA value
+    CMP #$50
+    BCS greater_or_equal    ; Branch if C=1 (value >= $50)
+
+ZERO FLAG (Z) - Bit 1
+---------------------
+
+Set when result of operation is zero.
+Cleared when result is non-zero.
+
+Set by:
+- Arithmetic: ADC, SBC, MUL, DIV, INC, DEC
+- Logical: AND, ORA, XOR, BIT
+- Loads: LDA, LDX, LDY
+- Transfers: TXY, TYA, TYX
+- Comparisons: CMP, CPX, CPY
+- Stack pulls: PLA
+
+Usage:
+    LDA value
+    BEQ is_zero     ; Branch if Z=1 (value is zero)
+    BNE not_zero    ; Branch if Z=0 (value is not zero)
+
+    ; Check if values are equal
+    LDA var1
+    CMP var2
+    BEQ equal       ; Z=1 if var1 == var2
+
+INTERRUPT DISABLE FLAG (I) - Bit 2
+-----------------------------------
+
+When set (I=1): IRQ interrupts are disabled (masked)
+When clear (I=0): IRQ interrupts are enabled
+
+Note: NMI (non-maskable interrupt) is never masked.
+
+Set by:
+- SEI instruction
+- BRK instruction (during interrupt handling)
+- COP instruction (during interrupt handling)
+- Hardware IRQ (during interrupt handling)
+- SEP #$04
+
+Cleared by:
+- CLI instruction
+- REP #$04
+- RTI instruction (restores previous state)
+
+Usage:
+    SEI             ; Disable interrupts
+    ; Critical section - interrupts disabled
+    CLI             ; Re-enable interrupts
+
+    ; Common pattern: save/restore interrupt state
+    PHP             ; Save flags (including I)
+    SEI             ; Disable interrupts
+    ; Critical code
+    PLP             ; Restore flags (restores I)
+
+DECIMAL MODE FLAG (D) - Bit 3
+------------------------------
+
+When set (D=1): ADC and SBC operate in BCD (Binary Coded Decimal) mode
+When clear (D=0): ADC and SBC operate in binary mode
+
+Set by:
+- SED instruction
+- SEP #$08
+
+Cleared by:
+- CLD instruction
+- REP #$08
+
+BCD Mode:
+- Each byte represents two decimal digits (0-99)
+- $09 + $01 = $10 (not $0A)
+- $25 + $37 = $62
+
+Usage:
+    SED             ; Enter decimal mode
+    LDA #$25        ; $25 = decimal 25
+    ADC #$37        ; $25 + $37 = $62 (decimal 62)
+    CLD             ; Exit decimal mode
+
+Note: BCD mode only affects ADC and SBC.
+      Other instructions operate in binary regardless of D flag.
+
+INDEX REGISTER SIZE FLAG (X) - Bit 4
+-------------------------------------
+
+When clear (X=0): X and Y registers are 16-bit
+When set (X=1): X and Y registers are 8-bit
+
+Set by:
+- SEP #$10
+
+Cleared by:
+- REP #$10
+
+Affects:
+- Size of X and Y registers
+- Immediate operand size for LDX, LDY, CPX, CPY
+- Stack push/pull size for PHX, PHY
+- Cycle counts (add 1 cycle when X=0 for some instructions)
+
+Usage:
+    REP #$10        ; 16-bit index registers
+    LDX #$1234      ; Load 16-bit value
+    INX             ; X = $1235
+
+    SEP #$10        ; 8-bit index registers
+    LDX #$56        ; Load 8-bit value
+    INX             ; X = $57 (high byte unchanged)
+
+MEMORY/ACCUMULATOR SIZE FLAG (M) - Bit 5
+-----------------------------------------
+
+When clear (M=0): Accumulator is 16-bit
+When set (M=1): Accumulator is 8-bit
+
+Set by:
+- SEP #$20
+
+Cleared by:
+- REP #$20
+
+Affects:
+- Size of accumulator (A)
+- Immediate operand size for LDA, ADC, SBC, CMP, AND, ORA, XOR, BIT, MUL
+- Stack push/pull size for PHA, PLA
+- Cycle counts (add 1 cycle when M=0 for some instructions)
+
+When M=1 (8-bit mode):
+- A register is split: B (high byte) and A (low byte)
+- Most operations affect only A (low byte)
+- XBA swaps A and B
+
+Usage:
+    REP #$20        ; 16-bit accumulator
+    LDA #$1234      ; Load 16-bit value
+    ADC #$0100      ; 16-bit addition
+
+    SEP #$20        ; 8-bit accumulator
+    LDA #$56        ; Load 8-bit value (high byte unchanged)
+    ADC #$10        ; 8-bit addition
+
+    XBA             ; Swap A and B bytes
+    LDA #$78        ; Now loading into what was the high byte
+
+OVERFLOW FLAG (V) - Bit 6
+--------------------------
+
+Set when signed arithmetic produces a result outside the range -128 to +127
+(8-bit) or -32768 to +32767 (16-bit).
+
+Set by:
+- ADC and SBC when signed overflow occurs
+- BIT instruction (copies bit 6 of memory to V)
+
+Cleared by:
+- CLV instruction
+- BIT instruction (may clear or set based on memory)
+
+Signed overflow examples:
+    ; 8-bit: 127 + 1 = -128 (overflow)
+    LDA #$7F        ; 127
+    ADC #$01        ; Result: $80 (-128 as signed)
+                    ; V=1 (overflow), N=1 (negative)
+
+    ; 8-bit: -128 - 1 = 127 (overflow)
+    LDA #$80        ; -128
+    SBC #$01        ; Result: $7F (127)
+                    ; V=1 (overflow), N=0 (positive)
+
+Usage:
+    LDA value1
+    ADC value2
+    BVS overflow    ; Branch if signed overflow occurred
+
+Note: V flag is for signed arithmetic.
+      C flag is for unsigned arithmetic.
+
+NEGATIVE FLAG (N) - Bit 7
+--------------------------
+
+Set when bit 7 (8-bit mode) or bit 15 (16-bit mode) of result is 1.
+Indicates negative result in two's complement signed arithmetic.
+
+Set by:
+- Arithmetic: ADC, SBC, MUL, INC, DEC
+- Logical: AND, ORA, XOR
+- Loads: LDA, LDX, LDY
+- Transfers: TXY, TYA, TYX
+- Shifts/rotates: ASL, LSR, ROL, ROR, RCL
+- Comparisons: CMP, CPX, CPY
+- BIT instruction (copies bit 7 of memory to N)
+
+Usage:
+    LDA value
+    BMI negative    ; Branch if N=1 (bit 7 set)
+    BPL positive    ; Branch if N=0 (bit 7 clear)
+
+    ; After comparison
+    LDA value1
+    CMP value2
+    BMI less        ; value1 < value2 (signed)
+
+================================================================================
+FLAG MANIPULATION INSTRUCTIONS
+================================================================================
+
+INDIVIDUAL FLAG SET/CLEAR
+--------------------------
+SEC             Set Carry (C=1)
+CLC             Clear Carry (C=0)
+SED             Set Decimal (D=1)
+CLD             Clear Decimal (D=0)
+SEI             Set Interrupt Disable (I=1)
+CLI             Clear Interrupt Disable (I=0)
+CLV             Clear Overflow (V=0)
+
+MULTIPLE FLAGS
+--------------
+SEP #const      Set Processor Status Bits
+                ORs const with P register
+
+    SEP #$20    ; Set M flag (8-bit accumulator)
+    SEP #$30    ; Set M and X flags (8-bit A, X, Y)
+    SEP #$04    ; Set I flag (disable interrupts)
+
+REP #const      Reset Processor Status Bits
+                ANDs ~const with P register
+
+    REP #$20    ; Clear M flag (16-bit accumulator)
+    REP #$30    ; Clear M and X flags (16-bit A, X, Y)
+    REP #$04    ; Clear I flag (enable interrupts)
+
+STACK SAVE/RESTORE
+------------------
+PHP             Push Processor Status to stack
+PLP             Pull Processor Status from stack
+PUSHF           Alias for PHP
+POPF            Alias for PLP
+
+    PHP         ; Save current flags
+    SEP #$30    ; Change to 8-bit mode
+    ; ... do work in 8-bit mode ...
+    PLP         ; Restore original flags
+
+RTI             Return from Interrupt
+                Pulls P, PC, and PB from stack
+
+================================================================================
+FLAG COMBINATIONS
+================================================================================
+
+COMMON MODE SETTINGS
+--------------------
+; Full 16-bit mode (both A and X/Y)
+REP #$30        ; Clear M and X flags
+
+; Full 8-bit mode
+SEP #$30        ; Set M and X flags
+
+; 16-bit A, 8-bit X/Y
+REP #$20        ; Clear M
+SEP #$10        ; Set X
+
+; 8-bit A, 16-bit X/Y
+SEP #$20        ; Set M
+REP #$10        ; Clear X
+
+COMPARISON FLAG RESULTS
+-----------------------
+After CMP, CPX, or CPY (comparing A with memory):
+
+    A == memory:  Z=1, C=1, N=0
+    A >  memory:  Z=0, C=1, N=0 (unsigned)
+    A <  memory:  Z=0, C=0, N=1 (unsigned)
+
+For signed comparisons, use N and V flags together.
+
+================================================================================
+FLAG EFFECTS BY INSTRUCTION CATEGORY
+================================================================================
+
+LOADS (LDA, LDX, LDY, PLA)
+--------------------------
+N = Bit 7/15 of loaded value
+Z = 1 if loaded value is zero
+Other flags unchanged
+
+STORES (STA, STX, STY, PHA, etc.)
+----------------------------------
+No flags changed
+
+ARITHMETIC (ADC, SBC)
+---------------------
+N = Bit 7/15 of result
+V = Signed overflow
+Z = 1 if result is zero
+C = Carry out (ADC) or no borrow (SBC)
+
+MULTIPLY (MUL)
+--------------
+N = Bit 7/15 of result
+V = Product overflow? (check specification)
+Z = 1 if result is zero
+C = Overflow? (check specification)
+
+DIVIDE (DIV)
+------------
+C = Set on divide operation
+Other flags may be affected (check specification)
+
+INCREMENT/DECREMENT (INC, DEC, INX, INY, DEX, DEY)
+---------------------------------------------------
+N = Bit 7/15 of result
+Z = 1 if result is zero
+Other flags unchanged
+
+LOGICAL (AND, ORA, XOR)
+-----------------------
+N = Bit 7/15 of result
+Z = 1 if result is zero
+Other flags unchanged
+
+BIT TEST (BIT)
+--------------
+BIT #immediate:  Z = 1 if (A & immediate) == 0
+BIT memory:      N = Bit 7/15 of memory
+                 V = Bit 6/14 of memory
+                 Z = 1 if (A & memory) == 0
+
+SHIFTS (ASL, LSR)
+-----------------
+N = Bit 7/15 of result
+Z = 1 if result is zero
+C = Bit shifted out
+
+ROTATES (ROL, ROR, RCL)
+-----------------------
+N = Bit 7/15 of result
+Z = 1 if result is zero
+C = Bit rotated out (new carry)
+
+COMPARISONS (CMP, CPX, CPY)
+---------------------------
+N = Bit 7/15 of (register - memory)
+Z = 1 if register == memory
+C = 1 if register >= memory (unsigned)
+
+TRANSFERS (TXY, TYA, TYX)
+-------------------------
+N = Bit 7/15 of transferred value
+Z = 1 if transferred value is zero
+Other flags unchanged
+
+BLOCK MOVES (MVN, MVP)
+----------------------
+No flags changed
+
+BRANCHES
+--------
+No flags changed (except RTI which restores all flags)
+
+JUMPS/CALLS (JMP, JSR, CALL, RTS, RTL, RET)
+--------------------------------------------
+No flags changed (except RTI which restores all flags)
+
+INTERRUPTS (BRK, COP)
+---------------------
+D = 0 (decimal cleared)
+I = 1 (interrupts disabled)
+
+STACK (PHP, PLP, PUSHF, POPF)
+------------------------------
+PHP/PUSHF: No flags changed
+PLP/POPF: All flags loaded from stack
+
+CONTROL (NOP, WAI, HLT)
+-----------------------
+No flags changed
+
+================================================================================
+PROGRAMMING PATTERNS
+================================================================================
+
+INITIALIZING PROCESSOR STATE
+-----------------------------
+; Typical initialization after reset
+SEI             ; Disable interrupts
+CLD             ; Binary mode (not decimal)
+REP #$30        ; 16-bit A, X, Y
+; ... set up stack, banks, etc ...
+CLI             ; Enable interrupts
+
+SAFE FLAG CHANGES
+-----------------
+; Save and restore flags around critical section
+PHP             ; Save current flags
+SEP #$20        ; Change to 8-bit accumulator
+; ... 8-bit operations ...
+PLP             ; Restore original mode
+
+CONDITIONAL MODE SWITCHING
+--------------------------
+; Switch to 16-bit only if in 8-bit mode
+PHP
+PLA
+AND #$20        ; Check M flag
+BEQ already_16bit
+REP #$20        ; Switch to 16-bit
+already_16bit:
+; ... code ...
+
+SIGNED vs UNSIGNED COMPARISONS
+-------------------------------
+; Unsigned: A >= value
+LDA var
+CMP #$80
+BCS greater_or_equal    ; Use C flag
+
+; Signed: A >= value (requires checking N and V)
+LDA var
+CMP #$80
+; For signed comparisons, use:
+; - BMI/BPL for < 0 or >= 0
+; - BEQ for == 0
+; Signed >= requires N XOR V == 0 (complex)
+
+TESTING MULTIPLE CONDITIONS
+----------------------------
+; Test if value is in range [min, max]
+LDA value
+CMP #min
+BCC out_of_range    ; value < min
+CMP #max+1
+BCS out_of_range    ; value > max
+; in range
+out_of_range:
+
+DECIMAL MODE USAGE
+------------------
+SED                 ; Enter decimal mode
+LDA bcd_value1      ; BCD values
+ADC bcd_value2      ; BCD addition
+STA bcd_result
+CLD                 ; Always exit decimal mode!
+
+Note: Always CLD after SED. Forgetting this can cause bugs.
+
+================================================================================
+GOTCHAS AND TIPS
+================================================================================
+
+1. M and X flags change instruction encoding!
+   - Immediate values change size
+   - Code assembled for M=0 may crash if executed with M=1
+   - Best practice: Document expected flag state in comments
+
+2. Decimal mode only affects ADC and SBC
+   - INC, DEC, and other arithmetic is always binary
+   - Invalid BCD values ($A-$F) produce undefined results
+
+3. Always CLD after using SED
+   - Interrupts can occur during decimal mode
+   - Interrupt handlers may expect binary mode
+
+4. SEP/REP affect multiple flags at once
+   - SEP #$30 sets both M and X
+   - REP #$30 clears both M and X
+   - Can't set M while clearing X with one instruction
+
+5. V flag is for signed overflow, C flag is for unsigned
+   - Use V for signed arithmetic checks
+   - Use C for unsigned arithmetic checks
+
+6. BIT instruction has special behavior
+   - BIT #immediate only sets Z (doesn't affect N, V)
+   - BIT memory copies bits 7 and 6 to N and V
+
+7. Changing M flag doesn't change accumulator value
+   - Switching from 16-bit to 8-bit hides high byte
+   - Switching back reveals the high byte again
+   - High byte persists when in 8-bit mode
+
+8. Stack operations respect M/X flags
+   - PHA pushes 1 or 2 bytes depending on M
+   - PHX/PHY push 1 or 2 bytes depending on X
+   - PLA/PLX/PLY pull the same size as pushed
+   - Mismatched push/pull corrupts stack
+
+================================================================================
+
+For instruction details, see instruction-set.txt
+For addressing modes, see addressing-modes.txt
+For programming examples, see programming-guide.txt
+For architecture overview, see overview.txt

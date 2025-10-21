@@ -1,0 +1,824 @@
+DEF88186 Main CPU - Programming Guide
+======================================
+
+The DEF88186 is a hybrid processor combining the 65C816's elegant architecture with
+8086-inspired enhancements like hardware loops, multiply/divide, and register exchange.
+This guide demonstrates practical programming patterns and techniques.
+
+================================================================================
+SYSTEM INITIALIZATION
+================================================================================
+
+BASIC INITIALIZATION
+--------------------
+; Reset handler - initialize processor state
+reset:
+    SEI                 ; Disable interrupts during init
+    CLD                 ; Binary mode (not decimal)
+
+    ; Set to 16-bit mode for both accumulator and indexes
+    REP #$30            ; Clear M and X flags
+
+    ; Initialize stack pointer to top of bank 0
+    LDA #$1FFF
+    TCS                 ; Transfer A to Stack pointer
+
+    ; Set Data Bank to 0
+    LDA #$00
+    SDB                 ; Set Data Bank (DEF88186 extension)
+
+    ; Alternative: PHA / PLB (65816 way)
+    ; PHA
+    ; PLB
+
+    ; Set Direct Page to 0 (page-aligned for best performance)
+    LDA #$0000
+    TCD                 ; Transfer A to Direct page
+
+    ; Clear processor flags
+    LDA #$00
+    PHA
+    PLP                 ; Pull into P register
+
+    CLI                 ; Enable interrupts
+
+    JMP main            ; Jump to main program
+
+SETTING UP INTERRUPT VECTORS
+-----------------------------
+; Interrupt vectors typically at end of bank 0
+    .org $00FFE0
+
+vectors:
+    .word 0             ; Reserved
+    .word 0             ; Reserved
+    .word cop_handler   ; COP vector
+    .word brk_handler   ; BRK vector
+    .word 0             ; ABORT vector
+    .word nmi_handler   ; NMI vector
+    .word 0             ; Reserved
+    .word irq_handler   ; IRQ vector
+
+================================================================================
+BASIC OPERATIONS
+================================================================================
+
+16-BIT ARITHMETIC
+-----------------
+; Add two 16-bit values
+    REP #$20            ; 16-bit accumulator
+    LDA value1
+    ADC value2          ; Don't forget CLC first if needed!
+    STA result
+
+; Subtract with borrow
+    REP #$20
+    SEC                 ; Set carry (no borrow)
+    LDA value1
+    SBC value2
+    STA result
+
+32-BIT ARITHMETIC
+-----------------
+; Add two 32-bit values (stored little-endian)
+add32:
+    REP #$20            ; 16-bit accumulator
+    CLC
+    LDA value1          ; Low word
+    ADC value2
+    STA result
+    LDA value1+2        ; High word
+    ADC value2+2
+    STA result+2
+    RTS
+
+; Subtract 32-bit
+sub32:
+    REP #$20
+    SEC
+    LDA value1
+    SBC value2
+    STA result
+    LDA value1+2
+    SBC value2+2
+    STA result+2
+    RTS
+
+HARDWARE MULTIPLY (8086-inspired)
+----------------------------------
+; Multiply two 16-bit values
+; Much faster than software multiplication
+    REP #$20            ; 16-bit mode
+    LDA #100            ; Multiplicand
+    MUL #50             ; Multiply by 50
+    STA result          ; Result = 5000
+
+; Multiply by memory value
+    LDA value1
+    MUL value2
+    STA result
+
+; Multiply by immediate (8 cycles - very fast!)
+    LDA counter
+    MUL #10             ; Multiply by constant
+    STA scaled
+
+HARDWARE DIVIDE (8086-inspired)
+--------------------------------
+; Divide operations
+    REP #$10            ; 16-bit index registers
+    LDX dividend
+    LDY divisor
+    DIV X,Y             ; Divide X by Y, result in A
+    STA quotient
+
+; Divide by memory value
+    LDA dividend
+    DIV long_address,X  ; Divide A by value at address+X
+    STA result
+
+================================================================================
+MEMORY ACCESS PATTERNS
+================================================================================
+
+DIRECT PAGE VARIABLES (FASTEST)
+--------------------------------
+; Set up direct page for fast variable access
+    REP #$20
+    LDA #$0000          ; DP at $0000 (page-aligned!)
+    TCD
+
+; Access variables via direct page
+    LDA $10             ; Load from $0010 (3 cycles, 2 bytes)
+    ADC $12             ; Add from $0012
+    STA $14             ; Store to $0014
+
+; Compare with absolute addressing
+    LDA $0010           ; Same address, but 3 bytes, may be slower
+    ADC $0012
+    STA $0014
+
+Pro Tip: Keep frequently accessed variables in direct page for speed.
+
+POINTER DEREFERENCING
+---------------------
+; Simple pointer access
+    LDA [$10]           ; Load from 24-bit address at DP $10
+    STA result
+
+; Pointer + offset (structure fields)
+    LDY #8              ; Offset to field
+    LDA [$10],Y         ; Load field at offset 8
+    STA field_value
+
+; Array of structures
+    LDY struct_index    ; Y = index * sizeof(struct)
+    LDA [$10],Y         ; Access structure in array
+    STA temp
+
+STACK-BASED LOCAL VARIABLES
+---------------------------
+function:
+    ; Allocate stack space for locals
+    REP #$20
+    TSC                 ; Transfer Stack to A
+    SEC
+    SBC #$10            ; Allocate 16 bytes
+    TCS                 ; Transfer back to Stack
+
+    ; Access local variables via stack relative
+    LDA #$1234
+    STA $01,S           ; Store to local at SP+1
+
+    LDA $01,S           ; Load from local
+    ADC #$10
+    STA $03,S           ; Store to another local
+
+    ; Deallocate stack space before return
+    TSC
+    CLC
+    ADC #$10            ; Free 16 bytes
+    TCS
+    RTS
+
+FUNCTION PARAMETERS ON STACK
+-----------------------------
+; Caller pushes parameters right-to-left
+caller:
+    REP #$20
+    LDA param2
+    PHA                 ; Push second parameter
+    LDA param1
+    PHA                 ; Push first parameter
+    JSR function
+
+    ; Clean up stack after return (caller-clean)
+    TSC
+    CLC
+    ADC #$04            ; Remove 4 bytes (2 params × 2 bytes)
+    TCS
+
+; Function accesses parameters
+function:
+    ; Stack layout after JSR:
+    ; SP+1,SP+2: Return address (2 bytes)
+    ; SP+3,SP+4: param1 (2 bytes)
+    ; SP+5,SP+6: param2 (2 bytes)
+
+    LDA $03,S           ; Load param1
+    ADC $05,S           ; Add param2
+    ; Return value in A
+    RTS
+
+================================================================================
+CONTROL FLOW
+================================================================================
+
+HARDWARE LOOPS (8086-inspired LOOP/LPEND)
+------------------------------------------
+; Hardware loop counter - more efficient than manual dec/branch
+    REP #$20
+    LOOP #1000          ; Initialize hardware counter to 1000
+loop_body:
+    ; ... loop body code ...
+    LDA array,X
+    STA dest,X
+    INX
+    INX
+    LPEND               ; Decrement counter, branch if non-zero
+
+; Equivalent manual loop (more instructions, slower)
+    LDA #1000
+    STA counter
+manual_loop:
+    ; ... loop body ...
+    DEC counter
+    BNE manual_loop
+
+NESTED LOOPS
+------------
+; Hardware loops can't nest - use manual counter for outer loop
+outer_loop:
+    LDX #0
+    LOOP #100           ; Inner loop uses hardware counter
+inner_loop:
+    ; ... process element ...
+    LDA matrix,X
+    STA output,X
+    INX
+    INX
+    LPEND
+
+    DEC outer_counter
+    BNE outer_loop
+
+SWITCH/CASE STATEMENTS
+----------------------
+; Computed jump using indexed indirect
+switch:
+    REP #$20
+    LDA case_value
+    CMP #MAX_CASES
+    BCS default_case    ; Out of range
+
+    ASL A               ; Multiply by 2 (word size)
+    TAX                 ; Transfer to X
+    JMP (jump_table,X)  ; Indexed indirect jump
+
+jump_table:
+    .word case_0
+    .word case_1
+    .word case_2
+    .word case_3
+    ; ...
+
+case_0:
+    ; Handle case 0
+    JMP end_switch
+
+case_1:
+    ; Handle case 1
+    JMP end_switch
+
+default_case:
+    ; Default handler
+
+end_switch:
+    ; Continue
+
+CONDITIONAL EXECUTION
+---------------------
+; Simple if-then
+    LDA value
+    CMP #100
+    BCC skip            ; Branch if value < 100
+    ; Code for value >= 100
+skip:
+
+; If-then-else
+    LDA value
+    CMP #50
+    BCC else_branch
+    ; Code for value >= 50
+    JMP end_if
+else_branch:
+    ; Code for value < 50
+end_if:
+
+; Complex condition: if (A >= 10 && A <= 20)
+    LDA value
+    CMP #10
+    BCC out_of_range    ; A < 10
+    CMP #21
+    BCS out_of_range    ; A >= 21
+    ; Code for 10 <= A <= 20
+    JMP continue
+out_of_range:
+    ; Code for A out of range
+continue:
+
+================================================================================
+REGISTER EXCHANGE (8086-inspired XCHG)
+================================================================================
+
+; Fast register swap (8 cycles)
+    XCHG X,Y            ; Swap X and Y registers
+
+; Swap register with memory
+    XCHG X,$10          ; Swap X with DP location $10
+    XCHG Y,$123456      ; Swap Y with long address
+
+; Swap two memory locations (atomic)
+    XCHG $123456,$10    ; Swap long address with DP location
+
+; Use case: Swapping buffer pointers
+    XCHG X,read_ptr     ; Atomically swap X with read pointer
+    XCHG Y,write_ptr    ; Atomically swap Y with write pointer
+
+================================================================================
+BLOCK MEMORY OPERATIONS
+================================================================================
+
+MEMORY COPY (FORWARD)
+---------------------
+; Copy 4KB from bank $01 to bank $02
+    REP #$30            ; 16-bit A, X, Y
+    LDX #$0000          ; Source offset
+    LDY #$0000          ; Dest offset
+    LDA #$0FFF          ; Count-1 (4096-1)
+    MVP $01,$02         ; Move positive (low to high)
+
+; After MVP: X=$1000, Y=$1000, A=$FFFF, DB=$02
+
+MEMORY COPY (BACKWARD)
+----------------------
+; Copy backward (for overlapping regions, src < dest)
+    REP #$30
+    LDX #$0FFF          ; Source end
+    LDY #$0FFF          ; Dest end
+    LDA #$0FFF          ; Count-1
+    MVN $01,$02         ; Move negative (high to low)
+
+MEMORY FILL
+-----------
+; Fill memory with pattern (use copy from ROM)
+fill_memory:
+    ; Set up pattern in ROM/RAM
+    ; Then use MVP to replicate it
+
+    ; Alternative: Manual fill loop
+    REP #$20
+    LDA #$0000          ; Fill value
+    LDX #$0000
+    LOOP #2048          ; Fill 2048 words
+fill_loop:
+    STA buffer,X
+    INX
+    INX
+    LPEND
+    RTS
+
+MEMORY COMPARE
+--------------
+; Compare two memory regions (returns Z=1 if equal)
+memcmp:
+    REP #$30
+    LDX #$0000
+    LOOP #256           ; Compare 256 bytes
+cmp_loop:
+    LDA buffer1,X
+    CMP buffer2,X
+    BNE not_equal       ; Mismatch found
+    INX
+    INX
+    LPEND
+
+    LDA #$0000          ; Equal (Z=1)
+    RTS
+
+not_equal:
+    LDA #$0001          ; Not equal (Z=0)
+    RTS
+
+================================================================================
+SUBROUTINES AND FUNCTION CALLS
+================================================================================
+
+SIMPLE SUBROUTINE
+-----------------
+; Leaf function (calls no other functions)
+multiply_by_10:
+    REP #$20
+    MUL #10             ; Hardware multiply
+    RTS                 ; Return with result in A
+
+; Caller
+    LDA value
+    JSR multiply_by_10
+    STA result
+
+SUBROUTINE WITH LOCAL VARIABLES
+--------------------------------
+calculate:
+    ; Save registers if needed
+    PHX
+    PHY
+
+    ; Allocate locals
+    TSC
+    SEC
+    SBC #$08            ; 8 bytes for locals
+    TCS
+
+    ; Use locals
+    LDA input
+    STA $01,S           ; local_1
+
+    LDA input2
+    MUL $01,S           ; Multiply by local_1
+    STA $03,S           ; local_2
+
+    ; Return value in A
+    LDA $03,S
+
+    ; Deallocate locals
+    TSC
+    CLC
+    ADC #$08
+    TCS
+
+    ; Restore registers
+    PLY
+    PLX
+    RTS
+
+SYSTEM CALL (CALL/RET)
+----------------------
+; Extended CALL instruction for OS services (16 cycles)
+    LDA #SERVICE_ID
+    CALL $FF0000        ; Call OS service at bank $FF
+
+; Service handler
+os_service:
+    ; ... service code ...
+    RET                 ; Return to OS (8 cycles)
+
+LONG CALL (JSR to different bank)
+----------------------------------
+; Use JSL for 65816-style long calls (if supported)
+; Or manually:
+long_call:
+    ; Push return bank
+    PHK                 ; Push program bank
+
+    ; Push return address
+    PEA return_point-1  ; Push return address-1
+
+    ; Jump to far address
+    JMP $123456
+
+return_point:
+    ; Execution resumes here after RTL
+
+================================================================================
+INTERRUPT HANDLING
+================================================================================
+
+INTERRUPT SERVICE ROUTINE
+--------------------------
+irq_handler:
+    ; Registers already saved by CPU:
+    ; - Program Bank (PB)
+    ; - Program Counter (PC)
+    ; - Processor Status (P)
+    ; - D and I flags set automatically
+
+    REP #$30            ; Set to known state (16-bit)
+
+    ; Save additional registers if needed
+    PHA
+    PHX
+    PHY
+    PHB
+    PHD
+
+    ; Set up data environment
+    LDA #$00
+    SDB                 ; Data bank 0
+    TCD                 ; Direct page 0
+
+    ; Handle interrupt
+    ; ... interrupt service code ...
+
+    ; Restore registers
+    PLD
+    PLB
+    PLY
+    PLX
+    PLA
+
+    RTI                 ; Return from interrupt (restores P, PC, PB)
+
+NON-MASKABLE INTERRUPT
+----------------------
+nmi_handler:
+    ; NMI cannot be masked - always executes
+    ; Same structure as IRQ handler
+    REP #$30
+    PHA
+    PHX
+    PHY
+
+    ; ... NMI service code ...
+    ; Typically used for critical events
+
+    PLY
+    PLX
+    PLA
+    RTI
+
+SOFTWARE INTERRUPT
+------------------
+; BRK instruction triggers software interrupt
+    BRK #$42            ; Signature byte for debugging
+
+brk_handler:
+    ; Stack layout:
+    ; SP+1: Status register
+    ; SP+2,3: Return address (points to byte after signature)
+    ; SP+4: Pushed by BRK automatically
+
+    REP #$30
+
+    ; Read signature byte
+    LDA $02,S           ; Get return address
+    TAX
+    LDA $0000,X         ; Read signature byte
+
+    ; Dispatch based on signature
+    ; ... handler code ...
+
+    RTI
+
+================================================================================
+MIXING 8-BIT AND 16-BIT CODE
+================================================================================
+
+EFFICIENT MODE SWITCHING
+-------------------------
+; When you need both 8-bit and 16-bit operations
+    SEP #$20            ; 8-bit accumulator
+    LDA byte_value      ; Load 8-bit value
+    STA result
+
+    REP #$20            ; 16-bit accumulator
+    LDA word_value      ; Load 16-bit value
+    ADC #$1000
+    STA result2
+
+    SEP #$20            ; Back to 8-bit
+    LDA byte_value2
+
+ACCESSING HIGH BYTE IN 8-BIT MODE
+----------------------------------
+    REP #$20            ; 16-bit mode
+    LDA #$1234          ; Load full word
+
+    SEP #$20            ; 8-bit mode
+    ; A now contains $34 (low byte)
+    ; High byte $12 is in B register
+
+    XBA                 ; Swap A and B
+    ; A now contains $12 (high byte)
+    STA high_byte
+
+    XBA                 ; Swap back
+    STA low_byte
+
+PRESERVING ACCUMULATOR SIZE
+----------------------------
+; Save current M flag state
+    PHP                 ; Save flags
+    REP #$20            ; Do 16-bit operation
+    LDA value
+    ADC #$1000
+    STA result
+    PLP                 ; Restore original M flag
+
+================================================================================
+PERFORMANCE OPTIMIZATION
+================================================================================
+
+USE DIRECT PAGE FOR HOT VARIABLES
+----------------------------------
+; Instead of:
+    LDA $002000         ; Absolute (3 bytes, 3 cycles)
+    ADC $002002
+    STA $002004
+
+; Use direct page (if D=$2000):
+    LDA $00             ; Direct page (2 bytes, 3 cycles)
+    ADC $02
+    STA $04
+
+; Even better with page-aligned DP (D=$2000):
+    LDA $00             ; (2 bytes, 3 cycles, no penalty)
+    ADC $02
+    STA $04
+
+HARDWARE MULTIPLY vs SOFTWARE
+------------------------------
+; Software multiply (slow, ~100+ cycles for 16×16)
+software_mul:
+    ; ... complex loop ...
+
+; Hardware multiply (8-13 cycles)
+    LDA value1
+    MUL value2          ; Done in 8 cycles!
+
+LOOP UNROLLING
+--------------
+; Unroll small loops for speed
+; Instead of:
+    LOOP #4
+loop:
+    LDA array,X
+    STA dest,X
+    INX
+    INX
+    LPEND
+
+; Unroll completely:
+    LDX #$00
+    LDA array,X
+    STA dest,X
+    LDA array+2,X
+    STA dest+2,X
+    LDA array+4,X
+    STA dest+4,X
+    LDA array+6,X
+    STA dest+6,X
+
+REGISTER ALLOCATION
+-------------------
+; Keep frequently-used values in registers
+; Accumulator (A): Primary working register
+; X: Array index, loop counter
+; Y: Secondary index, offset into structures
+
+; Example: Processing array
+    REP #$30
+    LDX #$0000          ; X = array index
+    LDY #$0000          ; Y = output index
+    LOOP #100
+process:
+    LDA input_array,X   ; Load from input
+    MUL #3              ; Process
+    STA output_array,Y  ; Store to output
+    INX
+    INX
+    INY
+    INY
+    LPEND
+
+================================================================================
+COMMON ALGORITHMS
+================================================================================
+
+BINARY SEARCH
+-------------
+binary_search:
+    ; Search sorted array for value
+    ; A = search value, returns index in X or -1
+    REP #$30
+    STA search_val
+
+    LDX #$0000          ; Low = 0
+    LDY #ARRAY_SIZE-1   ; High = size-1
+
+bsearch_loop:
+    ; Check if low > high
+    TXA
+    CMP Y
+    BCS not_found
+
+    ; Mid = (low + high) / 2
+    TXA
+    ADD Y               ; A = low + high
+    LSR A               ; A = (low + high) / 2
+    STA mid
+
+    ; Compare array[mid] with search_val
+    ASL A               ; Multiply by 2 (word size)
+    TAX
+    LDA array,X
+    CMP search_val
+    BEQ found
+    BCC search_high
+
+    ; search_val < array[mid], search lower half
+    LDA mid
+    DEC A
+    TAY                 ; high = mid - 1
+    LDX low
+    JMP bsearch_loop
+
+search_high:
+    ; search_val > array[mid], search upper half
+    LDA mid
+    INC A
+    TAX                 ; low = mid + 1
+    LDY high
+    JMP bsearch_loop
+
+found:
+    LDA mid             ; Return index
+    RTS
+
+not_found:
+    LDA #$FFFF          ; Return -1
+    RTS
+
+CHECKSUM CALCULATION
+--------------------
+calculate_checksum:
+    ; Calculate sum of bytes in buffer
+    REP #$30
+    LDA #$0000          ; Checksum accumulator
+    LDX #$0000          ; Index
+
+    LOOP #BUFFER_SIZE
+checksum_loop:
+    SEP #$20            ; 8-bit for byte access
+    ADD buffer,X        ; Add byte (carry preserved)
+    REP #$20            ; Back to 16-bit
+    INX
+    LPEND
+
+    STA checksum
+    RTS
+
+================================================================================
+DEBUGGING TECHNIQUES
+================================================================================
+
+BREAKPOINT WITH BRK
+-------------------
+    ; Insert breakpoint
+    BRK #$42            ; Signature $42 for this breakpoint
+
+    ; In BRK handler, check signature and handle
+
+REGISTER DUMP
+-------------
+debug_dump:
+    ; Save all registers to memory for inspection
+    STA debug_a
+    STX debug_x
+    STY debug_y
+    PHP
+    PLA
+    STA debug_p
+    TSC
+    STA debug_sp
+    ; Continue execution
+    RTS
+
+ASSERTION
+---------
+    ; Assert condition
+    LDA value
+    CMP #EXPECTED
+    BEQ assertion_ok
+
+    ; Assertion failed
+    BRK #$FF            ; Signature for assertion failure
+
+assertion_ok:
+
+================================================================================
+
+For detailed instruction reference, see instruction-set.txt
+For addressing mode details, see addressing-modes.txt
+For flag behavior, see flags.txt
+For architecture overview, see overview.txt

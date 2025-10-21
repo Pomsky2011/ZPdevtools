@@ -1,0 +1,700 @@
+DEF88186 - Comparing 65C816 and 8086 Heritage
+=============================================
+
+The DEF88186 is a hybrid processor combining the elegance of the 65C816 with
+performance enhancements inspired by the Intel 8086. This document explores
+both architectures and how they merge in the DEF88186.
+
+================================================================================
+ARCHITECTURAL OVERVIEW
+================================================================================
+
+65C816 (Western Design Center)
+-------------------------------
+Year: 1983
+Bit Width: 16-bit (with 8-bit compatibility mode)
+Address Bus: 24-bit (16 MB)
+Data Bus: 8-bit external, 16-bit internal
+Endianness: Little-endian
+Heritage: 6502 → 65C02 → 65C816
+Famous Uses: Apple IIGS, Super Nintendo/Super Famicom
+
+Philosophy:
+- Orthogonal instruction set
+- Elegant simplicity
+- Powerful addressing modes
+- Accumulator-centric design
+- Clean bank-switching model
+
+Intel 8086 (Intel)
+------------------
+Year: 1978
+Bit Width: 16-bit
+Address Bus: 20-bit (1 MB via segmentation)
+Data Bus: 16-bit
+Endianness: Little-endian
+Heritage: 8080 → 8086 → 80186 → 80286+
+Famous Uses: IBM PC, DOS machines, x86 legacy
+
+Philosophy:
+- General-purpose registers
+- Segment-based memory model
+- Hardware multiply/divide
+- String operations
+- Complex addressing modes
+
+DEF88186 (Hybrid)
+-----------------
+Year: 2025 (fantasy console)
+Architecture: 65C816 base + 8086 enhancements
+Address Bus: 24-bit (16 MB, 65816 style)
+Registers: 65816 style (A, X, Y, D, SP, etc.)
+Extensions: 8086-inspired (LOOP, MUL, DIV, XCHG)
+Purpose: Fantasy console main CPU with best of both worlds
+
+Philosophy:
+- 65816 elegance + 8086 power
+- Clean programming model (65816)
+- Fast arithmetic (8086)
+- Efficient iteration (8086)
+- Modern fantasy console design
+
+================================================================================
+REGISTER COMPARISON
+================================================================================
+
+65C816 Registers:
+-----------------
+A       16-bit Accumulator (or AL/AH in 8-bit mode)
+X       16-bit Index
+Y       16-bit Index
+SP      16-bit Stack Pointer
+D       16-bit Direct Page
+PC      16-bit Program Counter
+PB      8-bit Program Bank
+DB      8-bit Data Bank
+P       8-bit Processor Status (NVMXDIZC)
+
+Total: 3 data registers (A, X, Y)
+
+8086 Registers:
+---------------
+AX      16-bit (AH/AL) - Accumulator
+BX      16-bit (BH/BL) - Base
+CX      16-bit (CH/CL) - Count
+DX      16-bit (DH/DL) - Data
+SI      16-bit Source Index
+DI      16-bit Destination Index
+BP      16-bit Base Pointer
+SP      16-bit Stack Pointer
+CS      16-bit Code Segment
+DS      16-bit Data Segment
+ES      16-bit Extra Segment
+SS      16-bit Stack Segment
+IP      16-bit Instruction Pointer
+FLAGS   16-bit Status Flags
+
+Total: 8 general-purpose registers (AX-DX, SI, DI, BP, SP)
+
+DEF88186 Registers:
+-------------------
+Same as 65C816:
+A, X, Y, SP, D, PC, PB, DB, P
+
+Philosophy: Keep 65816's clean register model
+- A for accumulator operations
+- X, Y for indexing
+- No segment confusion
+- Simple to understand and use
+
+Why not 8086's registers?
+- More complex to manage
+- Segment overhead
+- 65816 model is cleaner for modern use
+
+================================================================================
+MEMORY MODELS
+================================================================================
+
+65C816: Bank-Based (24-bit)
+---------------------------
+Address Format: $BB:OOOO (Bank:Offset)
+Banks: 256 banks × 64 KB = 16 MB total
+Addressing:
+- Absolute: DB:offset (default bank)
+- Absolute Long: bank:offset (explicit)
+- Direct Page: Bank 0 + D + offset
+
+Example:
+    LDA $8000           ; Accesses (DB << 16) | $8000
+    LDA $7E:8000        ; Accesses bank $7E, offset $8000
+
+Advantages:
++ Simple linear model
++ Easy to understand
++ No segment arithmetic
++ Clean 64 KB chunks
+
+8086: Segment-Based (20-bit)
+-----------------------------
+Address Format: Segment:Offset
+Physical Address: (Segment × 16) + Offset
+Segments: CS, DS, ES, SS
+Max Address: (0xFFFF × 16) + 0xFFFF = 1,114,095 bytes (~1 MB)
+
+Example:
+    MOV AX, [1000h]     ; Accesses (DS × 16) + 1000h
+    MOV AX, ES:[1000h]  ; Accesses (ES × 16) + 1000h
+
+Challenges:
+- Overlapping segments
+- Segment arithmetic (multiply by 16)
+- Segment register management
+- 64 KB barrier (far pointers needed)
+
+DEF88186: 65C816 Model
+----------------------
+Uses 65C816's superior bank model:
+- 24-bit linear addressing
+- Simple bank switching
+- No segment arithmetic
+- Clean 64 KB boundaries
+
+Why 65816's model?
++ Simpler programming
++ No segment confusion
++ Larger address space (16 MB vs 1 MB)
++ Better for modern systems
+
+================================================================================
+INSTRUCTION SET COMPARISON
+================================================================================
+
+65C816 Features:
+-----------------
+✓ Multiple addressing modes (14+)
+✓ BCD decimal mode
+✓ Block moves (MVN/MVP)
+✓ Stack relative addressing
+✓ Indirect long addressing
+✓ 8/16-bit mode switching
+✓ Clean orthogonal instruction set
+
+✗ No hardware multiply
+✗ No hardware divide
+✗ No hardware loop counter
+✗ Software-only arithmetic
+✗ No register exchange
+✗ No string operations
+
+8086 Features:
+--------------
+✓ Hardware multiply (MUL/IMUL)
+✓ Hardware divide (DIV/IDIV)
+✓ Hardware loop (LOOP/LOOPZ/LOOPNZ)
+✓ String operations (MOVS/SCAS/CMPS)
+✓ Register exchange (XCHG)
+✓ Bit shifts/rotates (SHL/SHR/ROL/ROR)
+✓ Flag manipulation
+
+✗ Complex segmentation
+✗ Less orthogonal
+✗ Fewer addressing modes
+✗ No BCD mode (after 8086)
+✗ Stack grows up (non-standard)
+
+DEF88186: Best of Both
+-----------------------
+From 65C816:
+✓ All addressing modes
+✓ BCD decimal mode
+✓ Block moves (MVN/MVP)
+✓ Stack relative
+✓ Indirect long
+✓ 8/16-bit switching
+✓ Clean instruction set
+✓ Bank-based memory
+
+From 8086:
+✓ Hardware MUL (8-13 cycles)
+✓ Hardware DIV (8 cycles)
+✓ LOOP/LPEND (1 cycle/iteration)
+✓ XCHG (8 cycles)
+✓ SHL/SHR on index registers
+✓ Direct bank set (SDB)
+✓ System calls (CALL/RET)
+
+Result: Fast arithmetic + elegant architecture!
+
+================================================================================
+MULTIPLY/DIVIDE COMPARISON
+================================================================================
+
+Multiplication:
+---------------
+
+65C816 (Software Only):
+    ; 16×16 multiply
+    ; ~100-150 cycles
+    multiply16:
+        ; ... complex loop ...
+        ; Shift-and-add algorithm
+        ; Many instructions
+        RTS
+
+8086 (Hardware):
+    ; 16×16 multiply
+    MOV AX, value1
+    MUL value2          ; 118-133 cycles (8086)
+    ; Result in DX:AX
+
+DEF88186 (Hardware - Enhanced):
+    ; 16×16 multiply
+    LDA value1
+    MUL value2          ; 8-13 cycles!
+    ; Result in A
+    ; MUCH FASTER than both!
+
+Speedup vs 65816: ~10-15x faster
+Speedup vs 8086: ~10x faster
+
+Division:
+---------
+
+65C816 (Software Only):
+    ; 16÷16 divide
+    ; ~150-200 cycles
+    divide16:
+        ; ... complex loop ...
+        ; Shift-and-subtract algorithm
+        RTS
+
+8086 (Hardware):
+    ; 16÷16 divide
+    MOV AX, dividend
+    MOV DX, 0
+    DIV divisor         ; 144-162 cycles (8086)
+
+DEF88186 (Hardware - Enhanced):
+    ; 16÷16 divide
+    LDX dividend
+    LDY divisor
+    DIV X,Y             ; 8 cycles!
+
+Speedup vs 65816: ~20-25x faster
+Speedup vs 8086: ~18x faster
+
+================================================================================
+LOOP COMPARISON
+================================================================================
+
+Simple Loop (1000 iterations):
+
+65C816:
+    LDA #1000
+    STA counter
+loop:
+    ; ... body ...
+    LDA counter         ; 3 cycles
+    DEC A               ; 2 cycles
+    STA counter         ; 3 cycles
+    BNE loop            ; 3 cycles
+    ; Overhead: 11 cycles per iteration
+    ; Total overhead: 11,000 cycles
+
+8086:
+    MOV CX, 1000
+loop:
+    ; ... body ...
+    LOOP loop           ; 17 cycles (8086)
+    ; Overhead: 17 cycles per iteration
+    ; Total overhead: 17,000 cycles
+
+DEF88186:
+    LOOP #1000          ; 2 cycles (initialization)
+loop:
+    ; ... body ...
+    LPEND               ; 1 cycle
+    ; Overhead: 1 cycle per iteration
+    ; Total overhead: 1,000 cycles
+
+Speedup vs 65816: 11x less overhead
+Speedup vs 8086: 17x less overhead
+
+Why is DEF88186 faster?
+- Custom hardware loop counter
+- Minimal overhead design
+- Optimized for fantasy console
+
+================================================================================
+ADDRESSING MODE COMPARISON
+================================================================================
+
+Common Modes:
+
+Mode                65C816  8086    DEF88186
+----                ------  ----    --------
+Immediate           ✓       ✓       ✓
+Register            ✓       ✓       ✓
+Absolute            ✓       ✓       ✓
+Indexed             ✓       ✓       ✓
+Indirect            ✓       ✓       ✓
+Stack relative      ✓       ✗       ✓
+Direct page         ✓       ✗       ✓
+Long addressing     ✓       ✗       ✓
+Block move          ✓       ✗       ✓
+
+65C816 modes NOT in 8086:
+- Direct Page (fast zero-page anywhere)
+- Long addressing (24-bit addresses)
+- Stack relative (easy parameter access)
+- Indirect long (24-bit pointers)
+- Block move (MVN/MVP)
+
+8086 modes NOT in 65816/DEF88186:
+- Base+Index (e.g., [BX+SI])
+- Scaled index (not in 8086, later x86)
+
+DEF88186: Inherits all 65816 modes
+- More flexible than 8086
+- Cleaner than 8086 segmentation
+- Better for structured programming
+
+================================================================================
+STACK COMPARISON
+================================================================================
+
+65C816:
+-------
+Direction: Grows downward (high to low)
+Default: SP = $01FF (256-byte stack)
+Extended: SP can be anywhere in bank 0
+Push: Decrement SP, then write
+Pop: Read, then increment SP
+Size: Depends on M/X flags (1 or 2 bytes)
+
+8086:
+-----
+Direction: Grows downward (high to low)
+Segment: SS:SP
+Default: Typically top of segment
+Push: Decrement SP, then write (same as 65816)
+Pop: Read, then increment SP
+Size: Always 16-bit
+
+DEF88186:
+---------
+Same as 65C816:
+- Grows downward
+- Flexible size (M/X dependent)
+- Can be anywhere in bank 0
+- Stack relative addressing for parameters
+
+Both 65816 and 8086 grow stack downward (standard).
+
+================================================================================
+PERFORMANCE COMPARISON
+================================================================================
+
+Operation           65C816      8086        DEF88186
+---------           ------      ----        --------
+NOP                 2 cycles    3 cycles    2 cycles
+Load immediate      2-3 cycles  4 cycles    2-3 cycles
+Load memory         3+ cycles   4+ cycles   3+ cycles
+Add                 2-3 cycles  3 cycles    2-3 cycles
+Multiply (16×16)    ~120 cyc    ~125 cyc    8-13 cyc
+Divide (16÷16)      ~180 cyc    ~150 cyc    8 cyc
+Loop overhead       ~11 cyc     17 cyc      1 cyc
+Block move (byte)   ~7 cyc      ~15 cyc     ~1 cyc
+Register exchange   ~12 cyc     2 cyc       8 cyc
+
+DEF88186 Advantages:
++ Faster multiply (8-13 vs ~120-150)
++ Faster divide (8 vs ~150-180)
++ Faster loops (1 vs 11-17)
++ Faster block moves (1 vs 7-15)
++ 65816's clean instruction timing
+
+DEF88186 Trade-offs:
+- Register exchange slower than 8086 (but we have it!)
+- Still uses 65816's memory access timing
+
+Overall: DEF88186 combines 65816 elegance with 8086 speed features
+
+================================================================================
+PROGRAMMING MODEL COMPARISON
+================================================================================
+
+65C816 Style:
+-------------
+; Clean, orthogonal
+    REP #$30            ; 16-bit mode
+    LDA value1
+    ADC value2
+    STA result
+
+    ; Direct page for fast access
+    LDA $10             ; Fast DP access
+    ADC $12
+
+    ; Bank switching
+    LDA #$02
+    PHA
+    PLB                 ; DB = $02
+
+    ; Block move
+    LDX #src
+    LDY #dst
+    LDA #count-1
+    MVP srcbank, dstbank
+
+8086 Style:
+-----------
+; More complex
+    MOV AX, value1
+    ADD AX, value2
+    MOV result, AX
+
+    ; Segment management
+    MOV AX, SEG data
+    MOV DS, AX
+    MOV AX, [offset]
+
+    ; String copy
+    MOV SI, src
+    MOV DI, dst
+    MOV CX, count
+    REP MOVSB
+
+    ; Hardware loop
+    MOV CX, 100
+loop:
+    ; ... body ...
+    LOOP loop
+
+DEF88186 Style (Best of Both):
+-------------------------------
+; 65816 foundation
+    REP #$30
+    LDA value1
+    ADC value2
+    STA result
+
+    ; 65816 direct page
+    LDA $10
+    ADC $12
+
+    ; 65816 banking (cleaner than segments)
+    LDA #$02
+    SDB                 ; DEF88186 extension!
+
+    ; 65816 block move
+    MVP srcbank, dstbank
+
+    ; 8086 multiply!
+    LDA value1
+    MUL value2          ; Hardware multiply!
+
+    ; 8086 loops!
+    LOOP #100
+loop_body:
+    ; ... body ...
+    LPEND               ; Hardware loop!
+
+================================================================================
+USE CASE COMPARISON
+================================================================================
+
+When Original 65C816 Shines:
+-----------------------------
++ Elegant code structure
++ Clean memory model
++ Powerful addressing modes
++ Embedded systems
++ Retro computing
++ Educational purposes
+
+When Original 8086 Shines:
+---------------------------
++ General-purpose computing
++ Fast arithmetic (with hardware)
++ String processing
++ IBM PC compatibility
++ DOS applications
++ x86 legacy
+
+When DEF88186 Shines:
+----------------------
++ Fantasy console design
++ Game development
++ Real-time processing
++ Clean programming model wanted
++ Fast arithmetic needed
++ Best of both worlds
++ Modern retro projects
++ Educational (shows hybrid design)
+
+DEF88186 Ideal For:
+-------------------
+✓ Game development (fast math, clean code)
+✓ Audio/video processing (tight loops, fast math)
+✓ System programming (clean model, powerful ops)
+✓ Embedded systems (efficient, flexible)
+✓ Fantasy consoles (retro feel, modern power)
+
+================================================================================
+CODE EXAMPLES
+================================================================================
+
+Example: Calculate Area (Width × Height)
+
+65C816:
+    ; Software multiply
+    LDA width
+    LDX height
+    JSR multiply16      ; ~120 cycles
+    STA area
+
+8086:
+    ; Hardware multiply
+    MOV AX, width
+    MUL height          ; ~125 cycles
+    MOV area, AX
+
+DEF88186:
+    ; Hardware multiply (faster!)
+    LDA width
+    MUL height          ; 8-13 cycles
+    STA area
+
+Example: Sum Array (100 elements)
+
+65C816:
+    LDA #0
+    STA sum
+    LDX #0
+    LDA #100
+    STA counter
+loop:
+    LDA array,X
+    CLC
+    ADC sum
+    STA sum
+    INX
+    INX
+    DEC counter
+    BNE loop
+
+8086:
+    MOV AX, 0
+    MOV SI, 0
+    MOV CX, 100
+loop:
+    ADD AX, array[SI]
+    INC SI
+    INC SI
+    LOOP loop
+    MOV sum, AX
+
+DEF88186:
+    LDA #0
+    STA sum
+    LDX #0
+    LOOP #100           ; Hardware loop!
+loop:
+    LDA array,X
+    CLC
+    ADC sum
+    STA sum
+    INX
+    INX
+    LPEND               ; 1 cycle!
+
+Example: Memory Copy
+
+65C816:
+    LDX #$0000
+    LDY #$0000
+    LDA #$0FFF          ; 4096-1
+    MVP srcbank, dstbank ; ~1 cycle/byte
+
+8086:
+    MOV SI, src
+    MOV DI, dst
+    MOV CX, 4096
+    REP MOVSB           ; ~15 cycles/byte
+
+DEF88186:
+    LDX #$0000
+    LDY #$0000
+    LDA #$0FFF
+    MVP srcbank, dstbank ; ~1 cycle/byte (65816 speed!)
+
+================================================================================
+EVOLUTION SUMMARY
+================================================================================
+
+6502 (1975)
+│
+├─ 65C02 (1982) - CMOS version, bug fixes
+│  │
+│  └─ 65C816 (1983) - 16-bit, 24-bit addressing
+│
+└─ (DEF88186 diverges here)
+
+8080 (1974)
+│
+├─ 8086 (1978) - 16-bit, hardware multiply
+│  │
+│  ├─ 8088 (1979) - 8-bit bus
+│  └─ 80186 (1982) - Integrated peripherals
+│
+└─ (DEF88186 takes MUL/DIV/LOOP concepts)
+
+DEF88186 (2025)
+│
+├─ Base: 65C816 architecture (clean model)
+├─ Enhancements: 8086-inspired (MUL/DIV/LOOP/XCHG)
+└─ Extensions: Custom (SDB, optimized timing)
+
+Philosophy: Take the best, leave the complexity.
+
+================================================================================
+CONCLUSION
+================================================================================
+
+The DEF88186 successfully merges:
+
+From 65C816:
+✓ Elegant instruction set
+✓ Superior addressing modes
+✓ Clean 24-bit banking model
+✓ Orthogonal design
+✓ 8/16-bit flexibility
+✓ BCD mode
+✓ Block moves
+
+From 8086:
+✓ Hardware multiply (faster!)
+✓ Hardware divide (faster!)
+✓ Hardware loops (faster!)
+✓ Register exchange
+✓ Performance focus
+
+Result:
+→ Clean programming like 65816
+→ Fast execution like 8086 (and better!)
+→ Perfect for fantasy console use
+→ Best of both architectures
+
+The DEF88186 proves that hybrid designs can work - taking the proven
+elegance of the 65C816 and enhancing it with carefully-chosen 8086
+features results in a processor that's both easy to program and fast
+to execute.
+
+================================================================================
+
+For architecture details, see overview.txt
+For instruction reference, see instruction-set.txt
+For programming guide, see programming-guide.txt
+For timing details, see timing.txt

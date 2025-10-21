@@ -1,0 +1,658 @@
+DEF88186 Main CPU - Memory Map and Organization
+================================================
+
+The DEF88186 has a 24-bit address bus providing access to 16 MB of address space.
+This document details the memory organization, banking system, and typical memory
+map layout for the ZeroPoint fantasy console.
+
+================================================================================
+ADDRESS SPACE OVERVIEW
+================================================================================
+
+Total Address Space: 16 MB (16,777,216 bytes)
+Address Range: $00:0000 to $FF:FFFF
+Organization: 256 banks × 64 KB each
+
+Address Format:
+    23-16: Bank (BB)
+    15-0:  Offset (OOOO)
+
+    $BB:OOOO
+
+Example Addresses:
+    $00:0000 = First byte of bank 0
+    $00:FFFF = Last byte of bank 0
+    $01:0000 = First byte of bank 1
+    $7E:8000 = Offset $8000 in bank $7E
+    $FF:FFFF = Last byte in address space
+
+================================================================================
+BANKING SYSTEM
+================================================================================
+
+The DEF88186 uses three bank registers:
+
+1. **PB (Program Bank)** - Determines bank for instruction fetches
+2. **DB (Data Bank)** - Default bank for data access
+3. **Direct Page (D)** - Not a bank, but affects DP addressing
+
+Bank Selection by Addressing Mode:
+-----------------------------------
+Implied/Register:       No memory access
+Immediate:              Uses PB (reads from instruction stream)
+Absolute:               Uses DB
+Absolute Long:          Specified in instruction (overrides DB)
+Direct Page:            Bank 0 (always)
+Indirect:               Pointer in bank 0, data uses DB
+Indirect Long:          Pointer in bank 0, data uses pointer's bank
+Stack:                  Bank 0 (always)
+
+Setting Banks:
+--------------
+; Set Program Bank (PB)
+; PB is automatically set by:
+    JMP long            ; Sets PB from long address
+    JSR long / CALL     ; Sets PB from long address
+    RTL                 ; Restores PB from stack
+    RTI                 ; Restores PB from stack
+
+; Set Data Bank (DB)
+    LDA #$02
+    SDB                 ; DB = $02 (DEF88186 extension)
+
+    ; Or 65816 way:
+    LDA #$02
+    PHA
+    PLB                 ; DB = $02
+
+; Set Direct Page (D)
+    LDA #$2000
+    TCD                 ; D = $2000
+
+================================================================================
+TYPICAL MEMORY MAP
+================================================================================
+
+This is a suggested memory map for the ZeroPoint console. Actual implementation
+may vary.
+
+Bank $00: System RAM and Low Memory
+------------------------------------
+$00:0000-$00:00FF   Direct Page / Zero Page (recommended)
+$00:0100-$00:01FF   Stack (default, grows downward from $01FF)
+$00:0200-$00:03FF   Extended Direct Page (optional)
+$00:0400-$00:1FFF   System variables and buffers
+$00:2000-$00:7FFF   Main program code
+$00:8000-$00:BFFF   Cartridge ROM (if applicable)
+$00:C000-$00:DFFF   I/O and hardware registers
+$00:E000-$00:FFDF   Extended RAM / OS code
+$00:FFE0-$00:FFFF   Interrupt vectors
+
+Bank $01-$3F: Program ROM / RAM
+--------------------------------
+$01:0000-$3F:FFFF   Program code and read-only data
+                    ROM cartridges typically mapped here
+                    Total: ~4 MB
+
+Bank $40-$5F: Work RAM
+----------------------
+$40:0000-$5F:FFFF   General purpose RAM
+                    Game save data, buffers, dynamic allocation
+                    Total: 2 MB
+
+Bank $60-$6F: APU Communication
+--------------------------------
+$60:0000-$60:FFFF   APU memory window (64 KB)
+$61:0000-$6F:FFFF   Reserved for APU expansion
+
+Bank $70-$77: PPU Communication
+--------------------------------
+$70:0000-$70:FFFF   PPU memory window (64 KB)
+$71:0000-$71:FFFF   PPU tile data upload region
+$72:0000-$72:FFFF   PPU palette data
+$73:0000-$77:FFFF   Reserved for PPU expansion
+
+Bank $78-$7D: Memory Expansion
+-------------------------------
+$78:0000-$7D:FFFF   Reserved for future expansion
+                    6 banks = 384 KB
+
+Bank $7E-$7F: Work RAM (Shadow)
+--------------------------------
+$7E:0000-$7F:FFFF   128 KB work RAM
+                    Commonly used for:
+                    - Large buffers
+                    - Decompression workspace
+                    - Sprite tables
+                    - Map data
+
+Bank $80-$FF: ROM Mirror / Hardware
+------------------------------------
+$80:0000-$BF:FFFF   Mirror of banks $00-$3F (4 MB)
+$C0:0000-$EF:FFFF   Hardware I/O (3 MB)
+$F0:0000-$FE:FFFF   System ROM / OS (960 KB)
+$FF:0000-$FF:FFFF   Boot ROM (64 KB)
+
+================================================================================
+DETAILED REGION DESCRIPTIONS
+================================================================================
+
+Direct Page ($00:0000-$00:00FF)
+--------------------------------
+Purpose: Fast access variables (3 cycles vs 3-4 for absolute)
+Size: 256 bytes (recommended to keep D=$0000)
+
+Suggested Layout:
+$00:0000-$00:000F   Temporary variables (16 bytes)
+$00:0010-$00:001F   Function parameters (16 bytes)
+$00:0020-$00:002F   Pointers (8 × 16-bit pointers)
+$00:0030-$00:005F   Game variables (48 bytes)
+$00:0060-$00:00FF   Scratch space (160 bytes)
+
+Example Usage:
+; Fast access to common variables
+    REP #$30
+    LDA #$0000
+    TCD                 ; D = $0000
+
+    LDA $10             ; Fast access (2 bytes, 3 cycles)
+    ADC $12
+    STA $14
+
+Stack ($00:0100-$00:01FF+)
+--------------------------
+Purpose: Function calls, interrupts, temporary storage
+Default: SP = $01FF (grows downward)
+Size: Configurable (256 bytes minimum)
+
+Stack grows DOWNWARD:
+    $01FF ← Top (initial SP)
+    $01FE
+    $01FD
+    ...
+    $0100 ← Bottom
+
+Larger Stack:
+    LDA #$1FFF          ; Use more RAM for stack
+    TCS                 ; SP = $1FFF (7.5 KB stack)
+
+Stack Overflow:
+    When SP < $0100 (or your minimum), stack overflow occurs
+    May corrupt low memory
+
+Hardware I/O Region ($00:C000-$00:DFFF)
+----------------------------------------
+Purpose: Memory-mapped I/O for hardware access
+Size: 8 KB
+
+Suggested Layout:
+$00:C000-$00:C0FF   Video registers (PPU control)
+$00:C100-$00:C1FF   Audio registers (APU control)
+$00:C200-$00:C2FF   Input/Controller
+$00:C300-$00:C3FF   Timers
+$00:C400-$00:C4FF   DMA controller
+$00:C500-$00:C5FF   Serial/Communication
+$00:C600-$00:CFFF   Reserved I/O
+$00:D000-$00:DFFF   Expansion I/O
+
+Example I/O Registers:
+$00:C000    PPUCTRL     - PPU control register
+$00:C001    PPUSTATUS   - PPU status register
+$00:C002    PPUADDR     - PPU address register
+$00:C003    PPUDATA     - PPU data register
+$00:C100    APUCTRL     - APU control register
+$00:C101    APUDATA     - APU data register
+$00:C200    JOY1        - Controller 1 data
+$00:C201    JOY2        - Controller 2 data
+
+Work RAM Banks ($7E-$7F)
+------------------------
+Purpose: Large work area for game data
+Size: 128 KB (2 banks)
+
+Typical Usage:
+$7E:0000-$7E:1FFF   Sprite attribute table (8 KB)
+$7E:2000-$7E:3FFF   Tile map data (8 KB)
+$7E:4000-$7E:7FFF   Decompression buffer (16 KB)
+$7E:8000-$7E:FFFF   General work RAM (32 KB)
+$7F:0000-$7F:FFFF   Second work bank (64 KB)
+
+Access Example:
+    LDA $7E8000         ; Absolute long
+    STA $7E8002
+
+    ; Or set DB and use absolute
+    LDA #$7E
+    SDB
+    LDA $8000           ; Now accesses $7E:8000
+    STA $8002
+
+PPU Memory Window ($70:0000-$70:FFFF)
+--------------------------------------
+Purpose: Access PPU's 64 KB address space from CPU
+Size: 64 KB
+
+The CPU can read/write PPU memory through this window.
+Writes may be buffered or queued depending on PPU timing.
+
+Example:
+    ; Upload tile data to PPU
+    LDA #$70
+    SDB                 ; DB = $70
+    LDX #$0000
+    LDY #$0000
+
+upload_loop:
+    LDA tile_data,X
+    STA $0000,Y         ; Writes to PPU memory
+    INX
+    INY
+    CPY #TILE_SIZE
+    BNE upload_loop
+
+APU Memory Window ($60:0000-$60:FFFF)
+--------------------------------------
+Purpose: Access APU's 64 KB address space from CPU
+Size: 64 KB
+
+Similar to PPU window, allows CPU to load APU programs and data.
+
+Example:
+    ; Load APU program
+    LDA #$60
+    SDB
+    LDX #$0000
+
+load_apu:
+    LDA apu_code,X
+    STA $0000,X
+    INX
+    CPX #APU_CODE_SIZE
+    BNE load_apu
+
+    ; Trigger APU start
+    LDA #$01
+    STA $00:C100        ; APU control register
+
+System ROM ($FF:0000-$FF:FFFF)
+-------------------------------
+Purpose: Boot code, BIOS, system libraries
+Size: 64 KB
+Attributes: Read-only
+
+Contains:
+- Boot/reset handler
+- System initialization
+- BIOS functions
+- Interrupt handlers (default)
+- Math libraries
+- Decompression routines
+
+================================================================================
+MEMORY ACCESS PATTERNS
+================================================================================
+
+Fast Access (Direct Page):
+---------------------------
+; Keep frequently-accessed data in DP
+    LDA $10             ; 2 bytes, 3 cycles
+    ADC $12
+    STA $14
+
+Normal Access (Absolute):
+--------------------------
+; General data access
+    LDA $2000           ; 3 bytes, 3 cycles
+    ADC $2002
+    STA $2004
+
+Long Access (Cross-Bank):
+--------------------------
+; Access data in different bank
+    LDA $7E8000         ; 4 bytes, 5 cycles
+    ADC $7E8002
+    STA $7E8004
+
+Indexed Access (Arrays):
+-------------------------
+; Array access with index
+    LDX #$0010
+    LDA array,X         ; array + X
+
+Long Indexed (Large Arrays):
+-----------------------------
+; Arrays larger than 64 KB or crossing banks
+    LDX #$1000
+    LDA $7E0000,X       ; 24-bit + X
+
+Pointer Access (Indirect):
+---------------------------
+; Pointer in direct page
+    LDA [$10]           ; Load from 24-bit pointer at DP $10
+
+; Pointer + offset
+    LDY #$20
+    LDA [$10],Y         ; Load from pointer+$20
+
+================================================================================
+MEMORY MANAGEMENT
+================================================================================
+
+Bank Switching:
+---------------
+; Switch to ROM bank 5
+switch_bank:
+    LDA #$05
+    SDB                 ; DB = $05
+    ; Now absolute addressing accesses bank $05
+    LDA $8000           ; Accesses $05:8000
+    RTS
+
+DMA Transfers:
+--------------
+; Fast memory copy using hardware DMA (if available)
+dma_copy:
+    ; Configure DMA
+    LDA #$00
+    STA DMA_MODE        ; Mode 0: transfer
+    LDA #<source
+    STA DMA_SRC_L
+    LDA #>source
+    STA DMA_SRC_H
+    LDA #^source
+    STA DMA_SRC_B       ; Bank
+    LDA #<dest
+    STA DMA_DST_L
+    LDA #>dest
+    STA DMA_DST_H
+    LDA #^dest
+    STA DMA_DST_B
+    LDA #<size
+    STA DMA_SIZE_L
+    LDA #>size
+    STA DMA_SIZE_H
+
+    ; Trigger DMA
+    LDA #$01
+    STA DMA_START
+
+    ; Wait for completion
+wait_dma:
+    LDA DMA_STATUS
+    BIT #DMA_BUSY
+    BNE wait_dma
+    RTS
+
+Memory Fill:
+------------
+; Fill memory region with value
+memfill:
+    ; A = fill value
+    ; X = destination offset
+    ; Y = count (in words)
+    STA temp
+    LOOP Y
+
+fill_loop:
+    STA dest,X
+    INX
+    INX
+    LPEND
+    RTS
+
+Memory Copy:
+------------
+; Copy memory using block move
+memcpy:
+    ; Source: X (offset), DB = source bank
+    ; Dest: Y (offset), set dest bank
+    ; Size: A (count-1)
+
+    LDX #$0000
+    LDY #$0000
+    LDA #$0FFF          ; 4096 bytes
+    MVP srcbank,dstbank
+    RTS
+
+================================================================================
+MEMORY PROTECTION
+================================================================================
+
+ROM Protection:
+---------------
+ROM areas are write-protected by hardware:
+- Writes are ignored
+- No exception generated (typical)
+- May generate ABORT interrupt (implementation-specific)
+
+Testing:
+    LDA #$42
+    STA $FF:0000        ; Attempt to write to ROM
+    LDA $FF:0000        ; Read back
+    CMP #$42
+    BEQ writable        ; Branch if write succeeded
+    ; ROM is protected
+
+RAM Testing:
+------------
+; Test RAM region for errors
+ram_test:
+    REP #$30
+    LDX #$0000
+
+test_loop:
+    ; Write pattern
+    LDA #$5555
+    STA $7E:0000,X
+    LDA #$AAAA
+    STA $7E:0002,X
+
+    ; Read back and verify
+    LDA $7E:0000,X
+    CMP #$5555
+    BNE ram_error
+    LDA $7E:0002,X
+    CMP #$AAAA
+    BNE ram_error
+
+    ; Next
+    INX
+    INX
+    INX
+    INX
+    CPX #$8000          ; Test 32 KB
+    BNE test_loop
+
+    ; Success
+    LDA #$00
+    RTS
+
+ram_error:
+    ; Return error address in X
+    TXA
+    RTS
+
+================================================================================
+MEMORY MAP CONFLICTS
+================================================================================
+
+Avoiding Conflicts:
+-------------------
+1. Don't use same addresses for different purposes
+2. Reserve regions in memory map documentation
+3. Use symbolic constants, not hardcoded addresses
+4. Check for overlaps during linking
+
+Example Constants:
+; Memory map constants
+RAM_START       = $00:2000
+RAM_END         = $00:7FFF
+ROM_START       = $00:8000
+ROM_END         = $00:BFFF
+IO_START        = $00:C000
+IO_END          = $00:DFFF
+WORK_RAM_START  = $7E:0000
+WORK_RAM_END    = $7F:FFFF
+
+; Use in code
+    LDA #<RAM_START
+    STA pointer
+    LDA #>RAM_START
+    STA pointer+1
+
+================================================================================
+SPECIAL MEMORY REGIONS
+================================================================================
+
+Shadow RAM:
+-----------
+Some systems mirror RAM to multiple addresses:
+    $00:0000-$00:1FFF mirrors to $80:0000-$80:1FFF
+
+Check system documentation for mirrors.
+
+Open Bus:
+---------
+Reading unmapped addresses may return:
+- Last value on bus
+- $FF
+- $00
+- Undefined
+
+Don't rely on specific open bus behavior.
+
+Write-Only Registers:
+---------------------
+Some I/O registers are write-only:
+    STA $C000           ; Write to hardware
+    LDA $C000           ; May not return what was written!
+
+Read-Only Registers:
+--------------------
+Some I/O registers are read-only:
+    STA $C001           ; Ignored
+    LDA $C001           ; Returns hardware status
+
+================================================================================
+MEMORY DEBUGGING
+================================================================================
+
+Memory Dumps:
+-------------
+; Dump memory region to screen/log
+memdump:
+    LDX #$0000
+dump_loop:
+    LDA $7E:8000,X
+    JSR print_hex
+    INX
+    CPX #$0100          ; Dump 256 bytes
+    BNE dump_loop
+    RTS
+
+Watch Points:
+-------------
+; Set memory watch (pseudo-code for debugger)
+    SET_WATCH $7E:8000, READ    ; Break on read
+    SET_WATCH $7E:8002, WRITE   ; Break on write
+    SET_WATCH $7E:8004, ACCESS  ; Break on read or write
+
+Memory Patterns:
+----------------
+; Fill with debug pattern
+    LDA #$DE
+    LDX #$0000
+    LOOP #$8000
+fill_debug:
+    STA $7E:0000,X
+    INX
+    INX
+    LPEND
+
+; Check for corruption
+    LDX #$0000
+check_loop:
+    LDA $7E:0000,X
+    CMP #$DE
+    BNE corruption_found
+    INX
+    CPX #$8000
+    BNE check_loop
+
+================================================================================
+PERFORMANCE CONSIDERATIONS
+================================================================================
+
+Access Speed by Region:
+------------------------
+Direct Page:        Fastest (3 cycles, 2 bytes)
+Absolute:           Fast (3 cycles, 3 bytes)
+Absolute Long:      Slow (5 cycles, 4 bytes)
+Indirect:           Slower (5-7 cycles)
+
+Bank Crossing:
+--------------
+Crossing banks mid-instruction may add cycles (check implementation).
+
+Example:
+    LDA $00:FFFF,X      ; If X=$02, accesses $01:0001
+                        ; May incur bank-crossing penalty
+
+Cache Effects:
+--------------
+If the system has cache:
+- Sequential access may be faster
+- Scattered access may be slower
+- Align frequently-accessed data
+
+DMA vs CPU Copy:
+----------------
+DMA:
+- Faster for large transfers (1 cycle/byte)
+- CPU can't access bus during DMA
+- Setup overhead
+
+CPU:
+- Flexible
+- Can process during copy
+- Slower for bulk transfers
+
+Use DMA for:
+- Uploading graphics data
+- Large memory moves
+- V-Blank transfers
+
+Use CPU for:
+- Small copies
+- Complex operations during copy
+- When CPU is idle anyway
+
+================================================================================
+MEMORY MAP SUMMARY TABLE
+================================================================================
+
+Bank    Start   End     Size    Purpose
+------  ------  ------  ------  ---------------------------------
+$00     $0000   $00FF   256 B   Direct Page
+$00     $0100   $01FF   256 B   Stack (default)
+$00     $0200   $1FFF   7.5 KB  Low RAM
+$00     $2000   $7FFF   24 KB   Program RAM
+$00     $8000   $BFFF   16 KB   ROM/Cartridge
+$00     $C000   $DFFF   8 KB    I/O Registers
+$00     $E000   $FFDF   ~8 KB   High RAM/OS
+$00     $FFE0   $FFFF   32 B    Vectors
+$01-$3F ...     ...     ~4 MB   Program ROM
+$40-$5F ...     ...     2 MB    Work RAM
+$60     $0000   $FFFF   64 KB   APU Window
+$70     $0000   $FFFF   64 KB   PPU Window
+$7E-$7F ...     ...     128 KB  Work RAM
+$80-$BF ...     ...     4 MB    ROM Mirror
+$C0-$EF ...     ...     3 MB    Hardware I/O
+$FF     $0000   $FFFF   64 KB   System ROM
+
+================================================================================
+
+For bank register usage, see overview.txt
+For addressing modes, see addressing-modes.txt
+For I/O programming, see programming-guide.txt
+For system initialization, see interrupts.txt

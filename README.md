@@ -1,6 +1,6 @@
 # ZeroPoint Development Tools
 
-Development tools for the ZeroPoint fantasy console, including assemblers for both PPU (Picture Processing Unit) and APU (Audio Processing Unit).
+Development tools for the ZeroPoint fantasy console, including assemblers for the main CPU (DEF88186), PPU (Picture Processing Unit), and APU (Audio Processing Unit).
 
 **⚠️ IMPORTANT: Assembler Shorthand Users**
 
