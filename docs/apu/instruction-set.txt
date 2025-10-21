@@ -11,7 +11,7 @@ Bit:  15  14  13  12  11 | 10  9   8   7   6   5   4   3   2   1   0
 
 ## Instruction Categories
 
-1. Control Flow (NOP, JMP, JNZ)
+1. Control Flow (NOP, JMP, JNZ) - JMP/JNZ push return addresses
 2. Register Management (SRP, SDP, SDB, SBF)
 3. Logic Operations (NOR, AND)
 4. Arithmetic Operations (ADD, SUB)
@@ -47,67 +47,84 @@ Use Cases:
   - Waiting for I/O operations
 ```
 
-### 2. JMP - Unconditional Jump
+### 2. JMP - Unconditional Jump with Return Address
 ```
 Encoding: 00001 X 0 0 ZZZZZZZZ
 Syntax:   JMP X, $ZZ
 Cycles:   4
 
 Description:
-  Jump by a signed offset.
+  Pushes 16-bit return address onto stack, then jumps by a signed offset.
   X = 0: Jump forward by ZZ words
   X = 1: Jump backward by ZZ words
 
 Example:
-  JMP 0, $10    ; Jump forward 16 words
-  JMP 1, $05    ; Jump backward 5 words
+  JMP 0, $10    ; Push return addr, jump forward 16 words
+  JMP 1, $05    ; Push return addr, jump backward 5 words
+  ; ... subroutine code ...
+  RET           ; Pop return address, return to caller
 
 Notes:
   - Offset is in WORDS (2 bytes each), not bytes
-  - PC is updated before next instruction fetch
+  - Return address (16-bit) is pushed onto stack before jump
+  - Use RET to return from subroutine
+  - Requires stack pointer initialized with BSP
   - Maximum forward jump: 255 words (510 bytes)
   - Maximum backward jump: 255 words (510 bytes)
 ```
 
-### 3. JMP - Absolute Jump
+### 3. JMP - Absolute Jump with Return Address
 ```
 Encoding: 00001 0 Y 1 ZZZZZZZZ
 Syntax:   JMP $ZZ
 Cycles:   4
 
 Description:
-  Jump to an absolute address formed from RP register and ZZ.
+  Pushes 16-bit return address onto stack, then jumps to absolute address
+  formed from RP register and ZZ.
   Y = 0: Jump to $80ZZ (BIOS region)
   Y = 1: Jump to $RPZZ (RP register determines page)
 
 Example:
   SRP $D0       ; Set RP to $D0
-  JMP $50       ; Jump to $D050 (if Y=1)
+  JMP $50       ; Push return addr, jump to $D050 (if Y=1)
+  ; ... subroutine code ...
+  RET           ; Return to caller
 
 Notes:
   - High byte comes from RP register or $80 constant
   - Low byte comes from ZZ operand
+  - Return address (16-bit) is pushed onto stack before jump
+  - Use RET to return from subroutine
+  - Requires stack pointer initialized with BSP
   - Useful for banking and BIOS calls
 ```
 
-### 4. JNZ - Jump if Not Zero
+### 4. JNZ - Jump if Not Zero (with Return Address)
 ```
 Encoding: 00010 X Y 0 ZZZZZZZZ
 Syntax:   JNZ X, Y, $ZZ
 Cycles:   4
 
 Description:
-  Jump to address if register X is not zero.
+  If register X is not zero, pushes 16-bit return address onto stack
+  and jumps to address.
   Y = 0: Jump to $80ZZ if X != 0
   Y = 1: Jump to $RPZZ if X != 0
 
 Example:
-  SCR R0, 0x05  ; Set R0 = 5
-  JNZ R0, 1, $20 ; Jump to $RP20 if R0 != 0 (will jump)
+  SCR R0, 0x05     ; Set R0 = 5
+  JNZ R0, 1, $20   ; If R0 != 0: push return addr, jump to $RP20
+  ; ... subroutine code ...
+  RET              ; Return to caller
 
 Notes:
   - Only tests register, does not modify it
   - Compare with zero is implicit
+  - If jump is taken, return address is pushed onto stack
+  - If jump is not taken, stack is unchanged
+  - Use RET to return from subroutine
+  - Requires stack pointer initialized with BSP
   - For other comparisons, use BEQ/BNE/BLT/BGT
 ```
 
@@ -958,8 +975,9 @@ At 4.2 MHz with 4 CPI:
 2. **Minimize SDP/SRP changes**: Set once per memory region
 3. **Use hardware loops**: LST/LFN more efficient than manual loops
 4. **Watch BF register**: Must be set before each byte operation
-5. **Initialize stack early**: Use BSP at program start before calling functions
-6. **Leverage functions**: CFN/CCF/RET for code reuse and organization
-7. **Save/restore registers**: Use PUX/PUY and POX/POY to preserve state
-8. **Bank carefully**: RBC is expensive, organize to minimize switches
-9. **Relative jumps**: CME/CMN/CML/CMG more compact for local branches
+5. **Initialize stack early**: Use BSP at program start - required for JMP/JNZ/CCF
+6. **JMP and JNZ are calls**: Both push return addresses - use RET to return
+7. **Leverage functions**: CFN/CCF/RET for code reuse, JMP for direct calls
+8. **Save/restore registers**: Use PUX/PUY and POX/POY to preserve state
+9. **Bank carefully**: RBC is expensive, organize to minimize switches
+10. **Relative jumps**: CME/CMN/CML/CMG for branches without stack impact
