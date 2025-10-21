@@ -19,9 +19,10 @@ Bit:  15  14  13  12  11 | 10  9   8   7   6   5   4   3   2   1   0
 6. Register Operations (SCR, ZOR, ZOA)
 7. I/O Operations (IOO, IOI, IBC)
 8. Loop Control (LST, LFN, BRT, BRP)
-9. Function Control (CFS, CFE, CCF)
-10. Conditional Branches (BEQ, BNE, BLT, BGT)
-11. Conditional Jumps (CME, CMN, CML, CMG)
+9. Function Control (CFN, CCF)
+10. Stack Operations (BSP, PUX, PUY, POX, POY, RET)
+11. Conditional Branches (BEQ, BNE, BLT, BGT)
+12. Conditional Jumps (CME, CMN, CML, CMG)
 
 ## Instruction Reference
 
@@ -735,46 +736,89 @@ Notes:
   - Combine with WRH to write 16-bit values
 ```
 
-### 32. CFS - Callable Function Start
+### 32. CFN - Callable Function New
 ```
 Encoding: 10110 XXXXXXXXXXX
-Syntax:   CFS 0xXXX
+Syntax:   CFN 0xXXX
 Cycles:   4
 
 Description:
-  Marks the beginning of a callable function with ID XXX.
-  Function can be called from anywhere using CCF.
+  Defines a callable function at the address PC + XXX.
+  Stores the function address in a function table indexed by ID.
 
 Example:
-  CFS 0x001     ; Function 1 starts here
-  ; ... function body ...
-  CFE 0x001     ; Function 1 ends here
+  CFN 0x005     ; Define function at PC + 5 instructions
+  ; ... main code ...
+  CCF 0x005     ; Call the function
 
 Notes:
   - Function IDs 0-2047
-  - Must be paired with CFE of same ID
-  - No automatic stack management
+  - Function address is PC + offset at time of CFN execution
+  - Use with CCF to call functions
+  - Requires 16-bit stack pointer initialized with BSP
 ```
 
-### 33. CFE - Callable Function End
+### 33. Stack Operations (Opcode 10111)
 ```
-Encoding: 10111 XXXXXXXXXXX
-Syntax:   CFE 0xXXX
-Cycles:   4
+Encoding: 10111 D SS 0 XXXXXXX
+Opcodes:
+  10111 0 0000000000 - BSP   (Build Stack Pointer)
+  10111 1 00 0000000 - PUX   (Push X)
+  10111 1 01 0000000 - PUY   (Push Y)
+  10111 1 10 0000000 - POX   (Pop X)
+  10111 1 11 0000000 - POY   (Pop Y)
+  10111 0 001000000  - RET   (Return - Pop PC)
 
-Description:
-  Marks the end of a callable function with ID XXX.
-  Returns control to the caller.
+Cycles: 4 each
 
-Example:
-  CFS 0x042
+BSP - Build Stack Pointer
+  Sets 16-bit stack pointer from X register (LSB) and Y register (MSB).
+  Example:
+    SCR X, 0xFF
+    SCR Y, 0xFF
+    BSP           ; SP = 0xFFFF (top of memory)
+
+PUX - Push X Register
+  Pushes X register value onto stack (8-bit).
+  Stack pointer increments after push.
+
+PUY - Push Y Register
+  Pushes Y register value onto stack (8-bit).
+  Stack pointer increments after push.
+
+POX - Pop to X Register
+  Pops top value from stack into X register.
+  Stack pointer decrements before pop.
+
+POY - Pop to Y Register
+  Pops top value from stack into Y register.
+  Stack pointer decrements before pop.
+
+RET - Return from Function
+  Pops 16-bit return address from stack into PC.
+  Pops high byte first, then low byte.
+  Use at end of functions called with CCF.
+
+Example Usage:
+  ; Initialize stack
+  SCR X, 0xFF
+  SCR Y, 0xFF
+  BSP           ; SP = 0xFFFF
+
+  ; Call a function
+  CCF 0x001     ; Pushes return address, jumps to function
+
+  ; In function:
+  PUX           ; Save X
   ; ... function body ...
-  CFE 0x042     ; Return to caller
+  POX           ; Restore X
+  RET           ; Return to caller
 
 Notes:
-  - Must match corresponding CFS ID
-  - Automatically returns to caller
-  - No return value mechanism built-in
+  - Stack grows downward from high memory
+  - Stack pointer must be initialized before use
+  - CCF automatically pushes 16-bit return address
+  - RET automatically pops 16-bit return address
 ```
 
 ### 34. CCF - Call Callable Function
@@ -784,17 +828,28 @@ Syntax:   CCF 0xXXX
 Cycles:   4
 
 Description:
-  Calls the callable function with ID XXX.
-  Execution continues at the CFS with matching ID.
+  Calls the function with ID XXX defined by CFN.
+  Automatically pushes 16-bit return address onto stack.
+  Jumps to the address stored in function table for ID XXX.
 
 Example:
-  CCF 0x001     ; Call function 1
-  ; ... execution returns here after CFE 0x001 ...
+  ; Define function
+  CFN 0x001     ; Register function 1 at PC + offset
+  ; ... code ...
+
+  ; Call function
+  CCF 0x001     ; Push return address, jump to function 1
+
+  ; Function body:
+  ; ... function code ...
+  RET           ; Pop return address, return to caller
 
 Notes:
-  - Function must be defined with CFS/CFE
-  - Allows code reuse and organization
-  - Maximum 2048 functions
+  - Function must be defined with CFN before calling
+  - Return address is automatically pushed (16-bit)
+  - Use RET to return from function
+  - Maximum 2048 functions (IDs 0-2047)
+  - Requires stack pointer initialized with BSP
 ```
 
 ### 35. CME - Conditional Jump Equal
@@ -881,8 +936,8 @@ Description:
 | 10011  | BLT/BGT  | Conditional     | Branch if less/greater         |
 | 10100  | SDB      | Register Mgmt   | Set data byte register         |
 | 10101  | WRH/WRL  | Memory          | Write high/low byte immediate  |
-| 10110  | CFS      | Function        | Callable function start        |
-| 10111  | CFE      | Function        | Callable function end          |
+| 10110  | CFN      | Function        | Define callable function       |
+| 10111  | STACK    | Stack Ops       | BSP/PUX/PUY/POX/POY/RET        |
 | 11000  | CCF      | Function        | Call callable function         |
 | 11001  | CME/CMN  | Conditional     | Conditional jump equal/not eq  |
 | 11001  | CML/CMG  | Conditional     | Conditional jump less/greater  |
@@ -903,6 +958,8 @@ At 4.2 MHz with 4 CPI:
 2. **Minimize SDP/SRP changes**: Set once per memory region
 3. **Use hardware loops**: LST/LFN more efficient than manual loops
 4. **Watch BF register**: Must be set before each byte operation
-5. **Leverage functions**: CFS/CFE/CCF for code organization
-6. **Bank carefully**: RBC is expensive, organize to minimize switches
-7. **Relative jumps**: CME/CMN/CML/CMG more compact for local branches
+5. **Initialize stack early**: Use BSP at program start before calling functions
+6. **Leverage functions**: CFN/CCF/RET for code reuse and organization
+7. **Save/restore registers**: Use PUX/PUY and POX/POY to preserve state
+8. **Bank carefully**: RBC is expensive, organize to minimize switches
+9. **Relative jumps**: CME/CMN/CML/CMG more compact for local branches
