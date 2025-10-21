@@ -459,7 +459,7 @@ When writing to memory via MOVDP:
 4.1 CONTROL FLOW INSTRUCTIONS
 
 DEFCALL    - Define callable function (marker)
-ENDDEFCALL - End function definition (marker)
+MOVXP/NOP  - Move execution pointer to register / No operation
 JMZ        - Jump to (PC) if zero flag set
 JMG        - Jump to (PC) if greater flag set
 JNZ        - Jump to (PC) if zero flag clear
@@ -539,7 +539,7 @@ Example:
   DEFCALL 5    ; Mark this location as function 5
   INC R0
   INC R1
-  ENDDEFCALL
+  ; (Function body continues...)
 
 Encoding Example:
   DEFCALL 0x42
@@ -552,30 +552,43 @@ Notes:
 
 ────────────────────────────────────────────────────────────────────────────
 
-ENDDEFCALL - End Function Definition
+MOVXP / NOP - Move Execution Pointer / No Operation
 ────────────────────────────────────────────────────────────────────────────
 
 Opcode: 0x1
-Format: ENDDEFCALL
-Encoding: 0001 0000 00000000
+Format: MOVXP X   (bit 11=0)
+        NOP       (bit 11=1)
+Encoding: 0001 D 00000 XXXXXX
 
 Description:
-  Marker instruction indicating end of callable function. Should be paired
-  with DEFCALL. Currently a no-op.
+  Dual-purpose instruction controlled by bit 11 (D):
+  - D=0 (0x1000-0x103F): MOVXP X - Copies execution pointer + 2 to register X
+  - D=1 (0x1800-0x1FFF): NOP - No operation, does nothing
 
-Operands: None
+  MOVXP is useful for manual function calls and position-independent code.
+  The +2 offset captures the address of the next instruction (return address).
+
+Operands:
+  X - Destination register (bits 5-0), only used when D=0
 
 Flags: No effect
 
 Cycles: 1
 
 Example:
-  DEFCALL 5
-  INC R0
-  ENDDEFCALL   ; End of function 5
+  MOVXP R0     ; R0 = address of next instruction
+  PUSH R0      ; Save return address
+  JMR func     ; Jump to function
+
+  ; Function returns with:
+  POP PC
+  JMR
+
+  NOP          ; 0x1800 or higher - does nothing
 
 Encoding:
-  → 0x1000 → Bytes: 0x10 0x00
+  MOVXP R5  → 0x1005 → Bytes: 0x10 0x05
+  NOP       → 0x1800 → Bytes: 0x18 0x00
 
 ────────────────────────────────────────────────────────────────────────────
 
@@ -1776,7 +1789,7 @@ Example:
   ; Elsewhere:
   DEFCALL 5
   INC R0
-  ENDDEFCALL
+  ; (Function body...)
 
 Encoding Example:
   CALL 0x10
@@ -2748,7 +2761,7 @@ Memory inspection:
 Opcode  Mnemonic       Cycles  Format
 ──────────────────────────────────────────────────────────────
 0x0     DEFCALL        1       DEFCALL addr
-0x1     ENDDEFCALL     1       ENDDEFCALL
+0x1     MOVXP/NOP      1       MOVXP RX / NOP
 0x2     SWAPREG        1       SWAPREG RX, RY
 0x3     CLR            1       CLR RX
 0x4     CMP            1       CMP RX, RY
@@ -2803,7 +2816,8 @@ All registers are 16-bit, initialized to 0 on reset.
 Mnemonic    Opcode  Operand Bits         Example Assembly  Example Encoding
 ─────────────────────────────────────────────────────────────────────────────
 DEFCALL     0x0     [11:0]=addr          DEFCALL 0x42      0x0042
-ENDDEFCALL  0x1     [11:0]=0             ENDDEFCALL        0x1000
+MOVXP       0x1     [11]=0,[5:0]=X       MOVXP R5          0x1005
+NOP         0x1     [11]=1               NOP               0x1800
 SWAPREG     0x2     [11:6]=X,[5:0]=Y     SWAPREG R5, R10   0x214A
 CLR         0x3     [5:0]=X              CLR R15           0x300F
 CMP         0x4     [11:6]=X,[5:0]=Y     CMP R3, R8        0x40C8
