@@ -1,0 +1,16 @@
+# Compiled object files
+*.o
+
+# Compiled executable
+def88186cc
+
+# Generated files
+lexer.c
+parser.tab.c
+parser.tab.h
+
+# Assembly output
+*.asm
+
+# macOS
+.DS_Store
