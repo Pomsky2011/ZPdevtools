@@ -179,6 +179,7 @@ sequenceDiagram
 - Control flow: `if/else`, `while`, `for`
 - Arithmetic and logical operations
 - Following DEF88186 calling conventions
+- **Hardware loop optimization**: Automatic `LOOP`/`LPEND` instruction usage for counted loops
 
 ## Supported C Subset
 
@@ -284,8 +285,37 @@ The compiler follows DEF88186 calling conventions:
    - A: Primary accumulator, return values, expression evaluation
    - X: Second parameter, temporary storage, array indexing
    - Y: Third parameter, secondary indexing
-3. **Hardware Instructions**: Uses DEF88186 `MUL` and `DIV` for efficient arithmetic
+3. **Hardware Instructions**:
+   - Uses DEF88186 `MUL` and `DIV` for efficient arithmetic
+   - **LOOP/LPEND optimization**: Automatically detects simple counted loops and uses hardware loop instructions
 4. **Label Management**: Generates unique labels for control flow structures
+
+### Hardware Loop Optimization
+
+The compiler intelligently detects simple counted loops and uses the DEF88186's hardware `LOOP`/`LPEND` instructions:
+
+**Pattern Detected:**
+```c
+for (i = 0; i < N; i = i + 1)  // N must be constant
+```
+
+**Generated Code:**
+```asm
+LOOP #N          ; Hardware loop counter
+    ; loop body
+    i = i + 1    ; increment
+LPEND            ; Auto-decrement and branch
+```
+
+**Benefits:**
+- Faster execution (hardware-managed counter)
+- Smaller code size (no manual labels/branches)
+- More efficient than manual `CMP`/`BRA` loops
+
+**Falls back to manual loops when:**
+- Loop bound is not a constant
+- Complex condition (e.g., `i < j` where both are variables)
+- Non-unit increment (e.g., `i = i + 2`)
 
 ## Compiler Internals
 

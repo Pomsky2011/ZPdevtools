@@ -483,7 +483,92 @@ static void codegen_while(ASTNode* node) {
     emit(".L%d:\n", done_label);
 }
 
+// Helper to detect simple counted loop suitable for LOOP/LPEND
+static int is_simple_counted_loop(ASTNode* init, ASTNode* cond, ASTNode* incr,
+                                   char** loop_var, int* loop_count) {
+    if (!init || !cond || !incr) return 0;
+
+    // Check init: must be "var = 0" or similar assignment
+    if (init->type != AST_EXPR_STMT || !init->expr_stmt.expr) return 0;
+    ASTNode* init_expr = init->expr_stmt.expr;
+    if (init_expr->type != AST_ASSIGN) return 0;
+
+    // Check that init is "var = 0"
+    if (init_expr->assign.value->type != AST_NUMBER) return 0;
+    if (init_expr->assign.value->number != 0) return 0;
+
+    *loop_var = init_expr->assign.var_name;
+
+    // Check condition: must be "var < N" where N is constant
+    if (cond->type != AST_EXPR_STMT || !cond->expr_stmt.expr) return 0;
+    ASTNode* cond_expr = cond->expr_stmt.expr;
+    if (cond_expr->type != AST_BINOP) return 0;
+    if (cond_expr->binop.op != OP_LT) return 0;
+
+    // Left side must be same variable
+    if (cond_expr->binop.left->type != AST_IDENTIFIER) return 0;
+    if (strcmp(cond_expr->binop.left->identifier, *loop_var) != 0) return 0;
+
+    // Right side must be constant
+    if (cond_expr->binop.right->type != AST_NUMBER) return 0;
+    *loop_count = cond_expr->binop.right->number;
+
+    // Check increment: must be "var = var + 1" or simple increment
+    if (incr->type != AST_EXPR_STMT || !incr->expr_stmt.expr) return 0;
+    ASTNode* incr_expr = incr->expr_stmt.expr;
+    if (incr_expr->type != AST_ASSIGN) return 0;
+
+    // Must be same variable
+    if (strcmp(incr_expr->assign.var_name, *loop_var) != 0) return 0;
+
+    // Value must be "var + 1"
+    if (incr_expr->assign.value->type != AST_BINOP) return 0;
+    if (incr_expr->assign.value->binop.op != OP_ADD) return 0;
+
+    ASTNode* add_left = incr_expr->assign.value->binop.left;
+    ASTNode* add_right = incr_expr->assign.value->binop.right;
+
+    if (add_left->type != AST_IDENTIFIER) return 0;
+    if (strcmp(add_left->identifier, *loop_var) != 0) return 0;
+
+    if (add_right->type != AST_NUMBER) return 0;
+    if (add_right->number != 1) return 0;
+
+    return 1;  // This is a simple counted loop!
+}
+
 static void codegen_for(ASTNode* node) {
+    char* loop_var = NULL;
+    int loop_count = 0;
+
+    // Try to use hardware LOOP/LPEND for simple counted loops
+    if (is_simple_counted_loop(node->for_stmt.init, node->for_stmt.condition,
+                                node->for_stmt.increment, &loop_var, &loop_count)) {
+
+        emit("    ; Hardware loop: for (%s = 0; %s < %d; %s++)\n",
+             loop_var, loop_var, loop_count, loop_var);
+
+        // Initialize loop variable to 0
+        codegen_statement(node->for_stmt.init);
+
+        // Use hardware LOOP instruction
+        emit("    LOOP #$%04X\n", loop_count);
+
+        // Loop body
+        codegen_statement(node->for_stmt.body);
+
+        // Increment the loop variable
+        codegen_statement(node->for_stmt.increment);
+
+        // LPEND decrements hardware counter and loops back if non-zero
+        emit("    LPEND\n");
+
+        return;
+    }
+
+    // Fall back to manual loop for complex cases
+    emit("    ; Manual loop (complex condition)\n");
+
     int loop_label = new_label();
     int done_label = new_label();
 
