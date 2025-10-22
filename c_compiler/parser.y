@@ -95,11 +95,15 @@ type_specifier:
 
 variable_declaration:
     type_specifier IDENTIFIER ';' {
-        $$ = ast_create_var_decl($1, $2, NULL);
+        $$ = ast_create_var_decl($1, $2, NULL, 0, 0);
         free($2);
     }
     | type_specifier IDENTIFIER '=' expression ';' {
-        $$ = ast_create_var_decl($1, $2, $4);
+        $$ = ast_create_var_decl($1, $2, $4, 0, 0);
+        free($2);
+    }
+    | type_specifier IDENTIFIER '[' NUMBER ']' ';' {
+        $$ = ast_create_var_decl($1, $2, NULL, 1, $4);
         free($2);
     }
     ;
@@ -210,6 +214,10 @@ assignment_expression:
     logical_or_expression { $$ = $1; }
     | IDENTIFIER '=' assignment_expression {
         $$ = ast_create_assign($1, $3);
+        free($1);
+    }
+    | IDENTIFIER '[' expression ']' '=' assignment_expression {
+        $$ = ast_create_array_assign($1, $3, $6);
         free($1);
     }
     ;
@@ -329,6 +337,10 @@ postfix_expression:
     }
     | IDENTIFIER '(' argument_list ')' {
         $$ = ast_create_call($1, $3.items, $3.count);
+        free($1);
+    }
+    | IDENTIFIER '[' expression ']' {
+        $$ = ast_create_array_subscript($1, $3);
         free($1);
     }
     ;

@@ -8,9 +8,11 @@
 typedef struct {
     char* name;
     DataType type;
-    int offset;       // Stack offset for local variables
+    int offset;       // Stack offset for local variables (or array base)
     int is_param;     // 1 if parameter, 0 if local
     int param_index;  // Index in parameter list (for register allocation)
+    int is_array;     // 1 if this is an array
+    int array_size;   // Number of elements in array
 } Symbol;
 
 // Code generator context

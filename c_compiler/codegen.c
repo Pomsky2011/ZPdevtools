@@ -33,7 +33,7 @@ static void clear_symbols() {
 
 static int local_var_index = 0;
 
-static void add_symbol(const char* name, DataType type, int is_param, int param_index) {
+static void add_symbol(const char* name, DataType type, int is_param, int param_index, int is_array, int array_size) {
     if (ctx.symbol_count >= ctx.symbol_capacity) {
         ctx.symbol_capacity = ctx.symbol_capacity == 0 ? 16 : ctx.symbol_capacity * 2;
         ctx.symbols = realloc(ctx.symbols, ctx.symbol_capacity * sizeof(Symbol));
@@ -43,6 +43,8 @@ static void add_symbol(const char* name, DataType type, int is_param, int param_
     ctx.symbols[ctx.symbol_count].type = type;
     ctx.symbols[ctx.symbol_count].is_param = is_param;
     ctx.symbols[ctx.symbol_count].param_index = param_index;
+    ctx.symbols[ctx.symbol_count].is_array = is_array;
+    ctx.symbols[ctx.symbol_count].array_size = array_size;
 
     if (is_param) {
         // Parameters are accessed via stack relative addressing
@@ -51,8 +53,15 @@ static void add_symbol(const char* name, DataType type, int is_param, int param_
         ctx.symbols[ctx.symbol_count].offset = 0;
     } else {
         // Local variables - positive offset from SP after allocation
-        ctx.symbols[ctx.symbol_count].offset = local_var_index * 2;
-        local_var_index++;
+        if (is_array) {
+            // Arrays take multiple slots
+            ctx.symbols[ctx.symbol_count].offset = local_var_index * 2;
+            local_var_index += array_size;  // Reserve space for all elements
+        } else {
+            // Regular variables take one slot
+            ctx.symbols[ctx.symbol_count].offset = local_var_index * 2;
+            local_var_index++;
+        }
     }
 
     ctx.symbol_count++;
@@ -388,6 +397,85 @@ static void codegen_assign(ASTNode* node) {
     }
 }
 
+static void codegen_array_subscript(ASTNode* node) {
+    Symbol* sym = find_symbol(node->array_subscript.array_name);
+    if (!sym) {
+        fprintf(stderr, "Error: Undefined array '%s'\n", node->array_subscript.array_name);
+        return;
+    }
+
+    if (!sym->is_array) {
+        fprintf(stderr, "Error: '%s' is not an array\n", node->array_subscript.array_name);
+        return;
+    }
+
+    // Calculate address: base + (index * 2)
+    // First, evaluate index expression
+    codegen_expression(node->array_subscript.index);
+
+    // A now contains the index
+    // Multiply by 2 (shift left once for 16-bit elements)
+    emit("    ASL A\n");  // A = index * 2
+
+    // Add base offset
+    emit("    CLC\n");
+    emit("    ADC #$%04X\n", sym->offset);  // A = base + (index * 2)
+
+    // Now A contains the offset from SP
+    // Calculate effective address: SP + A
+    emit("    STA temp\n");      // Save offset
+    emit("    TSC\n");           // A = SP
+    emit("    CLC\n");
+    emit("    ADC temp\n");      // A = SP + offset
+    emit("    TAX\n");           // X = effective address
+
+    // Load from address in X (using absolute indexed by 0)
+    // DEF88186 doesn't have (X) addressing, so we need to use DP
+    // Set DP = X, then load from (DP)
+    emit("    TXA\n");
+    emit("    TCD\n");           // DP = address
+    emit("    LDA $00\n");       // Load from (DP)
+
+    // Restore DP to 0 (or previous value)
+    emit("    PHD\n");           // Will need to restore later - skip for now
+}
+
+static void codegen_array_assign(ASTNode* node) {
+    Symbol* sym = find_symbol(node->array_assign.array_name);
+    if (!sym) {
+        fprintf(stderr, "Error: Undefined array '%s'\n", node->array_assign.array_name);
+        return;
+    }
+
+    if (!sym->is_array) {
+        fprintf(stderr, "Error: '%s' is not an array\n", node->array_assign.array_name);
+        return;
+    }
+
+    // Generate code for value (result in A)
+    codegen_expression(node->array_assign.value);
+    emit("    PHA\n");  // Save value on stack
+
+    // Calculate address: base + (index * 2)
+    codegen_expression(node->array_assign.index);
+
+    // A now contains the index
+    emit("    ASL A\n");  // A = index * 2
+
+    // Add base offset
+    emit("    CLC\n");
+    emit("    ADC #$%04X\n", sym->offset);  // A = base + (index * 2)
+
+    // Now A contains the offset from SP
+    emit("    TAX\n");           // X = offset
+
+    // Restore value from stack
+    emit("    PLA\n");           // A = value
+
+    // Store to SP + X
+    emit("    STA 0,S,X\n");     // Store to [SP + X]
+}
+
 static void codegen_expression(ASTNode* node) {
     if (!node) return;
 
@@ -409,6 +497,12 @@ static void codegen_expression(ASTNode* node) {
             break;
         case AST_ASSIGN:
             codegen_assign(node);
+            break;
+        case AST_ARRAY_SUBSCRIPT:
+            codegen_array_subscript(node);
+            break;
+        case AST_ARRAY_ASSIGN:
+            codegen_array_assign(node);
             break;
         default:
             fprintf(stderr, "Error: Unsupported expression type\n");
@@ -608,10 +702,11 @@ static void codegen_block(ASTNode* node) {
 
 static void codegen_var_decl(ASTNode* node) {
     // Add variable to symbol table
-    add_symbol(node->var_decl.var_name, node->var_decl.var_type, 0, 0);
+    add_symbol(node->var_decl.var_name, node->var_decl.var_type, 0, 0,
+               node->var_decl.is_array, node->var_decl.array_size);
 
-    // Initialize if there's an initial value
-    if (node->var_decl.init_value) {
+    // Initialize if there's an initial value (not for arrays yet)
+    if (node->var_decl.init_value && !node->var_decl.is_array) {
         codegen_expression(node->var_decl.init_value);
 
         Symbol* sym = find_symbol(node->var_decl.var_name);
@@ -674,6 +769,10 @@ static int count_locals(ASTNode* node) {
 
     switch (node->type) {
         case AST_VAR_DECL:
+            // Arrays count as multiple locals
+            if (node->var_decl.is_array) {
+                return node->var_decl.array_size;
+            }
             return 1;
         case AST_BLOCK:
             return count_locals_block(node);
@@ -703,7 +802,7 @@ static void codegen_function(ASTNode* node) {
     // Add parameters to symbol table
     for (int i = 0; i < node->func_decl.param_count; i++) {
         ASTNode* param = node->func_decl.params[i];
-        add_symbol(param->param.param_name, param->param.param_type, 1, i);
+        add_symbol(param->param.param_name, param->param.param_type, 1, i, 0, 0);
     }
 
     // Count local variables to allocate stack space

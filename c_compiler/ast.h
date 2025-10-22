@@ -12,6 +12,8 @@ typedef enum {
     AST_UNOP,
     AST_CALL,
     AST_ASSIGN,
+    AST_ARRAY_SUBSCRIPT,
+    AST_ARRAY_ASSIGN,
 
     // Statements
     AST_EXPR_STMT,
@@ -91,6 +93,19 @@ typedef struct ASTNode {
             struct ASTNode* value;
         } assign;
 
+        // Array subscript
+        struct {
+            char* array_name;
+            struct ASTNode* index;
+        } array_subscript;
+
+        // Array assignment
+        struct {
+            char* array_name;
+            struct ASTNode* index;
+            struct ASTNode* value;
+        } array_assign;
+
         // Return statement
         struct {
             struct ASTNode* value;
@@ -128,6 +143,8 @@ typedef struct ASTNode {
             DataType var_type;
             char* var_name;
             struct ASTNode* init_value;
+            int is_array;
+            int array_size;
         } var_decl;
 
         // Function declaration
@@ -165,12 +182,14 @@ ASTNode* ast_create_binop(BinOpType op, ASTNode* left, ASTNode* right);
 ASTNode* ast_create_unop(UnOpType op, ASTNode* operand);
 ASTNode* ast_create_call(const char* name, ASTNode** args, int arg_count);
 ASTNode* ast_create_assign(const char* var_name, ASTNode* value);
+ASTNode* ast_create_array_subscript(const char* array_name, ASTNode* index);
+ASTNode* ast_create_array_assign(const char* array_name, ASTNode* index, ASTNode* value);
 ASTNode* ast_create_return(ASTNode* value);
 ASTNode* ast_create_if(ASTNode* condition, ASTNode* then_stmt, ASTNode* else_stmt);
 ASTNode* ast_create_while(ASTNode* condition, ASTNode* body);
 ASTNode* ast_create_for(ASTNode* init, ASTNode* condition, ASTNode* increment, ASTNode* body);
 ASTNode* ast_create_block(ASTNode** statements, int stmt_count);
-ASTNode* ast_create_var_decl(DataType type, const char* name, ASTNode* init_value);
+ASTNode* ast_create_var_decl(DataType type, const char* name, ASTNode* init_value, int is_array, int array_size);
 ASTNode* ast_create_func_decl(DataType return_type, const char* name, ASTNode** params, int param_count, ASTNode* body);
 ASTNode* ast_create_param(DataType type, const char* name);
 ASTNode* ast_create_program(ASTNode** decls, int decl_count);

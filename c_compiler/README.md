@@ -180,6 +180,7 @@ sequenceDiagram
 - Arithmetic and logical operations
 - Following DEF88186 calling conventions
 - **Hardware loop optimization**: Automatic `LOOP`/`LPEND` instruction usage for counted loops
+- **Array support**: Fixed-size arrays with subscript access and assignment
 
 ## Supported C Subset
 
@@ -187,7 +188,7 @@ sequenceDiagram
 - `int` - 16-bit signed integer
 - `char` - 8-bit signed character
 - `void` - no return value
-- Pointers (basic support)
+- Arrays - Fixed-size arrays (e.g., `int arr[10]`)
 
 ### Operators
 - Arithmetic: `+`, `-`, `*`, `/`, `%`
@@ -214,6 +215,24 @@ int add(int a, int b) {
 - Local variables
 - Function parameters
 - Global variables (basic support)
+- **Arrays**: Fixed-size local arrays with subscript access
+
+### Arrays
+```c
+int main() {
+    int arr[10];      // Declare array
+    arr[0] = 42;      // Write to array
+    arr[5] = arr[0];  // Read from array
+    return arr[5];
+}
+```
+
+**Array Features:**
+- Declaration: `type identifier[size];`
+- Subscript access: `arr[index]`
+- Assignment: `arr[index] = value;`
+- Stack-allocated (local arrays only)
+- Supports variable indexing
 
 ## Building
 
@@ -332,11 +351,12 @@ LPEND            ; Auto-decrement and branch
 
 - No structs/unions
 - No floating point
-- Limited pointer arithmetic
+- No pointers (coming soon)
 - No type qualifiers (const, volatile)
 - No preprocessor (use cpp separately)
-- No arrays (coming soon)
 - No inline assembly
+- No multi-dimensional arrays
+- No array initialization lists
 
 ## Performance Considerations
 
@@ -347,7 +367,10 @@ LPEND            ; Auto-decrement and branch
 
 ## Future Enhancements
 
-- [ ] Array support with pointer arithmetic
+- [x] Array support ✓ **DONE!**
+- [ ] Pointer support with pointer arithmetic
+- [ ] Multi-dimensional arrays
+- [ ] Array initialization lists
 - [ ] Struct and union support
 - [ ] Preprocessor integration
 - [ ] Optimization passes (constant folding, dead code elimination)

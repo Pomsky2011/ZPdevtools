@@ -89,11 +89,28 @@ ASTNode* ast_create_block(ASTNode** statements, int stmt_count) {
     return node;
 }
 
-ASTNode* ast_create_var_decl(DataType type, const char* name, ASTNode* init_value) {
+ASTNode* ast_create_array_subscript(const char* array_name, ASTNode* index) {
+    ASTNode* node = ast_create_node(AST_ARRAY_SUBSCRIPT);
+    node->array_subscript.array_name = strdup(array_name);
+    node->array_subscript.index = index;
+    return node;
+}
+
+ASTNode* ast_create_array_assign(const char* array_name, ASTNode* index, ASTNode* value) {
+    ASTNode* node = ast_create_node(AST_ARRAY_ASSIGN);
+    node->array_assign.array_name = strdup(array_name);
+    node->array_assign.index = index;
+    node->array_assign.value = value;
+    return node;
+}
+
+ASTNode* ast_create_var_decl(DataType type, const char* name, ASTNode* init_value, int is_array, int array_size) {
     ASTNode* node = ast_create_node(AST_VAR_DECL);
     node->var_decl.var_type = type;
     node->var_decl.var_name = strdup(name);
     node->var_decl.init_value = init_value;
+    node->var_decl.is_array = is_array;
+    node->var_decl.array_size = array_size;
     return node;
 }
 
@@ -151,6 +168,15 @@ void ast_free(ASTNode* node) {
         case AST_ASSIGN:
             free(node->assign.var_name);
             ast_free(node->assign.value);
+            break;
+        case AST_ARRAY_SUBSCRIPT:
+            free(node->array_subscript.array_name);
+            ast_free(node->array_subscript.index);
+            break;
+        case AST_ARRAY_ASSIGN:
+            free(node->array_assign.array_name);
+            ast_free(node->array_assign.index);
+            ast_free(node->array_assign.value);
             break;
         case AST_RETURN:
             ast_free(node->ret.value);
