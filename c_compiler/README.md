@@ -111,36 +111,63 @@ flowchart TB
 ## Compilation Flow
 
 ```mermaid
+%%{init: {'theme':'base', 'themeVariables': { 'primaryColor':'#4A90E2','primaryTextColor':'#fff','primaryBorderColor':'#2E5C8A','lineColor':'#F39C12','secondaryColor':'#E74C3C','tertiaryColor':'#27AE60','noteBkgColor':'#FFF9C4','noteTextColor':'#000','actorBkg':'#3498DB','actorBorder':'#2C3E50','actorTextColor':'#fff','actorLineColor':'#34495E','signalColor':'#2C3E50','signalTextColor':'#000','labelBoxBkgColor':'#ECF0F1','labelBoxBorderColor':'#95A5A6','labelTextColor':'#2C3E50','loopTextColor':'#fff','activationBorderColor':'#666','activationBkgColor':'#f4f4f4','sequenceNumberColor':'#fff'}}}%%
 sequenceDiagram
+    autonumber
+
+    box rgb(52, 152, 219) User Input
     participant User
-    participant Compiler as def88186cc
-    participant Lexer as Flex Lexer
-    participant Parser as Bison Parser
-    participant AST as AST Builder
-    participant CodeGen as Code Generator
-    participant Output as Assembly File
-    participant CPUasm as cpuasm
-    participant Binary as Binary Output
+    end
 
-    User->>Compiler: ./def88186cc program.c
-    Compiler->>Lexer: Read source code
-    Lexer->>Lexer: Tokenize (keywords, identifiers, operators)
-    Lexer->>Parser: Stream of tokens
-    Parser->>Parser: Build parse tree (grammar rules)
-    Parser->>AST: Create AST nodes
-    AST->>AST: Build symbol table
-    AST->>CodeGen: Pass AST root + symbols
-    CodeGen->>CodeGen: Allocate registers
-    CodeGen->>CodeGen: Generate DEF88186 instructions
-    CodeGen->>CodeGen: Manage stack frames
-    CodeGen->>Output: Write .asm file
-    Output-->>Compiler: program.asm created
-    Compiler-->>User: Compilation successful!
+    box rgb(231, 76, 60) Compiler Frontend
+    participant Compiler as def88186cc<br/>Driver
+    participant Lexer as Flex Lexer<br/>Tokenizer
+    participant Parser as Bison Parser<br/>Syntax Analysis
+    end
 
-    User->>CPUasm: ./cpuasm program.asm
-    CPUasm->>CPUasm: Assemble instructions
-    CPUasm->>Binary: program.bin
-    Binary-->>User: Ready to execute on DEF88186
+    box rgb(46, 204, 113) Compiler Backend
+    participant AST as AST Builder<br/>Tree Construction
+    participant CodeGen as Code Generator<br/>DEF88186 Backend
+    end
+
+    box rgb(241, 196, 15) Output & Assembly
+    participant Output as Assembly<br/>*.asm File
+    participant CPUasm as cpuasm<br/>Assembler
+    participant Binary as Binary<br/>*.bin Executable
+    end
+
+    User->>+Compiler: ./def88186cc program.c
+    Note over User,Compiler: Step 1: Start Compilation
+
+    Compiler->>+Lexer: Read C source code
+    Note over Lexer: Tokenization Phase
+    Lexer->>Lexer: Scan characters<br/>Identify tokens<br/>(keywords, identifiers, operators)
+    Lexer->>-Parser: Token stream
+
+    Note over Parser: Parsing Phase
+    Parser->>+Parser: Apply grammar rules<br/>Check syntax<br/>Build parse tree
+    Parser->>-AST: Syntax tree nodes
+
+    Note over AST: Semantic Analysis
+    AST->>AST: Build symbol table<br/>Type checking<br/>Scope resolution
+    AST->>+CodeGen: AST + Symbol Table
+
+    Note over CodeGen: Code Generation Phase
+    CodeGen->>CodeGen: Register allocation<br/>(A, X, Y registers)
+    CodeGen->>CodeGen: Generate DEF88186<br/>instructions
+    CodeGen->>CodeGen: Stack frame<br/>management
+    CodeGen->>-Output: Write assembly code
+
+    Output-->>Compiler: program.asm created ✓
+    Compiler-->>-User: ✓ Compilation successful!
+
+    rect rgb(200, 230, 200)
+    Note over User,Binary: Assembly Phase (Separate Tool)
+    User->>+CPUasm: ./cpuasm program.asm
+    CPUasm->>CPUasm: Parse assembly<br/>Encode instructions<br/>Resolve labels
+    CPUasm->>-Binary: Binary machine code
+    Binary-->>User: ✓ program.bin ready!
+    end
 ```
 
 ## Features
