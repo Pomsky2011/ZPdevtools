@@ -248,7 +248,7 @@ Assemble them with:
 
 - **ZeroPoint Main Docs:** /Users/alexanderwhite/Documents/Code/ZeroPoint/CLAUDE.md
 - **PPU Docs:** /Users/alexanderwhite/Documents/Code/ZPdevtools/docs/ppu/
-- **PPU Assembler:** /Users/alexanderwhite/Documents/Code/ZPdevtools/zpasm.c
+- **PPU Assembler:** /Users/alexanderwhite/Documents/Code/ZPdevtools/ppuasm.c
 - **APU Assembler:** /Users/alexanderwhite/Documents/Code/ZPdevtools/apuasm.c
 
 ## Version History

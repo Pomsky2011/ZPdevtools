@@ -1,6 +1,9 @@
 # ZeroPoint Development Tools
 
-Development tools for the ZeroPoint fantasy console, including assemblers for the main CPU (DEF88186), PPU (Picture Processing Unit), and APU (Audio Processing Unit).
+Complete development toolchain for the ZeroPoint fantasy console, including:
+- **C Compiler** (def88186cc) - Full C89/ANSI C compiler with preprocessor
+- **Assemblers** - ppuasm (PPU), apuasm (APU), cpuasm (DEF88186 CPU)
+- **ROM Builder** (rombuilder) - Combines CPU/PPU/APU binaries into ROM files
 
 **⚠️ IMPORTANT: Assembler Shorthand Users**
 

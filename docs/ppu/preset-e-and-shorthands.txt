@@ -8,7 +8,7 @@ OVERVIEW
 --------
 
 This document describes the Preset E instruction set (opcode 0xE) and the
-zpasm assembler shorthands. These additions significantly improve the
+ppuasm assembler shorthands. These additions significantly improve the
 usability of the PPU assembly language by:
 
 1. Providing efficient immediate value loading (Preset E)
@@ -266,7 +266,7 @@ New method (4 instructions):
 
 3. ASSEMBLER SHORTHANDS
 
-The zpasm assembler provides several shorthands that expand to sequences of
+The ppuasm assembler provides several shorthands that expand to sequences of
 Preset E instructions. These dramatically improve code readability and
 writability.
 

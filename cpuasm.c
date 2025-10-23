@@ -10,7 +10,8 @@
  * - All 256 DEF88186 instructions
  * - Automatic addressing mode detection
  * - Label support with forward references
- * - Directives: .org, .byte, .word, .long
+ * - Directives: .org, .byte, .word, .long, .include
+ * - Multi-file support via .include directive
  * - Comments (;)
  * - Constant definitions (.equ)
  * - Little-endian encoding
@@ -686,6 +687,25 @@ int assemble_line(char *line) {
 
     if (strcmp(token, ".CODE") == 0) {
         /* Code section marker - just ignore for now */
+        return 0;
+    }
+
+    if (strcmp(token, ".INCLUDE") == 0) {
+        /* Include another assembly file */
+        p = skip_whitespace(p);
+        p = parse_token(p, token);
+        if (*token) {
+            /* Remove quotes if present */
+            char filename[MAX_LINE];
+            char *src = token;
+            if (*src == '"') src++;
+            strcpy(filename, src);
+            char *end = filename + strlen(filename) - 1;
+            if (*end == '"') *end = '\0';
+
+            /* Recursively assemble the included file */
+            assemble_file(filename);
+        }
         return 0;
     }
 
