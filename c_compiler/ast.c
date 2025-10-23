@@ -318,6 +318,12 @@ ASTNode* ast_create_expr_stmt(ASTNode* expr) {
     return node;
 }
 
+ASTNode* ast_create_inline_asm(const char* asm_code) {
+    ASTNode* node = ast_create_node(AST_INLINE_ASM);
+    node->inline_asm.asm_code = strdup(asm_code);
+    return node;
+}
+
 ASTNode* ast_create_sizeof_type(DataType type, const char* type_name, int pointer_level) {
     ASTNode* node = ast_create_node(AST_SIZEOF);
     node->sizeof_expr.size_type = type;
@@ -639,6 +645,9 @@ void ast_free(ASTNode* node) {
         case AST_LABEL:
             free(node->label_stmt.label);
             ast_free(node->label_stmt.statement);
+            break;
+        case AST_INLINE_ASM:
+            free(node->inline_asm.asm_code);
             break;
         default:
             break;

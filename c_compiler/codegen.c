@@ -1579,6 +1579,10 @@ static void codegen_statement(ASTNode* node) {
         case AST_LABEL:
             codegen_label(node);
             break;
+        case AST_INLINE_ASM:
+            // Emit inline assembly directly
+            emit("    %s\n", node->inline_asm.asm_code);
+            break;
         default:
             fprintf(stderr, "Error: Unsupported statement type\n");
             break;

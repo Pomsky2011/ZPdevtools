@@ -4,7 +4,7 @@ LEX = flex
 YACC = bison
 
 TARGET = def88186cc
-SOURCES = main.c ast.c codegen.c
+SOURCES = main.c ast.c codegen.c preprocessor.c
 GENERATED = lexer.c parser.tab.c parser.tab.h
 OBJECTS = $(SOURCES:.c=.o) lexer.o parser.tab.o
 

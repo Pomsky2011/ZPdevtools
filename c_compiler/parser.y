@@ -43,7 +43,7 @@ static int enum_count_temp;
 %token INT CHAR VOID SHORT LONG SIGNED UNSIGNED STRUCT UNION ENUM TYPEDEF
 %token CONST VOLATILE STATIC EXTERN
 %token IF ELSE WHILE DO FOR RETURN BREAK CONTINUE
-%token SWITCH CASE DEFAULT GOTO SIZEOF
+%token SWITCH CASE DEFAULT GOTO SIZEOF ASM
 %token EQ NE LE GE AND OR SHL SHR ARROW INC DEC
 %token ADD_ASSIGN SUB_ASSIGN MUL_ASSIGN DIV_ASSIGN MOD_ASSIGN
 %token AND_ASSIGN OR_ASSIGN XOR_ASSIGN
@@ -397,6 +397,16 @@ statement:
     | jump_statement { $$ = $1; }
     | variable_declaration { $$ = $1; }
     | switch_statement { $$ = $1; }
+    | ASM '(' STRING_LITERAL ')' ';' {
+        // Strip quotes from string literal
+        char* asm_code = $3;
+        if (asm_code[0] == '"') {
+            asm_code++;
+            asm_code[strlen(asm_code)-1] = '\0';
+        }
+        $$ = ast_create_inline_asm(asm_code);
+        free($3);
+    }
     | IDENTIFIER ':' statement {
         $$ = ast_create_label($1, $3);
         free($1);

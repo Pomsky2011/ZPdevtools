@@ -54,6 +54,8 @@ int col_num = 1;
 "default"           { col_num += yyleng; return DEFAULT; }
 "goto"              { col_num += yyleng; return GOTO; }
 "sizeof"            { col_num += yyleng; return SIZEOF; }
+"__asm__"           { col_num += yyleng; return ASM; }
+"asm"               { col_num += yyleng; return ASM; }
 
 [a-zA-Z_][a-zA-Z0-9_]* { col_num += yyleng; yylval.string = strdup(yytext); return IDENTIFIER; }
 [0-9]+              { col_num += yyleng; yylval.number = atoi(yytext); return NUMBER; }

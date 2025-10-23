@@ -46,6 +46,7 @@ typedef enum {
     AST_CASE,             // Case label
     AST_DEFAULT,          // Default label
     AST_INIT_LIST,        // Initialization list {1, 2, 3}
+    AST_INLINE_ASM,       // Inline assembly
 
     // Declarations
     AST_VAR_DECL,
@@ -396,6 +397,11 @@ typedef struct ASTNode {
             char* label;
             struct ASTNode* statement;  // Statement after label
         } label_stmt;
+
+        // Inline assembly
+        struct {
+            char* asm_code;  // Raw assembly code as string
+        } inline_asm;
     };
 } ASTNode;
 
@@ -453,6 +459,7 @@ ASTNode* ast_create_goto(const char* label);
 ASTNode* ast_create_label(const char* label, ASTNode* statement);
 ASTNode* ast_create_program(ASTNode** decls, int decl_count);
 ASTNode* ast_create_expr_stmt(ASTNode* expr);
+ASTNode* ast_create_inline_asm(const char* asm_code);
 
 // Free AST
 void ast_free(ASTNode* node);
