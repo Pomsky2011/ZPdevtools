@@ -8,6 +8,7 @@ extern int yylex();
 extern int yyparse();
 extern FILE* yyin;
 extern int line_num;
+extern int col_num;
 
 void yyerror(const char* s);
 
@@ -28,10 +29,11 @@ ASTNode* ast_root = NULL;
     } list;
 }
 
-%token <number> NUMBER
-%token <string> IDENTIFIER
+%token <number> NUMBER CHAR_LITERAL
+%token <string> IDENTIFIER STRING_LITERAL
 %token INT CHAR VOID STRUCT
 %token IF ELSE WHILE FOR RETURN BREAK CONTINUE
+%token SWITCH CASE DEFAULT SIZEOF
 %token EQ NE LE GE AND OR SHL SHR ARROW INC DEC
 %token ADD_ASSIGN SUB_ASSIGN MUL_ASSIGN DIV_ASSIGN MOD_ASSIGN
 %token AND_ASSIGN OR_ASSIGN XOR_ASSIGN
@@ -42,17 +44,21 @@ ASTNode* ast_root = NULL;
 %type <node> shift_expression relational_expression equality_expression
 %type <node> and_expression xor_expression or_expression
 %type <node> logical_and_expression logical_or_expression
-%type <node> assignment_expression
+%type <node> conditional_expression assignment_expression
 %type <node> compound_statement statement_list
 %type <node> expression_statement selection_statement iteration_statement
-%type <node> jump_statement variable_declaration
+%type <node> jump_statement variable_declaration switch_statement
+%type <node> case_statement default_statement
 %type <dtype> type_specifier
 %type <list> declaration_list parameter_list argument_list struct_member_list
+%type <list> case_list statement_list_in_case
 %type <string> struct_or_union_specifier
 %type <number> pointer
+%type <list> array_sizes
 
 %left ','
-%right '='
+%right '=' ADD_ASSIGN SUB_ASSIGN MUL_ASSIGN DIV_ASSIGN MOD_ASSIGN AND_ASSIGN OR_ASSIGN XOR_ASSIGN
+%right '?' ':'
 %left OR
 %left AND
 %left '|'
@@ -63,8 +69,8 @@ ASTNode* ast_root = NULL;
 %left SHL SHR
 %left '+' '-'
 %left '*' '/' '%'
-%right '!' '~' UMINUS UDEREF
-%left '.' ARROW
+%right '!' '~' UMINUS UDEREF SIZEOF
+%left '.' ARROW '[' ']'
 
 %%
 
@@ -133,6 +139,19 @@ struct_member_list:
     }
     ;
 
+array_sizes:
+    '[' NUMBER ']' {
+        $$.items = malloc(sizeof(int));
+        ((int*)$$.items)[0] = $2;
+        $$.count = 1;
+    }
+    | array_sizes '[' NUMBER ']' {
+        $$.items = realloc($1.items, sizeof(int) * ($1.count + 1));
+        ((int*)$$.items)[$1.count] = $3;
+        $$.count = $1.count + 1;
+    }
+    ;
+
 variable_declaration:
     type_specifier pointer IDENTIFIER ';' {
         char* struct_name = ($1 == TYPE_STRUCT) ? yylval.string : NULL;
@@ -144,9 +163,9 @@ variable_declaration:
         $$ = ast_create_var_decl($1, $3, $5, 0, 0, $2, struct_name);
         free($3);
     }
-    | type_specifier pointer IDENTIFIER '[' NUMBER ']' ';' {
+    | type_specifier pointer IDENTIFIER array_sizes ';' {
         char* struct_name = ($1 == TYPE_STRUCT) ? yylval.string : NULL;
-        $$ = ast_create_var_decl($1, $3, NULL, 1, $5, $2, struct_name);
+        $$ = ast_create_var_decl_multidim($1, $3, NULL, (int*)$4.items, $4.count, $2, struct_name);
         free($3);
     }
     ;
@@ -186,6 +205,7 @@ statement:
     | iteration_statement { $$ = $1; }
     | jump_statement { $$ = $1; }
     | variable_declaration { $$ = $1; }
+    | switch_statement { $$ = $1; }
     ;
 
 compound_statement:
@@ -230,6 +250,60 @@ selection_statement:
     }
     ;
 
+switch_statement:
+    SWITCH '(' expression ')' '{' case_list '}' {
+        $$ = ast_create_switch($3, $6.items, $6.count);
+    }
+    ;
+
+case_list:
+    case_statement {
+        $$.items = malloc(sizeof(ASTNode*));
+        $$.items[0] = $1;
+        $$.count = 1;
+    }
+    | default_statement {
+        $$.items = malloc(sizeof(ASTNode*));
+        $$.items[0] = $1;
+        $$.count = 1;
+    }
+    | case_list case_statement {
+        $$.items = realloc($1.items, sizeof(ASTNode*) * ($1.count + 1));
+        $$.items[$1.count] = $2;
+        $$.count = $1.count + 1;
+    }
+    | case_list default_statement {
+        $$.items = realloc($1.items, sizeof(ASTNode*) * ($1.count + 1));
+        $$.items[$1.count] = $2;
+        $$.count = $1.count + 1;
+    }
+    ;
+
+case_statement:
+    CASE NUMBER ':' statement_list_in_case {
+        $$ = ast_create_case($2, $4.items, $4.count);
+    }
+    ;
+
+default_statement:
+    DEFAULT ':' statement_list_in_case {
+        $$ = ast_create_default($3.items, $3.count);
+    }
+    ;
+
+statement_list_in_case:
+    statement {
+        $$.items = malloc(sizeof(ASTNode*));
+        $$.items[0] = $1;
+        $$.count = 1;
+    }
+    | statement_list_in_case statement {
+        $$.items = realloc($1.items, sizeof(ASTNode*) * ($1.count + 1));
+        $$.items[$1.count] = $2;
+        $$.count = $1.count + 1;
+    }
+    ;
+
 iteration_statement:
     WHILE '(' expression ')' statement {
         $$ = ast_create_while($3, $5);
@@ -262,7 +336,7 @@ expression:
     ;
 
 assignment_expression:
-    logical_or_expression { $$ = $1; }
+    conditional_expression { $$ = $1; }
     | IDENTIFIER '=' assignment_expression {
         $$ = ast_create_assign($1, $3);
         free($1);
@@ -330,6 +404,13 @@ assignment_expression:
         $$ = ast_create_ptr_member_assign(pointer, $3, $5);
         free($1);
         free($3);
+    }
+    ;
+
+conditional_expression:
+    logical_or_expression { $$ = $1; }
+    | logical_or_expression '?' expression ':' conditional_expression {
+        $$ = ast_create_ternary($1, $3, $5);
     }
     ;
 
@@ -452,6 +533,13 @@ unary_expression:
         $$ = ast_create_pre_dec($2);
         free($2);
     }
+    | SIZEOF '(' type_specifier pointer ')' {
+        char* type_name = ($3 == TYPE_STRUCT) ? yylval.string : NULL;
+        $$ = ast_create_sizeof_type($3, type_name, $4);
+    }
+    | SIZEOF '(' unary_expression ')' {
+        $$ = ast_create_sizeof_expr($3);
+    }
     ;
 
 postfix_expression:
@@ -507,6 +595,13 @@ primary_expression:
     | NUMBER {
         $$ = ast_create_number($1);
     }
+    | CHAR_LITERAL {
+        $$ = ast_create_number($1);
+    }
+    | STRING_LITERAL {
+        $$ = ast_create_string_literal($1);
+        free($1);
+    }
     | '(' expression ')' {
         $$ = $2;
     }
@@ -515,5 +610,5 @@ primary_expression:
 %%
 
 void yyerror(const char* s) {
-    fprintf(stderr, "Parse error at line %d: %s\n", line_num, s);
+    fprintf(stderr, "Parse error at line %d, column %d: %s\n", line_num, col_num, s);
 }

@@ -22,6 +22,13 @@ ASTNode* ast_create_identifier(const char* name) {
     return node;
 }
 
+ASTNode* ast_create_string_literal(const char* value) {
+    ASTNode* node = ast_create_node(AST_STRING_LITERAL);
+    node->string_literal = strdup(value);
+    node->data_type = TYPE_POINTER;  // Strings are char*
+    return node;
+}
+
 ASTNode* ast_create_binop(BinOpType op, ASTNode* left, ASTNode* right) {
     ASTNode* node = ast_create_node(AST_BINOP);
     node->binop.op = op;
@@ -196,7 +203,28 @@ ASTNode* ast_create_var_decl(DataType type, const char* name, ASTNode* init_valu
     node->var_decl.var_name = strdup(name);
     node->var_decl.init_value = init_value;
     node->var_decl.is_array = is_array;
-    node->var_decl.array_size = array_size;
+    if (is_array) {
+        node->var_decl.array_sizes = malloc(sizeof(int));
+        node->var_decl.array_sizes[0] = array_size;
+        node->var_decl.array_dimensions = 1;
+    } else {
+        node->var_decl.array_sizes = NULL;
+        node->var_decl.array_dimensions = 0;
+    }
+    node->var_decl.pointer_level = pointer_level;
+    node->var_decl.struct_name = struct_name ? strdup(struct_name) : NULL;
+    return node;
+}
+
+ASTNode* ast_create_var_decl_multidim(DataType type, const char* name, ASTNode* init_value, int* array_sizes, int dimensions, int pointer_level, const char* struct_name) {
+    ASTNode* node = ast_create_node(AST_VAR_DECL);
+    node->var_decl.var_type = type;
+    node->var_decl.var_name = strdup(name);
+    node->var_decl.init_value = init_value;
+    node->var_decl.is_array = (dimensions > 0);
+    node->var_decl.array_sizes = malloc(sizeof(int) * dimensions);
+    memcpy(node->var_decl.array_sizes, array_sizes, sizeof(int) * dimensions);
+    node->var_decl.array_dimensions = dimensions;
     node->var_decl.pointer_level = pointer_level;
     node->var_decl.struct_name = struct_name ? strdup(struct_name) : NULL;
     return node;
@@ -231,6 +259,61 @@ ASTNode* ast_create_program(ASTNode** decls, int decl_count) {
 ASTNode* ast_create_expr_stmt(ASTNode* expr) {
     ASTNode* node = ast_create_node(AST_EXPR_STMT);
     node->expr_stmt.expr = expr;
+    return node;
+}
+
+ASTNode* ast_create_sizeof_type(DataType type, const char* type_name, int pointer_level) {
+    ASTNode* node = ast_create_node(AST_SIZEOF);
+    node->sizeof_expr.size_type = type;
+    node->sizeof_expr.type_name = type_name ? strdup(type_name) : NULL;
+    node->sizeof_expr.expr = NULL;
+    node->sizeof_expr.pointer_level = pointer_level;
+    node->sizeof_expr.is_array = 0;
+    node->sizeof_expr.array_size = 0;
+    node->data_type = TYPE_INT;  // sizeof returns int
+    return node;
+}
+
+ASTNode* ast_create_sizeof_expr(ASTNode* expr) {
+    ASTNode* node = ast_create_node(AST_SIZEOF);
+    node->sizeof_expr.size_type = TYPE_VOID;
+    node->sizeof_expr.type_name = NULL;
+    node->sizeof_expr.expr = expr;
+    node->sizeof_expr.pointer_level = 0;
+    node->sizeof_expr.is_array = 0;
+    node->sizeof_expr.array_size = 0;
+    node->data_type = TYPE_INT;  // sizeof returns int
+    return node;
+}
+
+ASTNode* ast_create_ternary(ASTNode* condition, ASTNode* then_expr, ASTNode* else_expr) {
+    ASTNode* node = ast_create_node(AST_TERNARY);
+    node->ternary.condition = condition;
+    node->ternary.then_expr = then_expr;
+    node->ternary.else_expr = else_expr;
+    return node;
+}
+
+ASTNode* ast_create_switch(ASTNode* expr, ASTNode** cases, int case_count) {
+    ASTNode* node = ast_create_node(AST_SWITCH);
+    node->switch_stmt.expr = expr;
+    node->switch_stmt.cases = cases;
+    node->switch_stmt.case_count = case_count;
+    return node;
+}
+
+ASTNode* ast_create_case(int value, ASTNode** statements, int stmt_count) {
+    ASTNode* node = ast_create_node(AST_CASE);
+    node->case_stmt.case_value = value;
+    node->case_stmt.statements = statements;
+    node->case_stmt.stmt_count = stmt_count;
+    return node;
+}
+
+ASTNode* ast_create_default(ASTNode** statements, int stmt_count) {
+    ASTNode* node = ast_create_node(AST_DEFAULT);
+    node->default_stmt.statements = statements;
+    node->default_stmt.stmt_count = stmt_count;
     return node;
 }
 
@@ -295,6 +378,7 @@ void ast_free(ASTNode* node) {
         case AST_VAR_DECL:
             free(node->var_decl.var_name);
             if (node->var_decl.struct_name) free(node->var_decl.struct_name);
+            if (node->var_decl.array_sizes) free(node->var_decl.array_sizes);
             ast_free(node->var_decl.init_value);
             break;
         case AST_FUNC_DECL:
@@ -342,6 +426,37 @@ void ast_free(ASTNode* node) {
             break;
         case AST_EXPR_STMT:
             ast_free(node->expr_stmt.expr);
+            break;
+        case AST_STRING_LITERAL:
+            free(node->string_literal);
+            break;
+        case AST_SIZEOF:
+            if (node->sizeof_expr.type_name) free(node->sizeof_expr.type_name);
+            if (node->sizeof_expr.expr) ast_free(node->sizeof_expr.expr);
+            break;
+        case AST_TERNARY:
+            ast_free(node->ternary.condition);
+            ast_free(node->ternary.then_expr);
+            ast_free(node->ternary.else_expr);
+            break;
+        case AST_SWITCH:
+            ast_free(node->switch_stmt.expr);
+            for (int i = 0; i < node->switch_stmt.case_count; i++) {
+                ast_free(node->switch_stmt.cases[i]);
+            }
+            free(node->switch_stmt.cases);
+            break;
+        case AST_CASE:
+            for (int i = 0; i < node->case_stmt.stmt_count; i++) {
+                ast_free(node->case_stmt.statements[i]);
+            }
+            free(node->case_stmt.statements);
+            break;
+        case AST_DEFAULT:
+            for (int i = 0; i < node->default_stmt.stmt_count; i++) {
+                ast_free(node->default_stmt.statements[i]);
+            }
+            free(node->default_stmt.statements);
             break;
         default:
             break;

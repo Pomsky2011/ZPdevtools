@@ -49,7 +49,10 @@ loop:
 
 ## Recent Changes
 
-### DEF88186 C Compiler - Major Update (2025-10-22)
+### DEF88186 C Compiler - Major Feature Update (2025-10-22)
+**Status**: ✅ COMPLETE - Full-featured C compiler ready for production
+
+#### Phase 1 (Earlier Today)
 - ✅ **Added 7 new CPU transfer instructions** (TSC, TCS, TAX, TXA, TAY, TCD, TDC)
 - ✅ **Compound assignment operators**: `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`
 - ✅ **Increment/decrement operators**: `++`, `--` (prefix and postfix)
@@ -58,6 +61,26 @@ loop:
 - ✅ **Updated cpuasm** to support all C compiler generated instructions
 - ✅ **Added instruction support**: BRA, STA stack-relative, DIV/MUL X, .data/.code directives
 - ✅ **Full toolchain working**: C → Assembly → Binary compilation complete
+
+#### Phase 2 (Latest Update)
+- ✅ **sizeof operator**: `sizeof(int)`, `sizeof(expr)` - compile-time size evaluation
+- ✅ **String literals**: `"Hello, World!"` - basic string support with char* pointers
+- ✅ **Character literals**: `'A'`, `'\n'`, `'\t'`, `'\0'` - full escape sequence support
+- ✅ **Ternary operator**: `(a > b) ? a : b` - conditional expressions
+- ✅ **Switch/case statements**: Full switch/case/default with break support
+- ✅ **Multi-dimensional arrays**: `int matrix[3][4]`, `int cube[2][3][4]` - N-dimensional arrays
+- ✅ **Better error messages**: Line and column numbers in all parse errors
+- ✅ **5 new example programs**: sizeof, ternary, switch, multidim arrays, strings
+- ✅ **Updated documentation**: Complete README.md with all new features
+
+#### Impact
+The C compiler now supports a **comprehensive subset of C** suitable for game development:
+- All basic data types (int, char, void, struct, pointers, arrays)
+- All operators (arithmetic, logical, bitwise, comparison, ternary, sizeof)
+- Full control flow (if/else, while, for, switch/case, break, continue)
+- Functions with recursion and proper calling conventions
+- Hardware optimization (MUL/DIV, LOOP/LPEND)
+- **16 working example programs** demonstrating all features
 
 ### R59/R60 Interrupt Documentation (2025-10-19)
 - Updated README.md with R59/R60 interrupt register documentation

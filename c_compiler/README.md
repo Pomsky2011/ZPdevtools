@@ -191,7 +191,7 @@ sequenceDiagram
 - `char` - 8-bit signed character
 - `void` - no return value
 - `struct` - Structured data types with member access
-- Arrays - Fixed-size arrays (e.g., `int arr[10]`)
+- **Arrays** - Fixed-size single and multi-dimensional arrays (e.g., `int arr[10]`, `int matrix[3][4]`)
 - Pointers - Single and multi-level pointers with dereference
 
 ### Operators
@@ -204,13 +204,16 @@ sequenceDiagram
 - Increment/Decrement: `++`, `--` (prefix and postfix)
 - Pointer: `&` (address-of), `*` (dereference)
 - Member Access: `.` (struct), `->` (pointer to struct)
+- **Ternary**: `?:` (conditional operator)
+- **sizeof**: `sizeof(type)` or `sizeof(expr)` - Returns size in bytes
 
 ### Control Flow
 - `if (expr) stmt`
 - `if (expr) stmt else stmt`
 - `while (expr) stmt`
 - `for (init; cond; incr) stmt`
-- `break` - Exit loop early
+- **`switch (expr) { case val: ... break; default: ... }`** - Multi-way branch
+- `break` - Exit loop or switch early
 - `continue` - Skip to next iteration
 - `return expr;`
 
@@ -230,19 +233,26 @@ int add(int a, int b) {
 ### Arrays
 ```c
 int main() {
-    int arr[10];      // Declare array
+    int arr[10];      // Declare 1D array
     arr[0] = 42;      // Write to array
     arr[5] = arr[0];  // Read from array
+
+    // Multi-dimensional arrays
+    int matrix[3][4];  // 2D array: 3 rows, 4 columns
+    int cube[2][3][4]; // 3D array: 2x3x4 = 24 elements
+
     return arr[5];
 }
 ```
 
 **Array Features:**
-- Declaration: `type identifier[size];`
+- **Declaration**: `type identifier[size];` or `type identifier[size1][size2]...;`
 - Subscript access: `arr[index]`
 - Assignment: `arr[index] = value;`
+- **Multi-dimensional**: Up to N dimensions with proper memory allocation
 - Stack-allocated (local arrays only)
 - Supports variable indexing
+- **Note**: Multi-dimensional subscripting (`matrix[i][j]`) requires pointer arithmetic workaround
 
 ### Pointers
 ```c
@@ -287,6 +297,25 @@ int main() {
 - Member assignment: `p.x = value`
 - Nested member access supported
 - Stack-allocated structs
+
+### Literals
+```c
+int main() {
+    int num = 42;           // Decimal literal
+    int hex = 0xFF;         // Hexadecimal literal
+    char c = 'A';           // Character literal
+    char* str = "Hello";    // String literal (basic support)
+    char newline = '\n';    // Escape sequence
+    return 0;
+}
+```
+
+**Literal Features:**
+- **Decimal**: `42`, `255`
+- **Hexadecimal**: `0xFF`, `0x100`
+- **Character literals**: `'A'`, `'x'`, `'0'`
+- **Escape sequences**: `'\n'`, `'\t'`, `'\0'`
+- **String literals**: `"Hello, World!"` (stored as char* pointers)
 
 ## Building
 
@@ -338,6 +367,55 @@ int sum_to_n(int n) {
         i = i + 1;
     }
     return sum;
+}
+```
+
+**test_sizeof.c** - sizeof operator:
+```c
+int main() {
+    int size_int = sizeof(int);       // 2 bytes
+    int size_char = sizeof(char);     // 1 byte
+    int size_ptr = sizeof(int*);      // 2 bytes (pointer)
+    return size_int + size_char + size_ptr;
+}
+```
+
+**test_ternary.c** - Ternary operator:
+```c
+int max(int a, int b) {
+    return (a > b) ? a : b;
+}
+
+int abs_value(int x) {
+    return (x < 0) ? -x : x;
+}
+```
+
+**test_switch.c** - Switch/case statements:
+```c
+int classify(int n) {
+    int result;
+    switch (n) {
+        case 0:
+            result = 100;
+            break;
+        case 1:
+            result = 101;
+            break;
+        default:
+            result = 999;
+            break;
+    }
+    return result;
+}
+```
+
+**test_multidim_arrays.c** - Multi-dimensional arrays:
+```c
+int main() {
+    int matrix[3][4];  // 2D array: 12 elements
+    int cube[2][3][4]; // 3D array: 24 elements
+    return 0;
 }
 ```
 
@@ -407,12 +485,13 @@ LPEND            ; Auto-decrement and branch
 - No type qualifiers (const, volatile, static)
 - No preprocessor (use cpp separately)
 - No inline assembly
-- No multi-dimensional arrays
 - No array initialization lists
 - No unions
 - No function pointers
 - No variadic functions (printf-style)
 - Pointer arithmetic is basic (no complex expressions)
+- Multi-dimensional array access (`matrix[i][j]`) requires workaround with pointer arithmetic
+- String literals have basic support (not full string table implementation)
 
 ## Performance Considerations
 
@@ -421,6 +500,8 @@ LPEND            ; Auto-decrement and branch
 - **Register Parameters**: First 3 parameters avoid stack overhead
 - **Direct Page Access**: Local variables use fast DP addressing when possible
 - **Compound Assignments**: Efficiently compiled using read-modify-write patterns
+- **sizeof**: Compile-time constant evaluation (zero runtime cost)
+- **Switch/case**: Linear comparison chain (O(n) - jump table optimization possible)
 - **Tail Call Optimization**: Not yet implemented
 
 ## Future Enhancements
@@ -431,19 +512,24 @@ LPEND            ; Auto-decrement and branch
 - [x] Increment/decrement operators (++/--) ✓ **DONE!**
 - [x] Compound assignment operators (+=, -=, etc.) ✓ **DONE!**
 - [x] Break and continue statements ✓ **DONE!**
-- [ ] Multi-dimensional arrays
+- [x] **Multi-dimensional arrays** ✓ **DONE!**
+- [x] **Switch/case statements** ✓ **DONE!**
+- [x] **Ternary operator (?:)** ✓ **DONE!**
+- [x] **sizeof operator** ✓ **DONE!**
+- [x] **String literals** ✓ **DONE!**
+- [x] **Character literals with escape sequences** ✓ **DONE!**
+- [x] **Better error messages with line/column numbers** ✓ **DONE!**
+- [ ] Multi-dimensional array subscripting (matrix[i][j] access)
 - [ ] Array initialization lists
 - [ ] Union support
 - [ ] Function pointers
-- [ ] Switch/case statements
-- [ ] Ternary operator (?:)
 - [ ] Comma operator
-- [ ] sizeof operator
 - [ ] Preprocessor integration
 - [ ] Optimization passes (constant folding, dead code elimination)
 - [ ] Inline assembly support
-- [ ] Better error messages with line/column numbers
 - [ ] Optimization flags (-O1, -O2, -O3)
+- [ ] Switch jump table optimization
+- [ ] Full string table implementation with .rodata section
 
 ## Contributing
 

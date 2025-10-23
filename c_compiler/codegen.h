@@ -29,7 +29,8 @@ typedef struct {
     int is_param;     // 1 if parameter, 0 if local
     int param_index;  // Index in parameter list (for register allocation)
     int is_array;     // 1 if this is an array
-    int array_size;   // Number of elements in array
+    int* array_sizes;  // Array of sizes for each dimension
+    int array_dimensions; // Number of dimensions (0 = not array, 1 = arr[N], 2 = arr[N][M])
     int pointer_level; // 0 = not a pointer, 1 = *, 2 = **, etc.
     char* struct_name; // For struct types
 } Symbol;
@@ -48,6 +49,7 @@ typedef struct {
     int symbol_capacity;
     int stack_offset;
     int label_counter;
+    int string_counter;   // Counter for string literals
     char* current_function;
     StructDef* structs;
     int struct_count;

@@ -65,6 +65,7 @@ static void init_context(FILE* output) {
     ctx.symbol_capacity = 0;
     ctx.stack_offset = 0;
     ctx.label_counter = 0;
+    ctx.string_counter = 0;
     ctx.current_function = NULL;
     ctx.structs = NULL;
     ctx.struct_count = 0;
@@ -77,6 +78,12 @@ static void init_context(FILE* output) {
 static void clear_symbols() {
     for (int i = 0; i < ctx.symbol_count; i++) {
         free(ctx.symbols[i].name);
+        if (ctx.symbols[i].array_sizes) {
+            free(ctx.symbols[i].array_sizes);
+        }
+        if (ctx.symbols[i].struct_name) {
+            free(ctx.symbols[i].struct_name);
+        }
     }
     free(ctx.symbols);
     ctx.symbols = NULL;
@@ -121,7 +128,14 @@ static void add_symbol(const char* name, DataType type, int is_param, int param_
     ctx.symbols[ctx.symbol_count].is_param = is_param;
     ctx.symbols[ctx.symbol_count].param_index = param_index;
     ctx.symbols[ctx.symbol_count].is_array = is_array;
-    ctx.symbols[ctx.symbol_count].array_size = array_size;
+    if (is_array) {
+        ctx.symbols[ctx.symbol_count].array_sizes = malloc(sizeof(int));
+        ctx.symbols[ctx.symbol_count].array_sizes[0] = array_size;
+        ctx.symbols[ctx.symbol_count].array_dimensions = 1;
+    } else {
+        ctx.symbols[ctx.symbol_count].array_sizes = NULL;
+        ctx.symbols[ctx.symbol_count].array_dimensions = 0;
+    }
     ctx.symbols[ctx.symbol_count].pointer_level = pointer_level;
     ctx.symbols[ctx.symbol_count].struct_name = struct_name ? strdup(struct_name) : NULL;
 
@@ -141,6 +155,50 @@ static void add_symbol(const char* name, DataType type, int is_param, int param_
             // Regular variables take one slot
             ctx.symbols[ctx.symbol_count].offset = local_var_index * 2;
             local_var_index += (elem_size + 1) / 2;  // Round up to word boundary
+        }
+    }
+
+    ctx.symbol_count++;
+}
+
+// Add symbol with multi-dimensional array support
+static void add_symbol_multidim(const char* name, DataType type, int is_param, int param_index, int* array_sizes, int dimensions, int pointer_level, const char* struct_name) {
+    if (ctx.symbol_count >= ctx.symbol_capacity) {
+        ctx.symbol_capacity = ctx.symbol_capacity == 0 ? 16 : ctx.symbol_capacity * 2;
+        ctx.symbols = realloc(ctx.symbols, ctx.symbol_capacity * sizeof(Symbol));
+    }
+
+    ctx.symbols[ctx.symbol_count].name = strdup(name);
+    ctx.symbols[ctx.symbol_count].type = type;
+    ctx.symbols[ctx.symbol_count].is_param = is_param;
+    ctx.symbols[ctx.symbol_count].param_index = param_index;
+    ctx.symbols[ctx.symbol_count].is_array = (dimensions > 0);
+    if (dimensions > 0) {
+        ctx.symbols[ctx.symbol_count].array_sizes = malloc(sizeof(int) * dimensions);
+        memcpy(ctx.symbols[ctx.symbol_count].array_sizes, array_sizes, sizeof(int) * dimensions);
+        ctx.symbols[ctx.symbol_count].array_dimensions = dimensions;
+    } else {
+        ctx.symbols[ctx.symbol_count].array_sizes = NULL;
+        ctx.symbols[ctx.symbol_count].array_dimensions = 0;
+    }
+    ctx.symbols[ctx.symbol_count].pointer_level = pointer_level;
+    ctx.symbols[ctx.symbol_count].struct_name = struct_name ? strdup(struct_name) : NULL;
+
+    if (is_param) {
+        ctx.symbols[ctx.symbol_count].offset = 0;
+    } else {
+        int elem_size = get_type_size(type, pointer_level, struct_name);
+        if (dimensions > 0) {
+            // Calculate total array size
+            int total_elements = 1;
+            for (int i = 0; i < dimensions; i++) {
+                total_elements *= array_sizes[i];
+            }
+            ctx.symbols[ctx.symbol_count].offset = local_var_index * 2;
+            local_var_index += total_elements * (elem_size / 2);
+        } else {
+            ctx.symbols[ctx.symbol_count].offset = local_var_index * 2;
+            local_var_index += (elem_size + 1) / 2;
         }
     }
 
@@ -202,6 +260,60 @@ static void codegen_identifier(ASTNode* node) {
         // Local variable
         emit("    LDA %d,S\n", sym->offset);
     }
+}
+
+static void codegen_string_literal(ASTNode* node) {
+    // Generate unique label for this string
+    int str_id = ctx.string_counter++;
+
+    // Load address of string into A
+    emit("    LDA #.STR%d\n", str_id);
+
+    // Store string in data section (will be emitted at end)
+    // For now, we'll emit it inline with a comment
+    emit("    ; String literal: %s\n", node->string_literal);
+
+    // Note: Full implementation would collect strings and emit them in .rodata section
+}
+
+static void codegen_sizeof(ASTNode* node) {
+    int size = 0;
+
+    if (node->sizeof_expr.expr) {
+        // sizeof(expression) - determine type of expression
+        // For now, simplified: assume int
+        size = 2;  // int is 2 bytes
+    } else {
+        // sizeof(type)
+        size = get_type_size(node->sizeof_expr.size_type,
+                            node->sizeof_expr.pointer_level,
+                            node->sizeof_expr.type_name);
+    }
+
+    // Load size as immediate
+    emit("    LDA #$%04X\n", size);
+}
+
+static void codegen_ternary(ASTNode* node) {
+    int else_label = new_label();
+    int done_label = new_label();
+
+    // Evaluate condition
+    codegen_expression(node->ternary.condition);
+
+    // Branch if false
+    emit("    CMP #$0000\n");
+    emit("    BEQ .L%d\n", else_label);
+
+    // True branch
+    codegen_expression(node->ternary.then_expr);
+    emit("    BRA .L%d\n", done_label);
+
+    // False branch
+    emit(".L%d:\n", else_label);
+    codegen_expression(node->ternary.else_expr);
+
+    emit(".L%d:\n", done_label);
 }
 
 static void codegen_binop(ASTNode* node) {
@@ -895,6 +1007,15 @@ static void codegen_expression(ASTNode* node) {
         case AST_IDENTIFIER:
             codegen_identifier(node);
             break;
+        case AST_STRING_LITERAL:
+            codegen_string_literal(node);
+            break;
+        case AST_SIZEOF:
+            codegen_sizeof(node);
+            break;
+        case AST_TERNARY:
+            codegen_ternary(node);
+            break;
         case AST_BINOP:
             codegen_binop(node);
             break;
@@ -938,7 +1059,7 @@ static void codegen_expression(ASTNode* node) {
             codegen_inc_dec(node);
             break;
         default:
-            fprintf(stderr, "Error: Unsupported expression type\n");
+            fprintf(stderr, "Error: Unsupported expression type %d\n", node->type);
             break;
     }
 }
@@ -1164,9 +1285,19 @@ static void codegen_block(ASTNode* node) {
 
 static void codegen_var_decl(ASTNode* node) {
     // Add variable to symbol table
-    add_symbol(node->var_decl.var_name, node->var_decl.var_type, 0, 0,
-               node->var_decl.is_array, node->var_decl.array_size,
-               node->var_decl.pointer_level, node->var_decl.struct_name);
+    if (node->var_decl.array_dimensions > 0) {
+        // Multi-dimensional array
+        add_symbol_multidim(node->var_decl.var_name, node->var_decl.var_type, 0, 0,
+                           node->var_decl.array_sizes, node->var_decl.array_dimensions,
+                           node->var_decl.pointer_level, node->var_decl.struct_name);
+    } else {
+        // Regular variable or 1D array (backwards compatibility)
+        int array_size = (node->var_decl.array_sizes && node->var_decl.is_array) ?
+                         node->var_decl.array_sizes[0] : 0;
+        add_symbol(node->var_decl.var_name, node->var_decl.var_type, 0, 0,
+                   node->var_decl.is_array, array_size,
+                   node->var_decl.pointer_level, node->var_decl.struct_name);
+    }
 
     // Initialize if there's an initial value (not for arrays yet)
     if (node->var_decl.init_value && !node->var_decl.is_array) {
@@ -1177,6 +1308,69 @@ static void codegen_var_decl(ASTNode* node) {
             emit("    STA %d,S\n", sym->offset);
         }
     }
+}
+
+static void codegen_switch(ASTNode* node) {
+    int end_label = new_label();
+
+    // Push loop context for break statements
+    push_loop(end_label, end_label);
+
+    // Evaluate switch expression once and save to stack
+    codegen_expression(node->switch_stmt.expr);
+    emit("    PHA\n");  // Save switch value
+
+    // Generate labels for each case
+    int* case_labels = malloc(sizeof(int) * node->switch_stmt.case_count);
+    int default_label = -1;
+
+    for (int i = 0; i < node->switch_stmt.case_count; i++) {
+        case_labels[i] = new_label();
+        if (node->switch_stmt.cases[i]->type == AST_DEFAULT) {
+            default_label = case_labels[i];
+        }
+    }
+
+    // Generate comparisons for each case
+    for (int i = 0; i < node->switch_stmt.case_count; i++) {
+        ASTNode* case_node = node->switch_stmt.cases[i];
+        if (case_node->type == AST_CASE) {
+            emit("    LDA 1,S\n");  // Load switch value from stack
+            emit("    CMP #$%04X\n", case_node->case_stmt.case_value);
+            emit("    BEQ .L%d\n", case_labels[i]);
+        }
+    }
+
+    // If no case matched, jump to default or end
+    if (default_label >= 0) {
+        emit("    BRA .L%d\n", default_label);
+    } else {
+        emit("    BRA .L%d\n", end_label);
+    }
+
+    // Generate code for each case
+    for (int i = 0; i < node->switch_stmt.case_count; i++) {
+        ASTNode* case_node = node->switch_stmt.cases[i];
+        emit(".L%d:\n", case_labels[i]);
+
+        if (case_node->type == AST_CASE) {
+            for (int j = 0; j < case_node->case_stmt.stmt_count; j++) {
+                codegen_statement(case_node->case_stmt.statements[j]);
+            }
+        } else if (case_node->type == AST_DEFAULT) {
+            for (int j = 0; j < case_node->default_stmt.stmt_count; j++) {
+                codegen_statement(case_node->default_stmt.statements[j]);
+            }
+        }
+    }
+
+    emit(".L%d:\n", end_label);
+    emit("    PLA\n");  // Clean up stack (remove switch value)
+
+    free(case_labels);
+
+    // Pop loop context
+    pop_loop();
 }
 
 static void codegen_expr_stmt(ASTNode* node) {
@@ -1219,6 +1413,9 @@ static void codegen_statement(ASTNode* node) {
         case AST_FOR:
             codegen_for(node);
             break;
+        case AST_SWITCH:
+            codegen_switch(node);
+            break;
         case AST_BLOCK:
             codegen_block(node);
             break;
@@ -1258,7 +1455,8 @@ static int count_locals(ASTNode* node) {
         case AST_VAR_DECL:
             // Arrays count as multiple locals
             if (node->var_decl.is_array) {
-                return node->var_decl.array_size;
+                return (node->var_decl.array_sizes && node->var_decl.array_dimensions > 0) ?
+                       node->var_decl.array_sizes[0] : 0;
             }
             return 1;
         case AST_BLOCK:
