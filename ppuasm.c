@@ -310,7 +310,7 @@ static unsigned short assemble_preset_e(Instruction *inst) {
         /* Track target register byte selection for SETBYTE */
         target_reg_byte_sel[target_reg] = byte_sel;
 
-        suboperand = (target_reg << 6) | (byte_sel << 5) | source_reg;
+        suboperand = (target_reg << 8) | (byte_sel << 7) | source_reg;
     }
     else if (strcmp(inst->mnemonic, "SETBYTE") == 0) {
         /* SETBYTE T, 0xXX - encoding: 01 TT XXXXXXXX */
@@ -326,14 +326,14 @@ static unsigned short assemble_preset_e(Instruction *inst) {
             imm = value & 0xFF;
         }
 
-        suboperand = (target_reg << 6) | imm;
+        suboperand = (target_reg << 8) | imm;
     }
     else if (strcmp(inst->mnemonic, "BUILD") == 0) {
         /* BUILD T1, T2, X - encoding: 10 TT TT XXXXXX */
         int t1 = parse_target_register(inst->operand1, inst->line_num);
         int t2 = parse_target_register(inst->operand2, inst->line_num);
         dest_reg = parse_register(inst->operand3, inst->line_num);
-        suboperand = (t1 << 6) | (t2 << 4) | (dest_reg & 0x3F);
+        suboperand = (t1 << 8) | (t2 << 6) | (dest_reg & 0x3F);
     }
     else if (strcmp(inst->mnemonic, "CPREG") == 0) {
         /* CPREG X, Y - encoding: 11 00 XXXX YYYY */
