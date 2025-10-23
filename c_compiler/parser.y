@@ -40,14 +40,15 @@ static int enum_count_temp;
 
 %token <number> NUMBER CHAR_LITERAL
 %token <string> IDENTIFIER STRING_LITERAL
-%token INT CHAR VOID STRUCT ENUM TYPEDEF
+%token INT CHAR VOID SHORT LONG SIGNED UNSIGNED STRUCT UNION ENUM TYPEDEF
+%token CONST VOLATILE STATIC EXTERN
 %token IF ELSE WHILE DO FOR RETURN BREAK CONTINUE
 %token SWITCH CASE DEFAULT GOTO SIZEOF
 %token EQ NE LE GE AND OR SHL SHR ARROW INC DEC
 %token ADD_ASSIGN SUB_ASSIGN MUL_ASSIGN DIV_ASSIGN MOD_ASSIGN
 %token AND_ASSIGN OR_ASSIGN XOR_ASSIGN
 
-%type <node> program declaration function_declaration statement struct_declaration enum_declaration typedef_declaration
+%type <node> program declaration function_declaration statement struct_declaration union_declaration enum_declaration typedef_declaration
 %type <node> expression primary_expression postfix_expression
 %type <node> unary_expression multiplicative_expression additive_expression
 %type <node> shift_expression relational_expression equality_expression
@@ -58,7 +59,8 @@ static int enum_count_temp;
 %type <node> expression_statement selection_statement iteration_statement
 %type <node> jump_statement variable_declaration switch_statement
 %type <node> case_statement default_statement
-%type <dtype> type_specifier
+%type <dtype> type_specifier base_type_specifier
+%type <number> type_modifier_list type_modifier storage_class type_qualifier_list type_qualifier
 %type <list> declaration_list parameter_list argument_list struct_member_list
 %type <list> case_list statement_list_in_case declarator_list enumerator_list initializer_list
 %type <string> struct_or_union_specifier
@@ -107,19 +109,60 @@ declaration:
     function_declaration { $$ = $1; }
     | variable_declaration { $$ = $1; }
     | struct_declaration { $$ = $1; }
+    | union_declaration { $$ = $1; }
     | enum_declaration { $$ = $1; }
     | typedef_declaration { $$ = $1; }
     ;
 
-type_specifier:
+/* Storage class specifiers */
+storage_class:
+    /* empty */ { $$ = STORAGE_NONE; }
+    | STATIC { $$ = STORAGE_STATIC; }
+    | EXTERN { $$ = STORAGE_EXTERN; }
+    ;
+
+/* Type qualifiers */
+type_qualifier:
+    CONST { $$ = QUAL_CONST; }
+    | VOLATILE { $$ = QUAL_VOLATILE; }
+    ;
+
+type_qualifier_list:
+    /* empty */ { $$ = QUAL_NONE; }
+    | type_qualifier { $$ = $1; }
+    | type_qualifier_list type_qualifier { $$ = $1 | $2; }
+    ;
+
+/* Type modifiers (signed/unsigned) */
+type_modifier:
+    SIGNED { $$ = MOD_SIGNED; }
+    | UNSIGNED { $$ = MOD_UNSIGNED; }
+    ;
+
+type_modifier_list:
+    /* empty */ { $$ = MOD_NONE; }
+    | type_modifier { $$ = $1; }
+    ;
+
+/* Base type specifiers */
+base_type_specifier:
     INT { $$ = TYPE_INT; current_decl_struct_name = NULL; }
     | CHAR { $$ = TYPE_CHAR; current_decl_struct_name = NULL; }
     | VOID { $$ = TYPE_VOID; current_decl_struct_name = NULL; }
+    | SHORT { $$ = TYPE_SHORT; current_decl_struct_name = NULL; }
+    | LONG { $$ = TYPE_LONG; current_decl_struct_name = NULL; }
     | struct_or_union_specifier { $$ = TYPE_STRUCT; current_decl_struct_name = $1; }
+    ;
+
+/* Combined type specifier (allows modifiers + qualifiers + base type) */
+type_specifier:
+    base_type_specifier { $$ = $1; }
+    | type_modifier base_type_specifier { $$ = $2; /* modifier handled separately */ }
     ;
 
 struct_or_union_specifier:
     STRUCT IDENTIFIER { $$ = $2; }
+    | UNION IDENTIFIER { $$ = $2; /* same handling as struct for now */ }
     ;
 
 pointer:
@@ -130,6 +173,13 @@ pointer:
 struct_declaration:
     STRUCT IDENTIFIER '{' struct_member_list '}' ';' {
         $$ = ast_create_struct_decl($2, $4.items, $4.count);
+        free($2);
+    }
+    ;
+
+union_declaration:
+    UNION IDENTIFIER '{' struct_member_list '}' ';' {
+        $$ = ast_create_union_decl($2, $4.items, $4.count);
         free($2);
     }
     ;

@@ -53,6 +53,7 @@ typedef enum {
     AST_FUNC_DECL,
     AST_PARAM,
     AST_STRUCT_DECL,      // Struct definition
+    AST_UNION_DECL,       // Union definition
     AST_ENUM_DECL,        // Enum definition
     AST_TYPEDEF,          // Typedef declaration
 
@@ -68,15 +69,44 @@ typedef enum {
     TYPE_VOID,
     TYPE_INT,
     TYPE_CHAR,
+    TYPE_SHORT,
+    TYPE_LONG,
     TYPE_POINTER,
-    TYPE_STRUCT
+    TYPE_STRUCT,
+    TYPE_UNION
 } DataType;
+
+// Type modifiers (can be combined)
+typedef enum {
+    MOD_NONE = 0,
+    MOD_SIGNED = 1 << 0,
+    MOD_UNSIGNED = 1 << 1
+} TypeModifier;
+
+// Type qualifiers (can be combined)
+typedef enum {
+    QUAL_NONE = 0,
+    QUAL_CONST = 1 << 0,
+    QUAL_VOLATILE = 1 << 1
+} TypeQualifier;
+
+// Storage classes
+typedef enum {
+    STORAGE_NONE = 0,
+    STORAGE_AUTO,
+    STORAGE_STATIC,
+    STORAGE_EXTERN,
+    STORAGE_REGISTER
+} StorageClass;
 
 // Type information (includes base type, pointer levels, and struct name)
 typedef struct TypeInfo {
     DataType base_type;
     int pointer_level;        // 0 = not a pointer, 1 = *, 2 = **, etc.
-    char* struct_name;        // NULL for non-struct types
+    char* struct_name;        // NULL for non-struct/union types
+    TypeModifier modifiers;   // Signed/unsigned modifiers
+    TypeQualifier qualifiers; // Const/volatile qualifiers
+    StorageClass storage;     // Storage class (static, extern, etc.)
 } TypeInfo;
 
 // Binary operators
@@ -193,7 +223,10 @@ typedef struct ASTNode {
             int* array_sizes;        // Array of sizes for each dimension
             int array_dimensions;    // Number of dimensions (0 = not array, 1 = arr[N], 2 = arr[N][M])
             int pointer_level;       // 0 = not a pointer, 1 = *, 2 = **, etc.
-            char* struct_name;       // For struct types
+            char* struct_name;       // For struct/union types
+            TypeModifier modifiers;  // Signed/unsigned modifiers
+            TypeQualifier qualifiers; // Const/volatile qualifiers
+            StorageClass storage;    // Storage class (static, extern, etc.)
         } var_decl;
 
         // Function declaration
@@ -203,6 +236,8 @@ typedef struct ASTNode {
             struct ASTNode** params;
             int param_count;
             struct ASTNode* body;
+            TypeModifier return_modifiers;  // For return type modifiers
+            StorageClass storage;           // static/extern functions
         } func_decl;
 
         // Parameter
@@ -211,6 +246,8 @@ typedef struct ASTNode {
             char* param_name;
             int pointer_level;
             char* struct_name;
+            TypeModifier modifiers;  // Parameter type modifiers
+            TypeQualifier qualifiers; // Parameter type qualifiers
         } param;
 
         // Program (list of declarations)
@@ -230,6 +267,13 @@ typedef struct ASTNode {
             struct ASTNode** members;  // Array of AST_VAR_DECL nodes
             int member_count;
         } struct_decl;
+
+        // Union declaration
+        struct {
+            char* union_name;
+            struct ASTNode** members;  // Array of AST_VAR_DECL nodes
+            int member_count;
+        } union_decl;
 
         // Variable declaration list (int a, b, c;)
         struct {
@@ -373,9 +417,14 @@ ASTNode* ast_create_for(ASTNode* init, ASTNode* condition, ASTNode* increment, A
 ASTNode* ast_create_block(ASTNode** statements, int stmt_count);
 ASTNode* ast_create_var_decl(DataType type, const char* name, ASTNode* init_value, int is_array, int array_size, int pointer_level, const char* struct_name);
 ASTNode* ast_create_var_decl_multidim(DataType type, const char* name, ASTNode* init_value, int* array_sizes, int dimensions, int pointer_level, const char* struct_name);
+ASTNode* ast_create_var_decl_with_quals(DataType type, const char* name, ASTNode* init_value, int is_array, int array_size, int pointer_level, const char* struct_name, TypeModifier mods, TypeQualifier quals, StorageClass storage);
+ASTNode* ast_create_var_decl_multidim_with_quals(DataType type, const char* name, ASTNode* init_value, int* array_sizes, int dimensions, int pointer_level, const char* struct_name, TypeModifier mods, TypeQualifier quals, StorageClass storage);
 ASTNode* ast_create_func_decl(DataType return_type, const char* name, ASTNode** params, int param_count, ASTNode* body);
+ASTNode* ast_create_func_decl_with_quals(DataType return_type, const char* name, ASTNode** params, int param_count, ASTNode* body, TypeModifier return_mods, StorageClass storage);
 ASTNode* ast_create_param(DataType type, const char* name, int pointer_level, const char* struct_name);
+ASTNode* ast_create_param_with_quals(DataType type, const char* name, int pointer_level, const char* struct_name, TypeModifier mods, TypeQualifier quals);
 ASTNode* ast_create_struct_decl(const char* name, ASTNode** members, int member_count);
+ASTNode* ast_create_union_decl(const char* name, ASTNode** members, int member_count);
 ASTNode* ast_create_var_decl_list(ASTNode** declarations, int decl_count);
 ASTNode* ast_create_enum_decl(const char* name, char** enumerator_names, int* enumerator_values, int enumerator_count);
 ASTNode* ast_create_typedef(DataType base_type, const char* type_name, int pointer_level, int* array_sizes, int array_dim_count);

@@ -172,8 +172,11 @@ sequenceDiagram
 
 ## Features
 
-- **Complete C Compiler**: Compiles C89-compliant subset to DEF88186 assembly
-- **Data Types**: `int` (16-bit), `char` (8-bit), `void`, `struct`, `enum`, `typedef`, arrays, pointers
+- **Complete C89 Compiler**: Compiles C89-compliant subset to DEF88186 assembly
+- **Data Types**: `int` (16-bit), `char` (8-bit), `void`, `short`, `long`, `struct`, `union`, `enum`, `typedef`, arrays, pointers
+- **Type Modifiers**: `unsigned`, `signed` (parsed, basic support)
+- **Type Qualifiers**: `const`, `volatile` (parsed, documentation only)
+- **Storage Classes**: `static`, `extern` (parsed, documentation only)
 - **Functions**: Parameters, return values, recursion, calling conventions
 - **Variables**: Local, global, function parameters with proper scoping
 - **Control Flow**: `if/else`, `while`, `do-while`, `for`, `switch/case`, `break`, `continue`, `return`, `goto`/labels
@@ -192,7 +195,12 @@ sequenceDiagram
 - `int` - 16-bit signed integer
 - `char` - 8-bit signed character
 - `void` - no return value
+- **`short`** - 16-bit integer (same as int)
+- **`long`** - 16-bit integer (32-bit support planned)
+- **`unsigned`** - Unsigned type modifier
+- **`signed`** - Signed type modifier (default)
 - `struct` - Structured data types with member access
+- **`union`** - Overlapping data types (all members share same memory)
 - **`enum`** - Named integer constants with auto-incrementing or explicit values
 - **`typedef`** - Type aliases for creating custom type names
 - **Arrays** - Fixed-size single and multi-dimensional arrays (e.g., `int arr[10]`, `int matrix[3][4]`)
@@ -543,17 +551,17 @@ LPEND            ; Auto-decrement and branch
 ## Limitations
 
 - No floating point arithmetic
-- Type qualifiers (const, volatile, static) are parsed but not enforced
+- Type qualifiers (const, volatile) and storage classes (static, extern) are parsed but not enforced in code generation
 - No preprocessor (use cpp separately)
 - No inline assembly
-- No unions (yet)
 - No function pointers (yet)
 - No variadic functions (printf-style)
-- No struct initialization (yet)
+- Struct initialization partially implemented
 - Pointer arithmetic is basic (no complex expressions)
 - Multi-dimensional array access (`matrix[i][j]`) requires workaround with pointer arithmetic
 - String literals have basic support (not full string table implementation)
 - Typedef'd types documented but not fully integrated into type system
+- Member access in rvalue context has parser regression (being investigated)
 
 ## Performance Considerations
 
@@ -590,6 +598,10 @@ LPEND            ; Auto-decrement and branch
 - [x] **Enum declarations** ✓ **DONE!**
 - [x] **Typedef support** ✓ **DONE!**
 - [x] **Array initialization lists** ✓ **DONE!**
+- [x] **Union support** ✓ **DONE!**
+- [x] **Type modifiers (unsigned, signed, short, long)** ✓ **DONE!**
+- [x] **Type qualifiers (const, volatile)** ✓ **DONE!**
+- [x] **Storage classes (static, extern)** ✓ **DONE!**
 
 ### Planned Features
 - [ ] Multi-dimensional array subscripting (matrix[i][j] access)

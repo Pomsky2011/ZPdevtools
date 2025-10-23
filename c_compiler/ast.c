@@ -259,6 +259,9 @@ ASTNode* ast_create_var_decl(DataType type, const char* name, ASTNode* init_valu
     }
     node->var_decl.pointer_level = pointer_level;
     node->var_decl.struct_name = struct_name ? strdup(struct_name) : NULL;
+    node->var_decl.modifiers = MOD_NONE;
+    node->var_decl.qualifiers = QUAL_NONE;
+    node->var_decl.storage = STORAGE_NONE;
     return node;
 }
 
@@ -273,6 +276,9 @@ ASTNode* ast_create_var_decl_multidim(DataType type, const char* name, ASTNode* 
     node->var_decl.array_dimensions = dimensions;
     node->var_decl.pointer_level = pointer_level;
     node->var_decl.struct_name = struct_name ? strdup(struct_name) : NULL;
+    node->var_decl.modifiers = MOD_NONE;
+    node->var_decl.qualifiers = QUAL_NONE;
+    node->var_decl.storage = STORAGE_NONE;
     return node;
 }
 
@@ -283,6 +289,8 @@ ASTNode* ast_create_func_decl(DataType return_type, const char* name, ASTNode** 
     node->func_decl.params = params;
     node->func_decl.param_count = param_count;
     node->func_decl.body = body;
+    node->func_decl.return_modifiers = MOD_NONE;
+    node->func_decl.storage = STORAGE_NONE;
     return node;
 }
 
@@ -292,6 +300,8 @@ ASTNode* ast_create_param(DataType type, const char* name, int pointer_level, co
     node->param.param_name = strdup(name);
     node->param.pointer_level = pointer_level;
     node->param.struct_name = struct_name ? strdup(struct_name) : NULL;
+    node->param.modifiers = MOD_NONE;
+    node->param.qualifiers = QUAL_NONE;
     return node;
 }
 
@@ -396,6 +406,45 @@ ASTNode* ast_create_init_list(ASTNode** values, int value_count) {
     return node;
 }
 
+// New functions with type modifiers and qualifiers support
+ASTNode* ast_create_var_decl_with_quals(DataType type, const char* name, ASTNode* init_value, int is_array, int array_size, int pointer_level, const char* struct_name, TypeModifier mods, TypeQualifier quals, StorageClass storage) {
+    ASTNode* node = ast_create_var_decl(type, name, init_value, is_array, array_size, pointer_level, struct_name);
+    node->var_decl.modifiers = mods;
+    node->var_decl.qualifiers = quals;
+    node->var_decl.storage = storage;
+    return node;
+}
+
+ASTNode* ast_create_var_decl_multidim_with_quals(DataType type, const char* name, ASTNode* init_value, int* array_sizes, int dimensions, int pointer_level, const char* struct_name, TypeModifier mods, TypeQualifier quals, StorageClass storage) {
+    ASTNode* node = ast_create_var_decl_multidim(type, name, init_value, array_sizes, dimensions, pointer_level, struct_name);
+    node->var_decl.modifiers = mods;
+    node->var_decl.qualifiers = quals;
+    node->var_decl.storage = storage;
+    return node;
+}
+
+ASTNode* ast_create_func_decl_with_quals(DataType return_type, const char* name, ASTNode** params, int param_count, ASTNode* body, TypeModifier return_mods, StorageClass storage) {
+    ASTNode* node = ast_create_func_decl(return_type, name, params, param_count, body);
+    node->func_decl.return_modifiers = return_mods;
+    node->func_decl.storage = storage;
+    return node;
+}
+
+ASTNode* ast_create_param_with_quals(DataType type, const char* name, int pointer_level, const char* struct_name, TypeModifier mods, TypeQualifier quals) {
+    ASTNode* node = ast_create_param(type, name, pointer_level, struct_name);
+    node->param.modifiers = mods;
+    node->param.qualifiers = quals;
+    return node;
+}
+
+ASTNode* ast_create_union_decl(const char* name, ASTNode** members, int member_count) {
+    ASTNode* node = ast_create_node(AST_UNION_DECL);
+    node->union_decl.union_name = strdup(name);
+    node->union_decl.members = members;
+    node->union_decl.member_count = member_count;
+    return node;
+}
+
 void ast_free(ASTNode* node) {
     if (!node) return;
 
@@ -482,6 +531,13 @@ void ast_free(ASTNode* node) {
                 ast_free(node->struct_decl.members[i]);
             }
             free(node->struct_decl.members);
+            break;
+        case AST_UNION_DECL:
+            free(node->union_decl.union_name);
+            for (int i = 0; i < node->union_decl.member_count; i++) {
+                ast_free(node->union_decl.members[i]);
+            }
+            free(node->union_decl.members);
             break;
         case AST_VAR_DECL_LIST:
             for (int i = 0; i < node->var_decl_list.decl_count; i++) {

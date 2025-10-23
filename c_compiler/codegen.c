@@ -322,8 +322,21 @@ static void codegen_cast(ASTNode* node) {
             // Casting to void - no-op (discard value semantics)
             break;
 
+        case TYPE_SHORT:
+            // Casting to short - same as int (16-bit)
+            break;
+
+        case TYPE_LONG:
+            // Casting to long - for now treat as int (16-bit)
+            // TODO: Implement 32-bit long support
+            break;
+
         case TYPE_STRUCT:
             // Struct casts not supported (would require memcpy)
+            break;
+
+        case TYPE_UNION:
+            // Union casts not supported (would require memcpy)
             // Just leave value as-is
             break;
 
@@ -1692,6 +1705,33 @@ static void codegen_struct_decl(ASTNode* node) {
     emit("; Struct definition: %s (size = %d bytes)\n", sdef.name, sdef.total_size);
 }
 
+static void codegen_union_decl(ASTNode* node) {
+    StructDef udef;  // Use StructDef for unions too (same structure)
+    udef.name = strdup(node->union_decl.union_name);
+    udef.member_count = node->union_decl.member_count;
+    udef.members = malloc(sizeof(StructMember) * udef.member_count);
+
+    int max_size = 0;
+    for (int i = 0; i < udef.member_count; i++) {
+        ASTNode* member = node->union_decl.members[i];
+        udef.members[i].name = strdup(member->var_decl.var_name);
+        udef.members[i].type = member->var_decl.var_type;
+        udef.members[i].pointer_level = member->var_decl.pointer_level;
+        udef.members[i].struct_name = member->var_decl.struct_name ? strdup(member->var_decl.struct_name) : NULL;
+        udef.members[i].offset = 0;  // All union members start at offset 0
+
+        int size = get_type_size(member->var_decl.var_type, member->var_decl.pointer_level, member->var_decl.struct_name);
+        if (size > max_size) {
+            max_size = size;
+        }
+    }
+
+    udef.total_size = max_size;  // Union size is the maximum member size
+    add_struct(udef);  // Use same struct table for unions
+
+    emit("; Union definition: %s (size = %d bytes)\n", udef.name, udef.total_size);
+}
+
 // Code generation for program
 void codegen_program(ASTNode* node, FILE* output) {
     init_context(output);
@@ -1704,11 +1744,13 @@ void codegen_program(ASTNode* node, FILE* output) {
     emit("temp: .word 0\n");
     emit("\n.code\n");
 
-    // First pass: process struct, enum, and typedef declarations
+    // First pass: process struct, union, enum, and typedef declarations
     for (int i = 0; i < node->program.decl_count; i++) {
         ASTNode* decl = node->program.decls[i];
         if (decl->type == AST_STRUCT_DECL) {
             codegen_struct_decl(decl);
+        } else if (decl->type == AST_UNION_DECL) {
+            codegen_union_decl(decl);
         } else if (decl->type == AST_ENUM_DECL) {
             // Enum declarations don't generate code, but we could add enum constants as comments
             emit("\n; Enum: %s\n", decl->enum_decl.enum_name);
