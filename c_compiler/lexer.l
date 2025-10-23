@@ -19,11 +19,14 @@ int line_num = 1;
 "int"               { return INT; }
 "char"              { return CHAR; }
 "void"              { return VOID; }
+"struct"            { return STRUCT; }
 "if"                { return IF; }
 "else"              { return ELSE; }
 "while"             { return WHILE; }
 "for"               { return FOR; }
 "return"            { return RETURN; }
+"break"             { return BREAK; }
+"continue"          { return CONTINUE; }
 
 [a-zA-Z_][a-zA-Z0-9_]* { yylval.string = strdup(yytext); return IDENTIFIER; }
 [0-9]+              { yylval.number = atoi(yytext); return NUMBER; }
@@ -37,6 +40,17 @@ int line_num = 1;
 "||"                { return OR; }
 "<<"                { return SHL; }
 ">>"                { return SHR; }
+"->"                { return ARROW; }
+"++"                { return INC; }
+"--"                { return DEC; }
+"+="                { return ADD_ASSIGN; }
+"-="                { return SUB_ASSIGN; }
+"*="                { return MUL_ASSIGN; }
+"/="                { return DIV_ASSIGN; }
+"%="                { return MOD_ASSIGN; }
+"&="                { return AND_ASSIGN; }
+"|="                { return OR_ASSIGN; }
+"^="                { return XOR_ASSIGN; }
 
 "("                 { return '('; }
 ")"                 { return ')'; }
@@ -46,6 +60,7 @@ int line_num = 1;
 "]"                 { return ']'; }
 ";"                 { return ';'; }
 ","                 { return ','; }
+"."                 { return '.'; }
 "="                 { return '='; }
 "+"                 { return '+'; }
 "-"                 { return '-'; }

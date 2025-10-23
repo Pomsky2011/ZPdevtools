@@ -49,6 +49,16 @@ loop:
 
 ## Recent Changes
 
+### DEF88186 C Compiler - Major Update (2025-10-22)
+- ✅ **Added 7 new CPU transfer instructions** (TSC, TCS, TAX, TXA, TAY, TCD, TDC)
+- ✅ **Compound assignment operators**: `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`
+- ✅ **Increment/decrement operators**: `++`, `--` (prefix and postfix)
+- ✅ **Break and continue statements** for loop control
+- ✅ **Struct member assignment**: `p.x = value`, `ptr->member = value`
+- ✅ **Updated cpuasm** to support all C compiler generated instructions
+- ✅ **Added instruction support**: BRA, STA stack-relative, DIV/MUL X, .data/.code directives
+- ✅ **Full toolchain working**: C → Assembly → Binary compilation complete
+
 ### R59/R60 Interrupt Documentation (2025-10-19)
 - Updated README.md with R59/R60 interrupt register documentation
 - Noted automatic return address push behavior

@@ -172,15 +172,17 @@ sequenceDiagram
 
 ## Features
 
-- Compiles a subset of C to DEF88186 assembly
-- Supports basic data types: `int` (16-bit), `char` (8-bit), `void`
-- Functions with parameters and return values
-- Local variables and function arguments
-- Control flow: `if/else`, `while`, `for`
-- Arithmetic and logical operations
-- Following DEF88186 calling conventions
-- **Hardware loop optimization**: Automatic `LOOP`/`LPEND` instruction usage for counted loops
-- **Array support**: Fixed-size arrays with subscript access and assignment
+- **Complete C Compiler**: Compiles practical C subset to DEF88186 assembly
+- **Data Types**: `int` (16-bit), `char` (8-bit), `void`, `struct`, arrays, pointers
+- **Functions**: Parameters, return values, recursion, calling conventions
+- **Variables**: Local, global, function parameters with proper scoping
+- **Control Flow**: `if/else`, `while`, `for`, `break`, `continue`, `return`
+- **Operators**: Arithmetic, logical, bitwise, comparison, compound assignments, increment/decrement
+- **Pointers**: Address-of (`&`), dereference (`*`), multi-level pointers
+- **Structs**: Member access (`.`), pointer access (`->`), member assignment
+- **Arrays**: Fixed-size arrays with subscript access and assignment
+- **Hardware Optimization**: Automatic `LOOP`/`LPEND` for counted loops, hardware `MUL`/`DIV`
+- **ABI Compliant**: Follows DEF88186 calling conventions for interoperability
 
 ## Supported C Subset
 
@@ -188,7 +190,9 @@ sequenceDiagram
 - `int` - 16-bit signed integer
 - `char` - 8-bit signed character
 - `void` - no return value
+- `struct` - Structured data types with member access
 - Arrays - Fixed-size arrays (e.g., `int arr[10]`)
+- Pointers - Single and multi-level pointers with dereference
 
 ### Operators
 - Arithmetic: `+`, `-`, `*`, `/`, `%`
@@ -196,12 +200,18 @@ sequenceDiagram
 - Logical: `&&`, `||`, `!`
 - Bitwise: `&`, `|`, `^`, `~`, `<<`, `>>`
 - Assignment: `=`
+- Compound Assignment: `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`
+- Increment/Decrement: `++`, `--` (prefix and postfix)
+- Pointer: `&` (address-of), `*` (dereference)
+- Member Access: `.` (struct), `->` (pointer to struct)
 
 ### Control Flow
 - `if (expr) stmt`
 - `if (expr) stmt else stmt`
 - `while (expr) stmt`
 - `for (init; cond; incr) stmt`
+- `break` - Exit loop early
+- `continue` - Skip to next iteration
 - `return expr;`
 
 ### Functions
@@ -233,6 +243,50 @@ int main() {
 - Assignment: `arr[index] = value;`
 - Stack-allocated (local arrays only)
 - Supports variable indexing
+
+### Pointers
+```c
+int main() {
+    int x = 42;
+    int *ptr = &x;    // Get address of x
+    int y = *ptr;     // Dereference pointer
+    *ptr = 100;       // Modify through pointer
+    return y;
+}
+```
+
+**Pointer Features:**
+- Address-of operator: `&variable`
+- Dereference operator: `*pointer`
+- Multi-level pointers: `int **ptr`
+- Pointer arithmetic: Basic support
+- Pointer parameters and return values
+
+### Structs
+```c
+struct Point {
+    int x;
+    int y;
+};
+
+int main() {
+    struct Point p;
+    p.x = 10;         // Member assignment
+    p.y = 20;
+
+    struct Point *ptr = &p;
+    ptr->x = 30;      // Pointer member access
+
+    return p.x + p.y;
+}
+```
+
+**Struct Features:**
+- Member access: `struct.member`
+- Pointer member access: `ptr->member`
+- Member assignment: `p.x = value`
+- Nested member access supported
+- Stack-allocated structs
 
 ## Building
 
@@ -349,29 +403,42 @@ LPEND            ; Auto-decrement and branch
 
 ## Limitations
 
-- No structs/unions
-- No floating point
-- No pointers (coming soon)
-- No type qualifiers (const, volatile)
+- No floating point arithmetic
+- No type qualifiers (const, volatile, static)
 - No preprocessor (use cpp separately)
 - No inline assembly
 - No multi-dimensional arrays
 - No array initialization lists
+- No unions
+- No function pointers
+- No variadic functions (printf-style)
+- Pointer arithmetic is basic (no complex expressions)
 
 ## Performance Considerations
 
 - **Hardware Multiply/Divide**: 8-13 cycles vs 100+ cycles for software implementation
+- **Hardware Loops**: `LOOP`/`LPEND` instructions optimize simple counted loops
 - **Register Parameters**: First 3 parameters avoid stack overhead
 - **Direct Page Access**: Local variables use fast DP addressing when possible
+- **Compound Assignments**: Efficiently compiled using read-modify-write patterns
 - **Tail Call Optimization**: Not yet implemented
 
 ## Future Enhancements
 
 - [x] Array support ✓ **DONE!**
-- [ ] Pointer support with pointer arithmetic
+- [x] Pointer support with pointer arithmetic ✓ **DONE!**
+- [x] Struct support with member access ✓ **DONE!**
+- [x] Increment/decrement operators (++/--) ✓ **DONE!**
+- [x] Compound assignment operators (+=, -=, etc.) ✓ **DONE!**
+- [x] Break and continue statements ✓ **DONE!**
 - [ ] Multi-dimensional arrays
 - [ ] Array initialization lists
-- [ ] Struct and union support
+- [ ] Union support
+- [ ] Function pointers
+- [ ] Switch/case statements
+- [ ] Ternary operator (?:)
+- [ ] Comma operator
+- [ ] sizeof operator
 - [ ] Preprocessor integration
 - [ ] Optimization passes (constant folding, dead code elimination)
 - [ ] Inline assembly support

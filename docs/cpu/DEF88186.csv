@@ -28,13 +28,13 @@ RTS,,Return from Subroutine,19,0x19,Stack (RTS),,1,6
 SEP #const,,Set Processor Status Bits,1A,0x1A,Immediate,NVMXDIZC,2,3
 SDB byte,,Set Data Bank,1B,0x1B,Immediate,,2,2
 WAI,,Wait for Interrupt,1C,0x1C,Implied,,1,3[10]
-XBA,,Exchange Accumulator Bytes,1D,0x1D,Implied,,1,2
-"XCHG long,dp",,Exchange Operands,1E,0x1E,"Absolute Long, DP Indexed",,4,8
-"XCHG X,dp",,Exchange Operands,1F,0x1F,"DP Indexed,X",,1,8
-"XCHG X,long",,Exchange Operands,20,0x20,"X,Absolute Long",,4,8
-"XCHG X,Y",,Exchange Operands,21,0x21,"X,Y",,1,8
-"XCHG Y,dp",,Exchange Operands,22,0x22,"DP Indexed,Y",,1,8
-"XCHG Y,long",,Exchange Operands,23,0x23,"Y,Absolute Long Indexed",,4,8
+TDC,,Transfer Direct Page to Accumulator,1D,0x1D,Implied,N-----Z-,1,2
+TSC,,Transfer Stack Pointer to Accumulator,1E,0x1E,Implied,N-----Z-,1,2
+TCS,,Transfer Accumulator to Stack Pointer,1F,0x1F,Implied,,1,2
+TAX,,Transfer Accumulator to Index X,20,0x20,Implied,N-----Z-,1,2
+TXA,,Transfer Index X to Accumulator,21,0x21,Implied,N-----Z-,1,2
+TAY,,Transfer Accumulator to Index Y,22,0x22,Implied,N-----Z-,1,2
+TCD,,Transfer Accumulator to Direct Page,23,0x23,Implied,,1,2
 TXY,,Transfer Index Register X to Index Register Y,24,0x24,Implied,N-----Z-,1,2
 TYA,,Transfer Index Register Y to Accumulator,25,0x25,Implied,N-----Z-,1,2
 TYX,,Transfer Index Register Y to Index Register X,26,0x26,Implied,N-----Z-,1,2

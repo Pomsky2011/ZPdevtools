@@ -412,6 +412,16 @@ const Instruction *find_instruction(const char *mnemonic, AddressingMode mode) {
         }
     }
 
+    /* If AM_ABSOLUTE didn't match, try AM_ABSOLUTE_LONG (for labels) */
+    if (mode == AM_ABSOLUTE) {
+        for (int i = 0; i < num_instructions; i++) {
+            if (strcmp(instructions[i].mnemonic, mnemonic) == 0 &&
+                instructions[i].mode == AM_ABSOLUTE_LONG) {
+                return &instructions[i];
+            }
+        }
+    }
+
     return NULL;
 }
 
@@ -497,6 +507,7 @@ void init_instructions(void) {
     INST("STA", AM_DP_X, 0x4A, 2, 4);
     INST("STA", AM_ABSOLUTE_LONG, 0x55, 4, 5);
     INST("STA", AM_ABSOLUTE_LONG_X, 0x56, 4, 5);
+    INST("STA", AM_STACK_RELATIVE, 0x57, 2, 4);
     INST("STA", AM_DP_INDIRECT_X, 0x4B, 2, 6);
     INST("STA", AM_DP_INDIRECT, 0x4C, 2, 5);
     INST("STA", AM_DP_INDIRECT_Y, 0x4D, 2, 6);
@@ -566,13 +577,13 @@ void init_instructions(void) {
     INST("BRL", AM_PC_RELATIVE_LONG, 0x08, 3, 4);
 
     /* Branches */
-    INST("BEQ", AM_ABSOLUTE_LONG, 0x0B, 4, 2);
-    INST("BNE", AM_ABSOLUTE_LONG, 0x07, 2, 2);  /* Actually maps to multiple */
+    INST("BMI", AM_ABSOLUTE_LONG, 0x06, 4, 2);
+    INST("BRA", AM_ABSOLUTE_LONG, 0x07, 2, 3);
+    INST("BVS", AM_ABSOLUTE_LONG, 0x09, 2, 2);
     INST("BCS", AM_ABSOLUTE_LONG, 0x0A, 4, 2);
     INST("BCC", AM_ABSOLUTE_LONG, 0x0A, 4, 2);
-    INST("BMI", AM_ABSOLUTE_LONG, 0x06, 4, 2);
-    INST("BPL", AM_ABSOLUTE_LONG, 0x06, 4, 2);
-    INST("BVS", AM_ABSOLUTE_LONG, 0x09, 2, 2);
+    INST("BGE", AM_ABSOLUTE_LONG, 0x0A, 4, 2);  /* Alias for BCS */
+    INST("BEQ", AM_ABSOLUTE_LONG, 0x0B, 4, 2);
 
     /* Stack */
     INST("PHA", AM_IMPLIED, 0x2B, 1, 3);
@@ -596,10 +607,16 @@ void init_instructions(void) {
     INST("REP", AM_IMMEDIATE, 0x7F, 2, 3);
 
     /* Transfers */
+    INST("TDC", AM_IMPLIED, 0x1D, 1, 2);
+    INST("TSC", AM_IMPLIED, 0x1E, 1, 2);
+    INST("TCS", AM_IMPLIED, 0x1F, 1, 2);
+    INST("TAX", AM_IMPLIED, 0x20, 1, 2);
+    INST("TXA", AM_IMPLIED, 0x21, 1, 2);
+    INST("TAY", AM_IMPLIED, 0x22, 1, 2);
+    INST("TCD", AM_IMPLIED, 0x23, 1, 2);
     INST("TXY", AM_IMPLIED, 0x24, 1, 2);
     INST("TYA", AM_IMPLIED, 0x25, 1, 2);
     INST("TYX", AM_IMPLIED, 0x26, 1, 2);
-    INST("XBA", AM_IMPLIED, 0x1D, 1, 2);
 
     /* Compare */
     INST("CMP", AM_IMMEDIATE, 0xA6, 2, 2);
@@ -610,6 +627,7 @@ void init_instructions(void) {
     /* Hardware extensions (8086-inspired) */
     INST("MUL", AM_IMMEDIATE, 0xEF, 2, 8);
     INST("MUL", AM_ABSOLUTE, 0xF0, 3, 9);
+    INST("DIV", AM_SPECIAL, 0x92, 1, 8);  /* DIV X - special handling */
     INST("LOOP", AM_IMMEDIATE, 0x13, 3, 2);
     INST("LPEND", AM_IMPLIED, 0x14, 1, 1);
     INST("SDB", AM_IMMEDIATE, 0x1B, 2, 2);
@@ -639,7 +657,7 @@ int assemble_line(char *line) {
     if (!*p) return 0;  /* Empty line */
 
     /* Check for label */
-    if (isalpha(*p) || *p == '_') {
+    if (isalpha(*p) || *p == '_' || *p == '.') {
         char *colon = strchr(p, ':');
         if (colon) {
             /* It's a label */
@@ -661,6 +679,16 @@ int assemble_line(char *line) {
     for (char *t = token; *t; t++) *t = toupper(*t);
 
     /* Check for directives */
+    if (strcmp(token, ".DATA") == 0) {
+        /* Data section marker - just ignore for now */
+        return 0;
+    }
+
+    if (strcmp(token, ".CODE") == 0) {
+        /* Code section marker - just ignore for now */
+        return 0;
+    }
+
     if (strcmp(token, ".ORG") == 0) {
         p = skip_whitespace(p);
         p = parse_token(p, token);
@@ -707,6 +735,18 @@ int assemble_line(char *line) {
         while (end > operand && isspace(*end)) *end-- = '\0';
     }
 
+
+    /* Special case: DIV X or DIV Y */
+    if (strcmp(token, "DIV") == 0 && (strcmp(operand, "X") == 0 || strcmp(operand, "x") == 0)) {
+        emit_byte(0x92);  /* DIV X,Y opcode */
+        return 0;
+    }
+
+    /* Special case: MUL X or MUL Y */
+    if (strcmp(token, "MUL") == 0 && (strcmp(operand, "X") == 0 || strcmp(operand, "x") == 0)) {
+        emit_byte(0xF0);  /* MUL X opcode - check CSV for correct opcode */
+        return 0;
+    }
 
     /* Detect addressing mode */
     AddressingMode mode = detect_addressing_mode(operand, token);

@@ -14,6 +14,16 @@ typedef enum {
     AST_ASSIGN,
     AST_ARRAY_SUBSCRIPT,
     AST_ARRAY_ASSIGN,
+    AST_ADDR_OF,          // Address-of operator (&)
+    AST_DEREF,            // Dereference operator (*)
+    AST_MEMBER_ACCESS,    // Struct member access (.)
+    AST_PTR_MEMBER_ACCESS, // Pointer member access (->)
+    AST_MEMBER_ASSIGN,    // Struct member assignment (struct.member = value)
+    AST_PTR_MEMBER_ASSIGN, // Pointer member assignment (ptr->member = value)
+    AST_PRE_INC,          // Pre-increment (++x)
+    AST_POST_INC,         // Post-increment (x++)
+    AST_PRE_DEC,          // Pre-decrement (--x)
+    AST_POST_DEC,         // Post-decrement (x--)
 
     // Statements
     AST_EXPR_STMT,
@@ -22,23 +32,37 @@ typedef enum {
     AST_WHILE,
     AST_FOR,
     AST_BLOCK,
+    AST_BREAK,
+    AST_CONTINUE,
 
     // Declarations
     AST_VAR_DECL,
     AST_FUNC_DECL,
     AST_PARAM,
+    AST_STRUCT_DECL,      // Struct definition
 
     // Program
     AST_PROGRAM
 } ASTNodeType;
+
+// Forward declaration for struct definition
+struct StructDef;
 
 // Data types
 typedef enum {
     TYPE_VOID,
     TYPE_INT,
     TYPE_CHAR,
-    TYPE_POINTER
+    TYPE_POINTER,
+    TYPE_STRUCT
 } DataType;
+
+// Type information (includes base type, pointer levels, and struct name)
+typedef struct TypeInfo {
+    DataType base_type;
+    int pointer_level;        // 0 = not a pointer, 1 = *, 2 = **, etc.
+    char* struct_name;        // NULL for non-struct types
+} TypeInfo;
 
 // Binary operators
 typedef enum {
@@ -51,7 +75,7 @@ typedef enum {
 
 // Unary operators
 typedef enum {
-    OP_NEG, OP_NOT, OP_BIT_NOT
+    OP_NEG, OP_NOT, OP_BIT_NOT, OP_ADDR_OF, OP_DEREF
 } UnOpType;
 
 // Forward declaration
@@ -145,6 +169,8 @@ typedef struct ASTNode {
             struct ASTNode* init_value;
             int is_array;
             int array_size;
+            int pointer_level;        // 0 = not a pointer, 1 = *, 2 = **, etc.
+            char* struct_name;        // For struct types
         } var_decl;
 
         // Function declaration
@@ -160,6 +186,8 @@ typedef struct ASTNode {
         struct {
             DataType param_type;
             char* param_name;
+            int pointer_level;
+            char* struct_name;
         } param;
 
         // Program (list of declarations)
@@ -172,6 +200,44 @@ typedef struct ASTNode {
         struct {
             struct ASTNode* expr;
         } expr_stmt;
+
+        // Struct declaration
+        struct {
+            char* struct_name;
+            struct ASTNode** members;  // Array of AST_VAR_DECL nodes
+            int member_count;
+        } struct_decl;
+
+        // Member access (struct.member)
+        struct {
+            struct ASTNode* object;    // Can be identifier or another member access
+            char* member_name;
+        } member_access;
+
+        // Pointer member access (ptr->member)
+        struct {
+            struct ASTNode* pointer;
+            char* member_name;
+        } ptr_member_access;
+
+        // Member assignment (struct.member = value)
+        struct {
+            struct ASTNode* object;
+            char* member_name;
+            struct ASTNode* value;
+        } member_assign;
+
+        // Pointer member assignment (ptr->member = value)
+        struct {
+            struct ASTNode* pointer;
+            char* member_name;
+            struct ASTNode* value;
+        } ptr_member_assign;
+
+        // Increment/decrement (++x, x++, --x, x--)
+        struct {
+            char* var_name;
+        } inc_dec;
     };
 } ASTNode;
 
@@ -189,9 +255,22 @@ ASTNode* ast_create_if(ASTNode* condition, ASTNode* then_stmt, ASTNode* else_stm
 ASTNode* ast_create_while(ASTNode* condition, ASTNode* body);
 ASTNode* ast_create_for(ASTNode* init, ASTNode* condition, ASTNode* increment, ASTNode* body);
 ASTNode* ast_create_block(ASTNode** statements, int stmt_count);
-ASTNode* ast_create_var_decl(DataType type, const char* name, ASTNode* init_value, int is_array, int array_size);
+ASTNode* ast_create_var_decl(DataType type, const char* name, ASTNode* init_value, int is_array, int array_size, int pointer_level, const char* struct_name);
 ASTNode* ast_create_func_decl(DataType return_type, const char* name, ASTNode** params, int param_count, ASTNode* body);
-ASTNode* ast_create_param(DataType type, const char* name);
+ASTNode* ast_create_param(DataType type, const char* name, int pointer_level, const char* struct_name);
+ASTNode* ast_create_struct_decl(const char* name, ASTNode** members, int member_count);
+ASTNode* ast_create_member_access(ASTNode* object, const char* member_name);
+ASTNode* ast_create_ptr_member_access(ASTNode* pointer, const char* member_name);
+ASTNode* ast_create_member_assign(ASTNode* object, const char* member_name, ASTNode* value);
+ASTNode* ast_create_ptr_member_assign(ASTNode* pointer, const char* member_name, ASTNode* value);
+ASTNode* ast_create_addr_of(ASTNode* operand);
+ASTNode* ast_create_deref(ASTNode* operand);
+ASTNode* ast_create_pre_inc(const char* var_name);
+ASTNode* ast_create_post_inc(const char* var_name);
+ASTNode* ast_create_pre_dec(const char* var_name);
+ASTNode* ast_create_post_dec(const char* var_name);
+ASTNode* ast_create_break();
+ASTNode* ast_create_continue();
 ASTNode* ast_create_program(ASTNode** decls, int decl_count);
 ASTNode* ast_create_expr_stmt(ASTNode* expr);
 

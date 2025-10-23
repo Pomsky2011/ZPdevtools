@@ -104,13 +104,101 @@ ASTNode* ast_create_array_assign(const char* array_name, ASTNode* index, ASTNode
     return node;
 }
 
-ASTNode* ast_create_var_decl(DataType type, const char* name, ASTNode* init_value, int is_array, int array_size) {
+ASTNode* ast_create_addr_of(ASTNode* operand) {
+    ASTNode* node = ast_create_node(AST_ADDR_OF);
+    node->unop.op = OP_ADDR_OF;
+    node->unop.operand = operand;
+    return node;
+}
+
+ASTNode* ast_create_deref(ASTNode* operand) {
+    ASTNode* node = ast_create_node(AST_DEREF);
+    node->unop.op = OP_DEREF;
+    node->unop.operand = operand;
+    return node;
+}
+
+ASTNode* ast_create_member_access(ASTNode* object, const char* member_name) {
+    ASTNode* node = ast_create_node(AST_MEMBER_ACCESS);
+    node->member_access.object = object;
+    node->member_access.member_name = strdup(member_name);
+    return node;
+}
+
+ASTNode* ast_create_ptr_member_access(ASTNode* pointer, const char* member_name) {
+    ASTNode* node = ast_create_node(AST_PTR_MEMBER_ACCESS);
+    node->ptr_member_access.pointer = pointer;
+    node->ptr_member_access.member_name = strdup(member_name);
+    return node;
+}
+
+ASTNode* ast_create_member_assign(ASTNode* object, const char* member_name, ASTNode* value) {
+    ASTNode* node = ast_create_node(AST_MEMBER_ASSIGN);
+    node->member_assign.object = object;
+    node->member_assign.member_name = strdup(member_name);
+    node->member_assign.value = value;
+    return node;
+}
+
+ASTNode* ast_create_ptr_member_assign(ASTNode* pointer, const char* member_name, ASTNode* value) {
+    ASTNode* node = ast_create_node(AST_PTR_MEMBER_ASSIGN);
+    node->ptr_member_assign.pointer = pointer;
+    node->ptr_member_assign.member_name = strdup(member_name);
+    node->ptr_member_assign.value = value;
+    return node;
+}
+
+ASTNode* ast_create_struct_decl(const char* name, ASTNode** members, int member_count) {
+    ASTNode* node = ast_create_node(AST_STRUCT_DECL);
+    node->struct_decl.struct_name = strdup(name);
+    node->struct_decl.members = members;
+    node->struct_decl.member_count = member_count;
+    return node;
+}
+
+ASTNode* ast_create_pre_inc(const char* var_name) {
+    ASTNode* node = ast_create_node(AST_PRE_INC);
+    node->inc_dec.var_name = strdup(var_name);
+    return node;
+}
+
+ASTNode* ast_create_post_inc(const char* var_name) {
+    ASTNode* node = ast_create_node(AST_POST_INC);
+    node->inc_dec.var_name = strdup(var_name);
+    return node;
+}
+
+ASTNode* ast_create_pre_dec(const char* var_name) {
+    ASTNode* node = ast_create_node(AST_PRE_DEC);
+    node->inc_dec.var_name = strdup(var_name);
+    return node;
+}
+
+ASTNode* ast_create_post_dec(const char* var_name) {
+    ASTNode* node = ast_create_node(AST_POST_DEC);
+    node->inc_dec.var_name = strdup(var_name);
+    return node;
+}
+
+ASTNode* ast_create_break() {
+    ASTNode* node = ast_create_node(AST_BREAK);
+    return node;
+}
+
+ASTNode* ast_create_continue() {
+    ASTNode* node = ast_create_node(AST_CONTINUE);
+    return node;
+}
+
+ASTNode* ast_create_var_decl(DataType type, const char* name, ASTNode* init_value, int is_array, int array_size, int pointer_level, const char* struct_name) {
     ASTNode* node = ast_create_node(AST_VAR_DECL);
     node->var_decl.var_type = type;
     node->var_decl.var_name = strdup(name);
     node->var_decl.init_value = init_value;
     node->var_decl.is_array = is_array;
     node->var_decl.array_size = array_size;
+    node->var_decl.pointer_level = pointer_level;
+    node->var_decl.struct_name = struct_name ? strdup(struct_name) : NULL;
     return node;
 }
 
@@ -124,10 +212,12 @@ ASTNode* ast_create_func_decl(DataType return_type, const char* name, ASTNode** 
     return node;
 }
 
-ASTNode* ast_create_param(DataType type, const char* name) {
+ASTNode* ast_create_param(DataType type, const char* name, int pointer_level, const char* struct_name) {
     ASTNode* node = ast_create_node(AST_PARAM);
     node->param.param_type = type;
     node->param.param_name = strdup(name);
+    node->param.pointer_level = pointer_level;
+    node->param.struct_name = struct_name ? strdup(struct_name) : NULL;
     return node;
 }
 
@@ -204,6 +294,7 @@ void ast_free(ASTNode* node) {
             break;
         case AST_VAR_DECL:
             free(node->var_decl.var_name);
+            if (node->var_decl.struct_name) free(node->var_decl.struct_name);
             ast_free(node->var_decl.init_value);
             break;
         case AST_FUNC_DECL:
@@ -216,6 +307,32 @@ void ast_free(ASTNode* node) {
             break;
         case AST_PARAM:
             free(node->param.param_name);
+            if (node->param.struct_name) free(node->param.struct_name);
+            break;
+        case AST_STRUCT_DECL:
+            free(node->struct_decl.struct_name);
+            for (int i = 0; i < node->struct_decl.member_count; i++) {
+                ast_free(node->struct_decl.members[i]);
+            }
+            free(node->struct_decl.members);
+            break;
+        case AST_ADDR_OF:
+        case AST_DEREF:
+            ast_free(node->unop.operand);
+            break;
+        case AST_MEMBER_ACCESS:
+            ast_free(node->member_access.object);
+            free(node->member_access.member_name);
+            break;
+        case AST_PTR_MEMBER_ACCESS:
+            ast_free(node->ptr_member_access.pointer);
+            free(node->ptr_member_access.member_name);
+            break;
+        case AST_PRE_INC:
+        case AST_POST_INC:
+        case AST_PRE_DEC:
+        case AST_POST_DEC:
+            free(node->inc_dec.var_name);
             break;
         case AST_PROGRAM:
             for (int i = 0; i < node->program.decl_count; i++) {
