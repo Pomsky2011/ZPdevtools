@@ -18,6 +18,8 @@ typedef enum {
     AST_ADDR_OF,          // Address-of operator (&)
     AST_DEREF,            // Dereference operator (*)
     AST_SIZEOF,           // sizeof operator
+    AST_CAST,             // Cast operator ((type)expr)
+    AST_COMMA,            // Comma operator (expr1, expr2)
     AST_TERNARY,          // Ternary operator (cond ? then : else)
     AST_MEMBER_ACCESS,    // Struct member access (.)
     AST_PTR_MEMBER_ACCESS, // Pointer member access (->)
@@ -33,19 +35,26 @@ typedef enum {
     AST_RETURN,
     AST_IF,
     AST_WHILE,
+    AST_DO_WHILE,
     AST_FOR,
     AST_BLOCK,
     AST_BREAK,
     AST_CONTINUE,
+    AST_GOTO,             // goto statement
+    AST_LABEL,            // Label declaration
     AST_SWITCH,           // Switch statement
     AST_CASE,             // Case label
     AST_DEFAULT,          // Default label
+    AST_INIT_LIST,        // Initialization list {1, 2, 3}
 
     // Declarations
     AST_VAR_DECL,
+    AST_VAR_DECL_LIST,    // Multiple variable declarations (int a, b, c;)
     AST_FUNC_DECL,
     AST_PARAM,
     AST_STRUCT_DECL,      // Struct definition
+    AST_ENUM_DECL,        // Enum definition
+    AST_TYPEDEF,          // Typedef declaration
 
     // Program
     AST_PROGRAM
@@ -155,6 +164,12 @@ typedef struct ASTNode {
             struct ASTNode* body;
         } while_stmt;
 
+        // Do-while statement
+        struct {
+            struct ASTNode* condition;
+            struct ASTNode* body;
+        } do_while_stmt;
+
         // For statement
         struct {
             struct ASTNode* init;
@@ -216,6 +231,29 @@ typedef struct ASTNode {
             int member_count;
         } struct_decl;
 
+        // Variable declaration list (int a, b, c;)
+        struct {
+            struct ASTNode** declarations;  // Array of AST_VAR_DECL nodes
+            int decl_count;
+        } var_decl_list;
+
+        // Enum declaration
+        struct {
+            char* enum_name;
+            char** enumerator_names;   // Array of enumerator names
+            int* enumerator_values;    // Array of enumerator values
+            int enumerator_count;
+        } enum_decl;
+
+        // Typedef declaration
+        struct {
+            DataType base_type;
+            char* type_name;          // The new type alias
+            int pointer_level;        // Number of pointer indirections
+            int* array_sizes;         // Array dimensions (NULL if not array)
+            int array_dim_count;      // Number of array dimensions
+        } typedef_decl;
+
         // Member access (struct.member)
         struct {
             struct ASTNode* object;    // Can be identifier or another member access
@@ -257,6 +295,20 @@ typedef struct ASTNode {
             int array_size;
         } sizeof_expr;
 
+        // Cast expression ((type)expr)
+        struct {
+            DataType target_type;
+            char* type_name;     // For struct casts
+            int pointer_level;
+            struct ASTNode* expr;
+        } cast;
+
+        // Comma expression (expr1, expr2, ...)
+        struct {
+            struct ASTNode** expressions;
+            int expr_count;
+        } comma;
+
         // Ternary expression (cond ? then : else)
         struct {
             struct ASTNode* condition;
@@ -283,6 +335,23 @@ typedef struct ASTNode {
             struct ASTNode** statements;  // Statements in default case
             int stmt_count;
         } default_stmt;
+
+        // Initialization list {1, 2, 3}
+        struct {
+            struct ASTNode** values;  // Array of expression nodes
+            int value_count;
+        } init_list;
+
+        // Goto statement
+        struct {
+            char* label;
+        } goto_stmt;
+
+        // Label statement
+        struct {
+            char* label;
+            struct ASTNode* statement;  // Statement after label
+        } label_stmt;
     };
 } ASTNode;
 
@@ -299,6 +368,7 @@ ASTNode* ast_create_array_assign(const char* array_name, ASTNode* index, ASTNode
 ASTNode* ast_create_return(ASTNode* value);
 ASTNode* ast_create_if(ASTNode* condition, ASTNode* then_stmt, ASTNode* else_stmt);
 ASTNode* ast_create_while(ASTNode* condition, ASTNode* body);
+ASTNode* ast_create_do_while(ASTNode* condition, ASTNode* body);
 ASTNode* ast_create_for(ASTNode* init, ASTNode* condition, ASTNode* increment, ASTNode* body);
 ASTNode* ast_create_block(ASTNode** statements, int stmt_count);
 ASTNode* ast_create_var_decl(DataType type, const char* name, ASTNode* init_value, int is_array, int array_size, int pointer_level, const char* struct_name);
@@ -306,6 +376,9 @@ ASTNode* ast_create_var_decl_multidim(DataType type, const char* name, ASTNode* 
 ASTNode* ast_create_func_decl(DataType return_type, const char* name, ASTNode** params, int param_count, ASTNode* body);
 ASTNode* ast_create_param(DataType type, const char* name, int pointer_level, const char* struct_name);
 ASTNode* ast_create_struct_decl(const char* name, ASTNode** members, int member_count);
+ASTNode* ast_create_var_decl_list(ASTNode** declarations, int decl_count);
+ASTNode* ast_create_enum_decl(const char* name, char** enumerator_names, int* enumerator_values, int enumerator_count);
+ASTNode* ast_create_typedef(DataType base_type, const char* type_name, int pointer_level, int* array_sizes, int array_dim_count);
 ASTNode* ast_create_member_access(ASTNode* object, const char* member_name);
 ASTNode* ast_create_ptr_member_access(ASTNode* pointer, const char* member_name);
 ASTNode* ast_create_member_assign(ASTNode* object, const char* member_name, ASTNode* value);
@@ -314,16 +387,21 @@ ASTNode* ast_create_addr_of(ASTNode* operand);
 ASTNode* ast_create_deref(ASTNode* operand);
 ASTNode* ast_create_sizeof_type(DataType type, const char* type_name, int pointer_level);
 ASTNode* ast_create_sizeof_expr(ASTNode* expr);
+ASTNode* ast_create_cast(DataType target_type, const char* type_name, int pointer_level, ASTNode* expr);
+ASTNode* ast_create_comma(ASTNode** expressions, int expr_count);
 ASTNode* ast_create_ternary(ASTNode* condition, ASTNode* then_expr, ASTNode* else_expr);
 ASTNode* ast_create_switch(ASTNode* expr, ASTNode** cases, int case_count);
 ASTNode* ast_create_case(int value, ASTNode** statements, int stmt_count);
 ASTNode* ast_create_default(ASTNode** statements, int stmt_count);
+ASTNode* ast_create_init_list(ASTNode** values, int value_count);
 ASTNode* ast_create_pre_inc(const char* var_name);
 ASTNode* ast_create_post_inc(const char* var_name);
 ASTNode* ast_create_pre_dec(const char* var_name);
 ASTNode* ast_create_post_dec(const char* var_name);
 ASTNode* ast_create_break();
 ASTNode* ast_create_continue();
+ASTNode* ast_create_goto(const char* label);
+ASTNode* ast_create_label(const char* label, ASTNode* statement);
 ASTNode* ast_create_program(ASTNode** decls, int decl_count);
 ASTNode* ast_create_expr_stmt(ASTNode* expr);
 

@@ -172,15 +172,17 @@ sequenceDiagram
 
 ## Features
 
-- **Complete C Compiler**: Compiles practical C subset to DEF88186 assembly
-- **Data Types**: `int` (16-bit), `char` (8-bit), `void`, `struct`, arrays, pointers
+- **Complete C Compiler**: Compiles C89-compliant subset to DEF88186 assembly
+- **Data Types**: `int` (16-bit), `char` (8-bit), `void`, `struct`, `enum`, `typedef`, arrays, pointers
 - **Functions**: Parameters, return values, recursion, calling conventions
 - **Variables**: Local, global, function parameters with proper scoping
-- **Control Flow**: `if/else`, `while`, `for`, `break`, `continue`, `return`
-- **Operators**: Arithmetic, logical, bitwise, comparison, compound assignments, increment/decrement
+- **Control Flow**: `if/else`, `while`, `do-while`, `for`, `switch/case`, `break`, `continue`, `return`, `goto`/labels
+- **Operators**: Arithmetic, logical, bitwise, comparison, compound assignments, increment/decrement, ternary (`?:`), comma, cast, `sizeof`
 - **Pointers**: Address-of (`&`), dereference (`*`), multi-level pointers
 - **Structs**: Member access (`.`), pointer access (`->`), member assignment
-- **Arrays**: Fixed-size arrays with subscript access and assignment
+- **Arrays**: Fixed-size arrays with subscript access, assignment, and initialization lists
+- **Enums**: Named integer constants with auto-incrementing or explicit values
+- **Typedef**: Type aliases for basic types, pointers, and arrays
 - **Hardware Optimization**: Automatic `LOOP`/`LPEND` for counted loops, hardware `MUL`/`DIV`
 - **ABI Compliant**: Follows DEF88186 calling conventions for interoperability
 
@@ -191,6 +193,8 @@ sequenceDiagram
 - `char` - 8-bit signed character
 - `void` - no return value
 - `struct` - Structured data types with member access
+- **`enum`** - Named integer constants with auto-incrementing or explicit values
+- **`typedef`** - Type aliases for creating custom type names
 - **Arrays** - Fixed-size single and multi-dimensional arrays (e.g., `int arr[10]`, `int matrix[3][4]`)
 - Pointers - Single and multi-level pointers with dereference
 
@@ -205,16 +209,21 @@ sequenceDiagram
 - Pointer: `&` (address-of), `*` (dereference)
 - Member Access: `.` (struct), `->` (pointer to struct)
 - **Ternary**: `?:` (conditional operator)
+- **Comma**: `,` (expression sequencing)
+- **Cast**: `(type)expr` - Type conversion
 - **sizeof**: `sizeof(type)` or `sizeof(expr)` - Returns size in bytes
 
 ### Control Flow
 - `if (expr) stmt`
 - `if (expr) stmt else stmt`
 - `while (expr) stmt`
+- **`do stmt while (expr);`** - Post-test loop
 - `for (init; cond; incr) stmt`
 - **`switch (expr) { case val: ... break; default: ... }`** - Multi-way branch
 - `break` - Exit loop or switch early
 - `continue` - Skip to next iteration
+- **`goto label;`** - Unconditional jump
+- **`label: stmt`** - Label declaration
 - `return expr;`
 
 ### Functions
@@ -237,6 +246,10 @@ int main() {
     arr[0] = 42;      // Write to array
     arr[5] = arr[0];  // Read from array
 
+    // Array initialization
+    int numbers[5] = {10, 20, 30, 40, 50};
+    char name[4] = {'J', 'o', 'h', 'n'};
+
     // Multi-dimensional arrays
     int matrix[3][4];  // 2D array: 3 rows, 4 columns
     int cube[2][3][4]; // 3D array: 2x3x4 = 24 elements
@@ -247,6 +260,7 @@ int main() {
 
 **Array Features:**
 - **Declaration**: `type identifier[size];` or `type identifier[size1][size2]...;`
+- **Initialization**: `int arr[3] = {1, 2, 3};` - Initialize with values
 - Subscript access: `arr[index]`
 - Assignment: `arr[index] = value;`
 - **Multi-dimensional**: Up to N dimensions with proper memory allocation
@@ -297,6 +311,53 @@ int main() {
 - Member assignment: `p.x = value`
 - Nested member access supported
 - Stack-allocated structs
+
+### Enums
+```c
+enum Color {
+    RED,      // 0
+    GREEN,    // 1
+    BLUE      // 2
+};
+
+enum Status {
+    OK = 0,
+    ERROR = -1,
+    PENDING = 100
+};
+
+int main() {
+    int color = RED;      // Use enum constant
+    int status = ERROR;   // Enums are integers
+    return color + status;
+}
+```
+
+**Enum Features:**
+- Auto-incrementing values starting from 0
+- Explicit value assignment (including negative values)
+- Enum constants usable as integers in expressions
+- Documented in generated assembly as comments
+
+### Typedef
+```c
+typedef int myint;
+typedef char* string;
+typedef int arr10[10];
+
+int main() {
+    myint x = 42;          // Same as int x
+    string name;           // Same as char* name
+    return x;
+}
+```
+
+**Typedef Features:**
+- Create type aliases for basic types
+- Pointer type aliases (e.g., `typedef int* intptr;`)
+- Array type aliases (e.g., `typedef int vector[3];`)
+- Documented in generated assembly as comments
+- **Note**: Using typedef'd types in declarations currently documented only
 
 ### Literals
 ```c
@@ -482,16 +543,17 @@ LPEND            ; Auto-decrement and branch
 ## Limitations
 
 - No floating point arithmetic
-- No type qualifiers (const, volatile, static)
+- Type qualifiers (const, volatile, static) are parsed but not enforced
 - No preprocessor (use cpp separately)
 - No inline assembly
-- No array initialization lists
-- No unions
-- No function pointers
+- No unions (yet)
+- No function pointers (yet)
 - No variadic functions (printf-style)
+- No struct initialization (yet)
 - Pointer arithmetic is basic (no complex expressions)
 - Multi-dimensional array access (`matrix[i][j]`) requires workaround with pointer arithmetic
 - String literals have basic support (not full string table implementation)
+- Typedef'd types documented but not fully integrated into type system
 
 ## Performance Considerations
 
@@ -506,6 +568,7 @@ LPEND            ; Auto-decrement and branch
 
 ## Future Enhancements
 
+### Completed Features ✓
 - [x] Array support ✓ **DONE!**
 - [x] Pointer support with pointer arithmetic ✓ **DONE!**
 - [x] Struct support with member access ✓ **DONE!**
@@ -519,17 +582,29 @@ LPEND            ; Auto-decrement and branch
 - [x] **String literals** ✓ **DONE!**
 - [x] **Character literals with escape sequences** ✓ **DONE!**
 - [x] **Better error messages with line/column numbers** ✓ **DONE!**
+- [x] **do-while loops** ✓ **DONE!**
+- [x] **Cast operators** ✓ **DONE!**
+- [x] **Comma operator** ✓ **DONE!**
+- [x] **goto and labels** ✓ **DONE!**
+- [x] **Multiple declarations (int a, b, c;)** ✓ **DONE!**
+- [x] **Enum declarations** ✓ **DONE!**
+- [x] **Typedef support** ✓ **DONE!**
+- [x] **Array initialization lists** ✓ **DONE!**
+
+### Planned Features
 - [ ] Multi-dimensional array subscripting (matrix[i][j] access)
-- [ ] Array initialization lists
+- [ ] Struct initialization
 - [ ] Union support
 - [ ] Function pointers
-- [ ] Comma operator
+- [ ] Type qualifiers enforcement (const, volatile, static, extern)
+- [ ] Type modifiers (unsigned, signed, short, long)
 - [ ] Preprocessor integration
 - [ ] Optimization passes (constant folding, dead code elimination)
 - [ ] Inline assembly support
 - [ ] Optimization flags (-O1, -O2, -O3)
 - [ ] Switch jump table optimization
 - [ ] Full string table implementation with .rodata section
+- [ ] Full typedef integration into type system
 
 ## Contributing
 

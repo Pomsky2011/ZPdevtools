@@ -80,6 +80,13 @@ ASTNode* ast_create_while(ASTNode* condition, ASTNode* body) {
     return node;
 }
 
+ASTNode* ast_create_do_while(ASTNode* condition, ASTNode* body) {
+    ASTNode* node = ast_create_node(AST_DO_WHILE);
+    node->do_while_stmt.condition = condition;
+    node->do_while_stmt.body = body;
+    return node;
+}
+
 ASTNode* ast_create_for(ASTNode* init, ASTNode* condition, ASTNode* increment, ASTNode* body) {
     ASTNode* node = ast_create_node(AST_FOR);
     node->for_stmt.init = init;
@@ -163,6 +170,32 @@ ASTNode* ast_create_struct_decl(const char* name, ASTNode** members, int member_
     return node;
 }
 
+ASTNode* ast_create_var_decl_list(ASTNode** declarations, int decl_count) {
+    ASTNode* node = ast_create_node(AST_VAR_DECL_LIST);
+    node->var_decl_list.declarations = declarations;
+    node->var_decl_list.decl_count = decl_count;
+    return node;
+}
+
+ASTNode* ast_create_enum_decl(const char* name, char** enumerator_names, int* enumerator_values, int enumerator_count) {
+    ASTNode* node = ast_create_node(AST_ENUM_DECL);
+    node->enum_decl.enum_name = strdup(name);
+    node->enum_decl.enumerator_names = enumerator_names;
+    node->enum_decl.enumerator_values = enumerator_values;
+    node->enum_decl.enumerator_count = enumerator_count;
+    return node;
+}
+
+ASTNode* ast_create_typedef(DataType base_type, const char* type_name, int pointer_level, int* array_sizes, int array_dim_count) {
+    ASTNode* node = ast_create_node(AST_TYPEDEF);
+    node->typedef_decl.base_type = base_type;
+    node->typedef_decl.type_name = strdup(type_name);
+    node->typedef_decl.pointer_level = pointer_level;
+    node->typedef_decl.array_sizes = array_sizes;
+    node->typedef_decl.array_dim_count = array_dim_count;
+    return node;
+}
+
 ASTNode* ast_create_pre_inc(const char* var_name) {
     ASTNode* node = ast_create_node(AST_PRE_INC);
     node->inc_dec.var_name = strdup(var_name);
@@ -194,6 +227,19 @@ ASTNode* ast_create_break() {
 
 ASTNode* ast_create_continue() {
     ASTNode* node = ast_create_node(AST_CONTINUE);
+    return node;
+}
+
+ASTNode* ast_create_goto(const char* label) {
+    ASTNode* node = ast_create_node(AST_GOTO);
+    node->goto_stmt.label = strdup(label);
+    return node;
+}
+
+ASTNode* ast_create_label(const char* label, ASTNode* statement) {
+    ASTNode* node = ast_create_node(AST_LABEL);
+    node->label_stmt.label = strdup(label);
+    node->label_stmt.statement = statement;
     return node;
 }
 
@@ -286,6 +332,32 @@ ASTNode* ast_create_sizeof_expr(ASTNode* expr) {
     return node;
 }
 
+ASTNode* ast_create_cast(DataType target_type, const char* type_name, int pointer_level, ASTNode* expr) {
+    ASTNode* node = ast_create_node(AST_CAST);
+    node->cast.target_type = target_type;
+    node->cast.type_name = type_name ? strdup(type_name) : NULL;
+    node->cast.pointer_level = pointer_level;
+    node->cast.expr = expr;
+    // Set the data type of the cast node to the target type
+    if (pointer_level > 0) {
+        node->data_type = TYPE_POINTER;
+    } else {
+        node->data_type = target_type;
+    }
+    return node;
+}
+
+ASTNode* ast_create_comma(ASTNode** expressions, int expr_count) {
+    ASTNode* node = ast_create_node(AST_COMMA);
+    node->comma.expressions = expressions;
+    node->comma.expr_count = expr_count;
+    // Type of comma expression is type of rightmost expression
+    if (expr_count > 0) {
+        node->data_type = expressions[expr_count - 1]->data_type;
+    }
+    return node;
+}
+
 ASTNode* ast_create_ternary(ASTNode* condition, ASTNode* then_expr, ASTNode* else_expr) {
     ASTNode* node = ast_create_node(AST_TERNARY);
     node->ternary.condition = condition;
@@ -314,6 +386,13 @@ ASTNode* ast_create_default(ASTNode** statements, int stmt_count) {
     ASTNode* node = ast_create_node(AST_DEFAULT);
     node->default_stmt.statements = statements;
     node->default_stmt.stmt_count = stmt_count;
+    return node;
+}
+
+ASTNode* ast_create_init_list(ASTNode** values, int value_count) {
+    ASTNode* node = ast_create_node(AST_INIT_LIST);
+    node->init_list.values = values;
+    node->init_list.value_count = value_count;
     return node;
 }
 
@@ -363,6 +442,10 @@ void ast_free(ASTNode* node) {
             ast_free(node->while_stmt.condition);
             ast_free(node->while_stmt.body);
             break;
+        case AST_DO_WHILE:
+            ast_free(node->do_while_stmt.condition);
+            ast_free(node->do_while_stmt.body);
+            break;
         case AST_FOR:
             ast_free(node->for_stmt.init);
             ast_free(node->for_stmt.condition);
@@ -400,6 +483,26 @@ void ast_free(ASTNode* node) {
             }
             free(node->struct_decl.members);
             break;
+        case AST_VAR_DECL_LIST:
+            for (int i = 0; i < node->var_decl_list.decl_count; i++) {
+                ast_free(node->var_decl_list.declarations[i]);
+            }
+            free(node->var_decl_list.declarations);
+            break;
+        case AST_ENUM_DECL:
+            free(node->enum_decl.enum_name);
+            for (int i = 0; i < node->enum_decl.enumerator_count; i++) {
+                free(node->enum_decl.enumerator_names[i]);
+            }
+            free(node->enum_decl.enumerator_names);
+            free(node->enum_decl.enumerator_values);
+            break;
+        case AST_TYPEDEF:
+            free(node->typedef_decl.type_name);
+            if (node->typedef_decl.array_sizes) {
+                free(node->typedef_decl.array_sizes);
+            }
+            break;
         case AST_ADDR_OF:
         case AST_DEREF:
             ast_free(node->unop.operand);
@@ -434,6 +537,16 @@ void ast_free(ASTNode* node) {
             if (node->sizeof_expr.type_name) free(node->sizeof_expr.type_name);
             if (node->sizeof_expr.expr) ast_free(node->sizeof_expr.expr);
             break;
+        case AST_CAST:
+            if (node->cast.type_name) free(node->cast.type_name);
+            ast_free(node->cast.expr);
+            break;
+        case AST_COMMA:
+            for (int i = 0; i < node->comma.expr_count; i++) {
+                ast_free(node->comma.expressions[i]);
+            }
+            free(node->comma.expressions);
+            break;
         case AST_TERNARY:
             ast_free(node->ternary.condition);
             ast_free(node->ternary.then_expr);
@@ -457,6 +570,19 @@ void ast_free(ASTNode* node) {
                 ast_free(node->default_stmt.statements[i]);
             }
             free(node->default_stmt.statements);
+            break;
+        case AST_INIT_LIST:
+            for (int i = 0; i < node->init_list.value_count; i++) {
+                ast_free(node->init_list.values[i]);
+            }
+            free(node->init_list.values);
+            break;
+        case AST_GOTO:
+            free(node->goto_stmt.label);
+            break;
+        case AST_LABEL:
+            free(node->label_stmt.label);
+            ast_free(node->label_stmt.statement);
             break;
         default:
             break;

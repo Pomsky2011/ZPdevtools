@@ -13,6 +13,15 @@ extern int col_num;
 void yyerror(const char* s);
 
 ASTNode* ast_root = NULL;
+
+// Global variables for passing type info to declarators
+static DataType current_decl_type;
+static char* current_decl_struct_name;
+
+// Global variables for enum enumerators
+static char** enum_names_temp;
+static int* enum_values_temp;
+static int enum_count_temp;
 %}
 
 %union {
@@ -31,14 +40,14 @@ ASTNode* ast_root = NULL;
 
 %token <number> NUMBER CHAR_LITERAL
 %token <string> IDENTIFIER STRING_LITERAL
-%token INT CHAR VOID STRUCT
-%token IF ELSE WHILE FOR RETURN BREAK CONTINUE
-%token SWITCH CASE DEFAULT SIZEOF
+%token INT CHAR VOID STRUCT ENUM TYPEDEF
+%token IF ELSE WHILE DO FOR RETURN BREAK CONTINUE
+%token SWITCH CASE DEFAULT GOTO SIZEOF
 %token EQ NE LE GE AND OR SHL SHR ARROW INC DEC
 %token ADD_ASSIGN SUB_ASSIGN MUL_ASSIGN DIV_ASSIGN MOD_ASSIGN
 %token AND_ASSIGN OR_ASSIGN XOR_ASSIGN
 
-%type <node> program declaration function_declaration statement struct_declaration
+%type <node> program declaration function_declaration statement struct_declaration enum_declaration typedef_declaration
 %type <node> expression primary_expression postfix_expression
 %type <node> unary_expression multiplicative_expression additive_expression
 %type <node> shift_expression relational_expression equality_expression
@@ -51,10 +60,11 @@ ASTNode* ast_root = NULL;
 %type <node> case_statement default_statement
 %type <dtype> type_specifier
 %type <list> declaration_list parameter_list argument_list struct_member_list
-%type <list> case_list statement_list_in_case
+%type <list> case_list statement_list_in_case declarator_list enumerator_list initializer_list
 %type <string> struct_or_union_specifier
-%type <number> pointer
+%type <number> pointer enum_constant
 %type <list> array_sizes
+%type <node> declarator
 
 %left ','
 %right '=' ADD_ASSIGN SUB_ASSIGN MUL_ASSIGN DIV_ASSIGN MOD_ASSIGN AND_ASSIGN OR_ASSIGN XOR_ASSIGN
@@ -97,13 +107,15 @@ declaration:
     function_declaration { $$ = $1; }
     | variable_declaration { $$ = $1; }
     | struct_declaration { $$ = $1; }
+    | enum_declaration { $$ = $1; }
+    | typedef_declaration { $$ = $1; }
     ;
 
 type_specifier:
-    INT { $$ = TYPE_INT; }
-    | CHAR { $$ = TYPE_CHAR; }
-    | VOID { $$ = TYPE_VOID; }
-    | struct_or_union_specifier { $$ = TYPE_STRUCT; }
+    INT { $$ = TYPE_INT; current_decl_struct_name = NULL; }
+    | CHAR { $$ = TYPE_CHAR; current_decl_struct_name = NULL; }
+    | VOID { $$ = TYPE_VOID; current_decl_struct_name = NULL; }
+    | struct_or_union_specifier { $$ = TYPE_STRUCT; current_decl_struct_name = $1; }
     ;
 
 struct_or_union_specifier:
@@ -119,6 +131,37 @@ struct_declaration:
     STRUCT IDENTIFIER '{' struct_member_list '}' ';' {
         $$ = ast_create_struct_decl($2, $4.items, $4.count);
         free($2);
+    }
+    ;
+
+enum_declaration:
+    ENUM IDENTIFIER '{' {
+        // Initialize enum globals
+        enum_names_temp = NULL;
+        enum_values_temp = NULL;
+        enum_count_temp = 0;
+      } enumerator_list '}' ';' {
+        // enumerator_list has populated enum_names_temp and enum_values_temp
+        $$ = ast_create_enum_decl($2, enum_names_temp, enum_values_temp, enum_count_temp);
+        free($2);
+    }
+    ;
+
+typedef_declaration:
+    TYPEDEF type_specifier pointer IDENTIFIER ';' {
+        // Simple typedef: typedef int myint; or typedef int* intptr;
+        $$ = ast_create_typedef($2, $4, $3, NULL, 0);
+        free($4);
+    }
+    | TYPEDEF type_specifier pointer IDENTIFIER array_sizes ';' {
+        // Array typedef: typedef int arr[10];
+        int* sizes = malloc(sizeof(int) * $5.count);
+        for (int i = 0; i < $5.count; i++) {
+            sizes[i] = ((int*)$5.items)[i];
+        }
+        free($5.items);
+        $$ = ast_create_typedef($2, $4, $3, sizes, $5.count);
+        free($4);
     }
     ;
 
@@ -139,6 +182,54 @@ struct_member_list:
     }
     ;
 
+enum_constant:
+    NUMBER { $$ = $1; }
+    | '-' NUMBER { $$ = -$2; }
+    ;
+
+enumerator_list:
+    IDENTIFIER {
+        // First enumerator, value = 0
+        enum_count_temp = 1;
+        enum_names_temp = malloc(sizeof(char*));
+        enum_values_temp = malloc(sizeof(int));
+        enum_names_temp[0] = strdup($1);
+        enum_values_temp[0] = 0;
+        free($1);
+        $$.count = 1;
+    }
+    | IDENTIFIER '=' enum_constant {
+        // First enumerator with explicit value
+        enum_count_temp = 1;
+        enum_names_temp = malloc(sizeof(char*));
+        enum_values_temp = malloc(sizeof(int));
+        enum_names_temp[0] = strdup($1);
+        enum_values_temp[0] = $3;
+        free($1);
+        $$.count = 1;
+    }
+    | enumerator_list ',' IDENTIFIER {
+        // Add enumerator, value = previous + 1
+        enum_count_temp++;
+        enum_names_temp = realloc(enum_names_temp, sizeof(char*) * enum_count_temp);
+        enum_values_temp = realloc(enum_values_temp, sizeof(int) * enum_count_temp);
+        enum_names_temp[enum_count_temp - 1] = strdup($3);
+        enum_values_temp[enum_count_temp - 1] = enum_values_temp[enum_count_temp - 2] + 1;
+        free($3);
+        $$.count = enum_count_temp;
+    }
+    | enumerator_list ',' IDENTIFIER '=' enum_constant {
+        // Add enumerator with explicit value
+        enum_count_temp++;
+        enum_names_temp = realloc(enum_names_temp, sizeof(char*) * enum_count_temp);
+        enum_values_temp = realloc(enum_values_temp, sizeof(int) * enum_count_temp);
+        enum_names_temp[enum_count_temp - 1] = strdup($3);
+        enum_values_temp[enum_count_temp - 1] = $5;
+        free($3);
+        $$.count = enum_count_temp;
+    }
+    ;
+
 array_sizes:
     '[' NUMBER ']' {
         $$.items = malloc(sizeof(int));
@@ -153,20 +244,70 @@ array_sizes:
     ;
 
 variable_declaration:
-    type_specifier pointer IDENTIFIER ';' {
-        char* struct_name = ($1 == TYPE_STRUCT) ? yylval.string : NULL;
-        $$ = ast_create_var_decl($1, $3, NULL, 0, 0, $2, struct_name);
-        free($3);
+    type_specifier {
+        current_decl_type = $1;
+        // current_decl_struct_name is already set by type_specifier
+      } declarator_list ';' {
+        // $3 is declarator_list (shifted due to mid-rule action)
+        ASTNode** decls = malloc(sizeof(ASTNode*) * $3.count);
+        for (int i = 0; i < $3.count; i++) {
+            decls[i] = $3.items[i];
+        }
+        if ($3.count == 1) {
+            // Single declarator - return it directly
+            $$ = decls[0];
+            free(decls);
+        } else {
+            // Multiple declarators - return var_decl_list
+            $$ = ast_create_var_decl_list(decls, $3.count);
+        }
     }
-    | type_specifier pointer IDENTIFIER '=' expression ';' {
-        char* struct_name = ($1 == TYPE_STRUCT) ? yylval.string : NULL;
-        $$ = ast_create_var_decl($1, $3, $5, 0, 0, $2, struct_name);
-        free($3);
+    ;
+
+declarator_list:
+    declarator {
+        $$.items = malloc(sizeof(ASTNode*));
+        $$.items[0] = $1;
+        $$.count = 1;
     }
-    | type_specifier pointer IDENTIFIER array_sizes ';' {
-        char* struct_name = ($1 == TYPE_STRUCT) ? yylval.string : NULL;
-        $$ = ast_create_var_decl_multidim($1, $3, NULL, (int*)$4.items, $4.count, $2, struct_name);
-        free($3);
+    | declarator_list ',' declarator {
+        $$.items = realloc($1.items, sizeof(ASTNode*) * ($1.count + 1));
+        $$.items[$1.count] = $3;
+        $$.count = $1.count + 1;
+    }
+    ;
+
+initializer_list:
+    assignment_expression {
+        $$.items = malloc(sizeof(ASTNode*));
+        $$.items[0] = $1;
+        $$.count = 1;
+    }
+    | initializer_list ',' assignment_expression {
+        $$.items = realloc($1.items, sizeof(ASTNode*) * ($1.count + 1));
+        $$.items[$1.count] = $3;
+        $$.count = $1.count + 1;
+    }
+    ;
+
+declarator:
+    pointer IDENTIFIER {
+        $$ = ast_create_var_decl(current_decl_type, $2, NULL, 0, 0, $1, current_decl_struct_name);
+        free($2);
+    }
+    | pointer IDENTIFIER '=' expression {
+        $$ = ast_create_var_decl(current_decl_type, $2, $4, 0, 0, $1, current_decl_struct_name);
+        free($2);
+    }
+    | pointer IDENTIFIER array_sizes {
+        $$ = ast_create_var_decl_multidim(current_decl_type, $2, NULL, (int*)$3.items, $3.count, $1, current_decl_struct_name);
+        free($2);
+    }
+    | pointer IDENTIFIER array_sizes '=' '{' initializer_list '}' {
+        // Array initialization: int arr[3] = {1, 2, 3};
+        ASTNode* init_list = ast_create_init_list($6.items, $6.count);
+        $$ = ast_create_var_decl_multidim(current_decl_type, $2, init_list, (int*)$3.items, $3.count, $1, current_decl_struct_name);
+        free($2);
     }
     ;
 
@@ -206,6 +347,10 @@ statement:
     | jump_statement { $$ = $1; }
     | variable_declaration { $$ = $1; }
     | switch_statement { $$ = $1; }
+    | IDENTIFIER ':' statement {
+        $$ = ast_create_label($1, $3);
+        free($1);
+    }
     ;
 
 compound_statement:
@@ -308,6 +453,9 @@ iteration_statement:
     WHILE '(' expression ')' statement {
         $$ = ast_create_while($3, $5);
     }
+    | DO statement WHILE '(' expression ')' ';' {
+        $$ = ast_create_do_while($5, $2);
+    }
     | FOR '(' expression_statement expression_statement ')' statement {
         $$ = ast_create_for($3, $4, NULL, $6);
     }
@@ -329,10 +477,30 @@ jump_statement:
     | CONTINUE ';' {
         $$ = ast_create_continue();
     }
+    | GOTO IDENTIFIER ';' {
+        $$ = ast_create_goto($2);
+        free($2);
+    }
     ;
 
 expression:
     assignment_expression { $$ = $1; }
+    | expression ',' assignment_expression {
+        // Build comma expression
+        if ($1->type == AST_COMMA) {
+            // Extend existing comma expression
+            ASTNode** exprs = realloc($1->comma.expressions, sizeof(ASTNode*) * ($1->comma.expr_count + 1));
+            exprs[$1->comma.expr_count] = $3;
+            $$ = ast_create_comma(exprs, $1->comma.expr_count + 1);
+            free($1);
+        } else {
+            // Create new comma expression
+            ASTNode** exprs = malloc(sizeof(ASTNode*) * 2);
+            exprs[0] = $1;
+            exprs[1] = $3;
+            $$ = ast_create_comma(exprs, 2);
+        }
+    }
     ;
 
 assignment_expression:
@@ -532,6 +700,10 @@ unary_expression:
     | DEC IDENTIFIER {
         $$ = ast_create_pre_dec($2);
         free($2);
+    }
+    | '(' type_specifier pointer ')' unary_expression {
+        char* type_name = ($2 == TYPE_STRUCT) ? yylval.string : NULL;
+        $$ = ast_create_cast($2, type_name, $3, $5);
     }
     | SIZEOF '(' type_specifier pointer ')' {
         char* type_name = ($3 == TYPE_STRUCT) ? yylval.string : NULL;

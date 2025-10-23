@@ -30,9 +30,12 @@ int col_num = 1;
 "char"              { col_num += yyleng; return CHAR; }
 "void"              { col_num += yyleng; return VOID; }
 "struct"            { col_num += yyleng; return STRUCT; }
+"enum"              { col_num += yyleng; return ENUM; }
+"typedef"           { col_num += yyleng; return TYPEDEF; }
 "if"                { col_num += yyleng; return IF; }
 "else"              { col_num += yyleng; return ELSE; }
 "while"             { col_num += yyleng; return WHILE; }
+"do"                { col_num += yyleng; return DO; }
 "for"               { col_num += yyleng; return FOR; }
 "return"            { col_num += yyleng; return RETURN; }
 "break"             { col_num += yyleng; return BREAK; }
@@ -40,6 +43,7 @@ int col_num = 1;
 "switch"            { col_num += yyleng; return SWITCH; }
 "case"              { col_num += yyleng; return CASE; }
 "default"           { col_num += yyleng; return DEFAULT; }
+"goto"              { col_num += yyleng; return GOTO; }
 "sizeof"            { col_num += yyleng; return SIZEOF; }
 
 [a-zA-Z_][a-zA-Z0-9_]* { col_num += yyleng; yylval.string = strdup(yytext); return IDENTIFIER; }

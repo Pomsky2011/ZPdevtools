@@ -294,6 +294,56 @@ static void codegen_sizeof(ASTNode* node) {
     emit("    LDA #$%04X\n", size);
 }
 
+// Code generation for cast expressions
+static void codegen_cast(ASTNode* node) {
+    // Evaluate the expression being cast
+    codegen_expression(node->cast.expr);
+
+    // Perform type conversion based on target type
+    // Note: DEF88186 is always in 16-bit mode (REP #$30)
+
+    if (node->cast.pointer_level > 0) {
+        // Casting to pointer - no conversion needed (pointers are always 16-bit)
+        // Result is already in A register
+        return;
+    }
+
+    switch (node->cast.target_type) {
+        case TYPE_INT:
+            // Casting to int - value is already 16-bit in A, no conversion needed
+            break;
+
+        case TYPE_CHAR:
+            // Casting to char - mask off high byte to get 8-bit value
+            emit("    AND #$00FF    ; Cast to char (truncate to 8 bits)\n");
+            break;
+
+        case TYPE_VOID:
+            // Casting to void - no-op (discard value semantics)
+            break;
+
+        case TYPE_STRUCT:
+            // Struct casts not supported (would require memcpy)
+            // Just leave value as-is
+            break;
+
+        case TYPE_POINTER:
+            // Already handled above
+            break;
+    }
+}
+
+// Code generation for comma expressions
+static void codegen_comma(ASTNode* node) {
+    // Evaluate all expressions left to right
+    // Only the last expression's result remains in A
+    for (int i = 0; i < node->comma.expr_count; i++) {
+        codegen_expression(node->comma.expressions[i]);
+        // Result of all but last expression is discarded
+    }
+    // Final result is in A register (from last expression)
+}
+
 static void codegen_ternary(ASTNode* node) {
     int else_label = new_label();
     int done_label = new_label();
@@ -1013,6 +1063,12 @@ static void codegen_expression(ASTNode* node) {
         case AST_SIZEOF:
             codegen_sizeof(node);
             break;
+        case AST_CAST:
+            codegen_cast(node);
+            break;
+        case AST_COMMA:
+            codegen_comma(node);
+            break;
         case AST_TERNARY:
             codegen_ternary(node);
             break;
@@ -1130,6 +1186,33 @@ static void codegen_while(ASTNode* node) {
 
     // Jump back to condition
     emit("    BRA .L%d\n", loop_label);
+
+    emit(".L%d:\n", done_label);
+
+    // Pop loop context
+    pop_loop();
+}
+
+// Code generation for do-while statements
+static void codegen_do_while(ASTNode* node) {
+    int loop_label = new_label();
+    int done_label = new_label();
+
+    // Push loop context for break/continue
+    push_loop(done_label, loop_label);
+
+    emit(".L%d:\n", loop_label);
+
+    // Loop body (executes at least once)
+    codegen_statement(node->do_while_stmt.body);
+
+    // Evaluate condition
+    codegen_expression(node->do_while_stmt.condition);
+
+    // Branch back if true (using BEQ + BRA since DEF88186 has no BNE)
+    emit("    CMP #$0000\n");
+    emit("    BEQ .L%d\n", done_label);  // If false (zero), exit
+    emit("    BRA .L%d\n", loop_label);  // Otherwise loop
 
     emit(".L%d:\n", done_label);
 
@@ -1299,12 +1382,35 @@ static void codegen_var_decl(ASTNode* node) {
                    node->var_decl.pointer_level, node->var_decl.struct_name);
     }
 
-    // Initialize if there's an initial value (not for arrays yet)
-    if (node->var_decl.init_value && !node->var_decl.is_array) {
-        codegen_expression(node->var_decl.init_value);
-
+    // Initialize if there's an initial value
+    if (node->var_decl.init_value) {
         Symbol* sym = find_symbol(node->var_decl.var_name);
-        if (sym) {
+        if (!sym) return;
+
+        if (node->var_decl.init_value->type == AST_INIT_LIST) {
+            // Array initialization: int arr[3] = {1, 2, 3};
+            ASTNode* init_list = node->var_decl.init_value;
+            int elem_size = (node->var_decl.var_type == TYPE_CHAR) ? 1 : 2;
+
+            for (int i = 0; i < init_list->init_list.value_count; i++) {
+                // Evaluate the expression for this element
+                codegen_expression(init_list->init_list.values[i]);
+
+                // Store to array element
+                int offset = sym->offset + (i * elem_size);
+                if (node->var_decl.var_type == TYPE_CHAR) {
+                    // For char arrays, store byte
+                    emit("    SEP #$20        ; 8-bit A\n");
+                    emit("    STA %d,S\n", offset);
+                    emit("    REP #$20        ; 16-bit A\n");
+                } else {
+                    // For int arrays, store word
+                    emit("    STA %d,S\n", offset);
+                }
+            }
+        } else if (!node->var_decl.is_array) {
+            // Regular variable initialization
+            codegen_expression(node->var_decl.init_value);
             emit("    STA %d,S\n", sym->offset);
         }
     }
@@ -1397,6 +1503,20 @@ static void codegen_continue(ASTNode* node) {
     emit("    BRA .L%d\n", loop->continue_label);
 }
 
+// Code generation for goto statements
+static void codegen_goto(ASTNode* node) {
+    // Emit unconditional branch to user label
+    emit("    BRA %s\n", node->goto_stmt.label);
+}
+
+// Code generation for label statements
+static void codegen_label(ASTNode* node) {
+    // Emit label
+    emit("%s:\n", node->label_stmt.label);
+    // Generate code for statement following the label
+    codegen_statement(node->label_stmt.statement);
+}
+
 static void codegen_statement(ASTNode* node) {
     if (!node) return;
 
@@ -1410,6 +1530,9 @@ static void codegen_statement(ASTNode* node) {
         case AST_WHILE:
             codegen_while(node);
             break;
+        case AST_DO_WHILE:
+            codegen_do_while(node);
+            break;
         case AST_FOR:
             codegen_for(node);
             break;
@@ -1422,6 +1545,12 @@ static void codegen_statement(ASTNode* node) {
         case AST_VAR_DECL:
             codegen_var_decl(node);
             break;
+        case AST_VAR_DECL_LIST:
+            // Process each declaration in the list
+            for (int i = 0; i < node->var_decl_list.decl_count; i++) {
+                codegen_var_decl(node->var_decl_list.declarations[i]);
+            }
+            break;
         case AST_EXPR_STMT:
             codegen_expr_stmt(node);
             break;
@@ -1430,6 +1559,12 @@ static void codegen_statement(ASTNode* node) {
             break;
         case AST_CONTINUE:
             codegen_continue(node);
+            break;
+        case AST_GOTO:
+            codegen_goto(node);
+            break;
+        case AST_LABEL:
+            codegen_label(node);
             break;
         default:
             fprintf(stderr, "Error: Unsupported statement type\n");
@@ -1459,12 +1594,22 @@ static int count_locals(ASTNode* node) {
                        node->var_decl.array_sizes[0] : 0;
             }
             return 1;
+        case AST_VAR_DECL_LIST: {
+            // Count all declarations in the list
+            int count = 0;
+            for (int i = 0; i < node->var_decl_list.decl_count; i++) {
+                count += count_locals(node->var_decl_list.declarations[i]);
+            }
+            return count;
+        }
         case AST_BLOCK:
             return count_locals_block(node);
         case AST_IF:
             return count_locals(node->if_stmt.then_stmt) + count_locals(node->if_stmt.else_stmt);
         case AST_WHILE:
             return count_locals(node->while_stmt.body);
+        case AST_DO_WHILE:
+            return count_locals(node->do_while_stmt.body);
         case AST_FOR:
             return count_locals(node->for_stmt.body);
         default:
@@ -1559,11 +1704,37 @@ void codegen_program(ASTNode* node, FILE* output) {
     emit("temp: .word 0\n");
     emit("\n.code\n");
 
-    // First pass: process struct declarations
+    // First pass: process struct, enum, and typedef declarations
     for (int i = 0; i < node->program.decl_count; i++) {
         ASTNode* decl = node->program.decls[i];
         if (decl->type == AST_STRUCT_DECL) {
             codegen_struct_decl(decl);
+        } else if (decl->type == AST_ENUM_DECL) {
+            // Enum declarations don't generate code, but we could add enum constants as comments
+            emit("\n; Enum: %s\n", decl->enum_decl.enum_name);
+            for (int j = 0; j < decl->enum_decl.enumerator_count; j++) {
+                emit(";   %s = %d\n", decl->enum_decl.enumerator_names[j], decl->enum_decl.enumerator_values[j]);
+            }
+        } else if (decl->type == AST_TYPEDEF) {
+            // Typedef declarations don't generate code, but we add them as comments for documentation
+            emit("\n; Typedef: %s = ", decl->typedef_decl.type_name);
+            const char* type_str = "";
+            switch (decl->typedef_decl.base_type) {
+                case TYPE_INT: type_str = "int"; break;
+                case TYPE_CHAR: type_str = "char"; break;
+                case TYPE_VOID: type_str = "void"; break;
+                default: type_str = "unknown"; break;
+            }
+            emit("%s", type_str);
+            for (int j = 0; j < decl->typedef_decl.pointer_level; j++) {
+                emit("*");
+            }
+            if (decl->typedef_decl.array_dim_count > 0) {
+                for (int j = 0; j < decl->typedef_decl.array_dim_count; j++) {
+                    emit("[%d]", decl->typedef_decl.array_sizes[j]);
+                }
+            }
+            emit("\n");
         }
     }
 
