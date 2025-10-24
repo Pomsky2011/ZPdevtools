@@ -14,8 +14,8 @@ start:
     WRH $FF                 ; Loop count = 255
     WRL $00
     SDB $01
-    WRH $00                 ; Y=0 (loop from 0), L=0010 (final block, normal loop)
-    WRL $20                 ; Bits: 0010 = W bit set (final block)
+    WRH $00                 ; Y=0 (loop from 0), L=0100 (final block, normal loop)
+    WRL $40                 ; Bits: 0100 = W bit (bit 2) set (final block)
     SDB $02
     WRH $00                 ; V=0, U=0 (no clamping)
     WRL $00                 ; T=0, S=0
@@ -23,20 +23,20 @@ start:
     ; Write 12 samples: square wave (6 high, 6 low)
     SDB $04
     SBF 0
-    SCR R0, 100             ; High value
-    STA R0, $04
-    STA R0, $05
-    STA R0, $06
-    STA R0, $07
-    STA R0, $08
-    STA R0, $09
-    SCR R0, 155             ; Low value (negative in signed 8-bit)
-    STA R0, $0A
-    STA R0, $0B
-    STA R0, $0C
-    STA R0, $0D
-    STA R0, $0E
-    STA R0, $0F
+    SCR X, 100              ; High value
+    STA X, $04
+    STA X, $05
+    STA X, $06
+    STA X, $07
+    STA X, $08
+    STA X, $09
+    SCR X, 155              ; Low value (negative in signed 8-bit)
+    STA X, $0A
+    STA X, $0B
+    STA X, $0C
+    STA X, $0D
+    STA X, $0E
+    STA X, $0F
 
     ; Create STL entry at $7000 pointing to SST block at $9000
     SDP $70
@@ -55,18 +55,21 @@ start:
     WRH $10
     WRL $00
 
-    ; Set volume to 128 (moderate gain)
+    ; Set volume to 255 (maximum gain = 2.0×)
     SDB $20
     SBF 0
-    SCR R0, 128
-    STA R0, $20
+    SCR X, 255
+    STA X, $20
 
     ; Set STL address to $7000 (starts playback!)
     SDB $54
     WRH $70
     WRL $00
 
-    ; Infinite loop (audio plays in background via MMP hardware)
+    ; Set RP for loop address
+    SRP $80
+
+    ; Infinite loop without stack corruption (audio plays in background via MMP hardware)
 loop:
     NOP 1000
-    JMP loop
+    BEQ X, X, loop  ; If X == X (always true), jump back to loop
