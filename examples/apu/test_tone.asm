@@ -50,9 +50,9 @@ start:
     ; Configure MMP channel 0 (left ear)
     SDP $00                 ; MMP registers
 
-    ; Set pitch to $1000 (1.0× speed, original pitch)
+    ; Set pitch to $0100 (1/16× speed, lower pitch)
     SDB $00
-    WRH $10
+    WRH $01
     WRL $00
 
     ; Set volume to 255 (maximum gain = 2.0×)
