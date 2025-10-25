@@ -168,12 +168,68 @@ The C compiler now supports a **comprehensive subset of C** suitable for game de
 - [ ] Verify interrupt handler examples work
 - [ ] Test PUSH/POP/JSR/RET stack operations
 
+## Recent Additions (2025-10-24)
+
+### ✅ Development Tools Suite - COMPLETE
+**Status**: COMPLETE - Professional debugging and analysis tools
+
+#### New Tools Added
+- ✅ **CPU Disassembler** (cpudisasm) - Disassemble DEF88186 binaries
+  - Full 256 opcode support
+  - Byte display (-b flag)
+  - Comments mode (-c flag)
+  - Range selection (-s/-e flags)
+
+- ✅ **PPU Disassembler** (ppudisasm) - Disassemble PPU microcode
+  - 15 basic + Preset E/F support
+  - 16-bit big-endian decoding
+  - Register operand display
+
+- ✅ **APU Disassembler** (apudisasm) - Disassemble APU programs
+  - All 47 APU instructions
+  - 16-bit little-endian decoding
+  - MMP/SST instruction support
+
+- ✅ **ROM Inspector** (rominspect) - Analyze ZPB ROM files
+  - Header information display
+  - Component size verification
+  - Checksum validation (-c flag)
+  - Component extraction (-x flag)
+  - Memory layout visualization (-v flag)
+
+- ✅ **Hex Viewer** (hexview) - Smart binary file viewer
+  - Customizable width and grouping
+  - ASCII display
+  - Range selection
+  - File statistics (--analyze flag)
+
+- ✅ **Enhanced Makefile** - Complete build system
+  - Convenience targets (assemblers, disassemblers, rom-tools, utilities)
+  - Help command (`make help`)
+  - Clean and install targets
+
+#### Documentation
+- ✅ **DEV-TOOLS.md** - Complete development tools guide
+  - Usage examples for all tools
+  - Workflow guides
+  - Tips and tricks
+  - Troubleshooting section
+
+#### Impact
+Now a **complete professional development environment**:
+- Full assembly/disassembly cycle
+- ROM building and inspection
+- Binary analysis and debugging
+- 11 total development tools
+- Comprehensive documentation
+
+---
+
 ## Future Enhancements
 
 ### High Priority
 - [ ] **Fix loop bug** (CRITICAL)
-- [ ] Add verbose/debug mode
-- [ ] Add disassembler tool
+- [ ] Add verbose/debug mode to assemblers
 - [ ] Better error messages with line numbers
 
 ### Medium Priority

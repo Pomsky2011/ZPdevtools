@@ -1,9 +1,31 @@
 # ZeroPoint Development Tools
 
-Complete development toolchain for the ZeroPoint fantasy console, including:
-- **C Compiler** (def88186cc) - Full C89/ANSI C compiler with preprocessor
-- **Assemblers** - ppuasm (PPU), apuasm (APU), cpuasm (DEF88186 CPU)
-- **ROM Builder** (rombuilder) - Combines CPU/PPU/APU binaries into ROM files
+Complete development toolchain for the ZeroPoint fantasy console.
+
+## Tools Overview
+
+### Compilers & Assemblers
+- **C Compiler** (def88186cc) - Full C89/ANSI C compiler with preprocessor and inline assembly
+- **CPU Assembler** (cpuasm) - DEF88186 assembly with `.include` support
+- **PPU Assembler** (ppuasm) - PPU microcode with shorthand macros
+- **APU Assembler** (apuasm) - APU/DSP programs with MMP/SST support
+
+### Disassemblers
+- **CPU Disassembler** (cpudisasm) - Disassemble DEF88186 binaries
+- **PPU Disassembler** (ppudisasm) - Disassemble PPU microcode
+- **APU Disassembler** (apudisasm) - Disassemble APU programs
+
+### ROM Tools
+- **ROM Builder** (rombuilder) - Combine CPU/PPU/APU binaries into ZPB ROM files
+- **ROM Inspector** (rominspect) - Analyze, verify, and extract ROM components
+
+### Utilities
+- **Hex Viewer** (hexview) - Smart binary file viewer with statistics
+- **WAV Converter** (wav2mmp) - Convert WAV files to MMP audio format
+
+**📖 For complete tool documentation, see [DEV-TOOLS.md](DEV-TOOLS.md)**
+
+---
 
 **⚠️ IMPORTANT: Assembler Shorthand Users**
 
