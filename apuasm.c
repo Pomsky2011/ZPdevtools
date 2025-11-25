@@ -2,10 +2,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
-#include <stdint.h>
+#include "compat.h"
 
-#define MAX_LABELS 1000
-#define MAX_LINE 1024
+#define MAX_LABELS 256
+#define MAX_LINE 512
 #define MAX_TOKENS 10
 
 typedef struct {
@@ -16,10 +16,10 @@ typedef struct {
 static Label labels[MAX_LABELS];
 static int label_count = 0;
 static uint16_t current_address = 0;
-static uint16_t instructions[32768];
-static int instruction_count = 0;
+static uint16_t* instructions = NULL;
+static long instruction_count = 0;
 
-// Token parsing
+/* Token parsing */
 static char* tokens[MAX_TOKENS];
 static int token_count = 0;
 
@@ -29,19 +29,24 @@ void error(const char* msg, int line) {
 }
 
 void trim(char* str) {
-    char* start = str;
+    char* start;
+    int len;
+
+    start = str;
     while (isspace(*start)) start++;
     if (start != str) memmove(str, start, strlen(start) + 1);
 
-    int len = strlen(str);
+    len = strlen(str);
     while (len > 0 && isspace(str[len - 1])) {
         str[--len] = '\0';
     }
 }
 
 void tokenize(char* line) {
+    char* token;
+
     token_count = 0;
-    char* token = strtok(line, " \t,");
+    token = strtok(line, " \t,");
     while (token && token_count < MAX_TOKENS) {
         tokens[token_count++] = token;
         token = strtok(NULL, " \t,");
@@ -54,6 +59,8 @@ int is_label_def(const char* str) {
 }
 
 void add_label(const char* name, uint16_t address) {
+    int len;
+
     if (label_count >= MAX_LABELS) {
         fprintf(stderr, "Too many labels\n");
         exit(1);
@@ -62,8 +69,8 @@ void add_label(const char* name, uint16_t address) {
     strncpy(labels[label_count].name, name, 63);
     labels[label_count].name[63] = '\0';
 
-    // Remove trailing colon if present
-    int len = strlen(labels[label_count].name);
+    /* Remove trailing colon if present */
+    len = strlen(labels[label_count].name);
     if (len > 0 && labels[label_count].name[len - 1] == ':') {
         labels[label_count].name[len - 1] = '\0';
     }
@@ -73,7 +80,8 @@ void add_label(const char* name, uint16_t address) {
 }
 
 int find_label(const char* name) {
-    for (int i = 0; i < label_count; i++) {
+    int i;
+    for (i = 0; i < label_count; i++) {
         if (strcmp(labels[i].name, name) == 0) {
             return labels[i].address;
         }
@@ -105,7 +113,7 @@ int parse_register(const char* str) {
 }
 
 void emit_instruction(uint16_t inst) {
-    if (instruction_count >= 32768) {
+    if (instruction_count >= 16384) {
         fprintf(stderr, "Too many instructions\n");
         exit(1);
     }
@@ -118,8 +126,13 @@ uint16_t encode_instruction(uint8_t opcode, uint16_t operand) {
 }
 
 void assemble_line(char* line, int line_num) {
-    // Remove comments
-    char* comment = strchr(line, ';');
+    char* comment;
+    const char* mnemonic;
+    char upper_mnemonic[64];
+    int i;
+
+    /* Remove comments */
+    comment = strchr(line, ';');
     if (comment) *comment = '\0';
 
     trim(line);
@@ -128,14 +141,14 @@ void assemble_line(char* line, int line_num) {
     tokenize(line);
     if (token_count == 0) return;
 
-    // Check for label definition
+    /* Check for label definition */
     if (is_label_def(tokens[0])) {
         add_label(tokens[0], current_address);
 
-        // Check if there's an instruction on the same line
+        /* Check if there's an instruction on the same line */
         if (token_count > 1) {
-            // Shift tokens left
-            for (int i = 0; i < token_count - 1; i++) {
+            /* Shift tokens left */
+            for (i = 0; i < token_count - 1; i++) {
                 tokens[i] = tokens[i + 1];
             }
             token_count--;
@@ -144,17 +157,16 @@ void assemble_line(char* line, int line_num) {
         }
     }
 
-    const char* mnemonic = tokens[0];
+    mnemonic = tokens[0];
 
-    // Convert to uppercase for comparison
-    char upper_mnemonic[64];
+    /* Convert to uppercase for comparison */
     strncpy(upper_mnemonic, mnemonic, 63);
     upper_mnemonic[63] = '\0';
-    for (int i = 0; upper_mnemonic[i]; i++) {
+    for (i = 0; upper_mnemonic[i]; i++) {
         upper_mnemonic[i] = toupper(upper_mnemonic[i]);
     }
 
-    // Instruction encoding
+    /* Instruction encoding */
 
     if (strcmp(upper_mnemonic, "NOP") == 0) {
         uint16_t stall = (token_count > 1) ? parse_number(tokens[1]) : 0;
@@ -364,44 +376,63 @@ void assemble_line(char* line, int line_num) {
         }
     }
     else if (strcmp(upper_mnemonic, "HLT") == 0) {
-        // Infinite loop: JMP 0 (jump to current address)
+        /* Infinite loop: JMP 0 (jump to current address) */
         emit_instruction(encode_instruction(0x01, 0));
     }
     else {
         char msg[128];
-        snprintf(msg, sizeof(msg), "Unknown instruction: %s", mnemonic);
+        sprintf(msg, "Unknown instruction: %s", mnemonic);
         error(msg, line_num);
     }
 }
 
-int main(int argc, char** argv) {
-    if (argc < 2) {
-        fprintf(stderr, "Usage: %s <input.asm> [output.bin]\n", argv[0]);
+int main(int argc, char* argv[]) {
+    const char* input_file;
+    const char* output_file;
+    char default_output[256];
+    char* dot;
+    FILE* fp;
+    FILE* out;
+    char line[512];
+    int line_num;
+    int i;
+    uint16_t inst;
+    uint8_t bytes[2];
+
+    /* Allocate instruction buffer (reduced for 16-bit DOS) */
+    instructions = (uint16_t*)malloc(16384 * sizeof(uint16_t));
+    if (!instructions) {
+        fprintf(stderr, "Out of memory\n");
         return 1;
     }
 
-    const char* input_file = argv[1];
-    const char* output_file = (argc >= 3) ? argv[2] : NULL;
+    if (argc < 2) {
+        fprintf(stderr, "Usage: %s <input.asm> [output.bin]\n", argv[0]);
+        free(instructions);
+        return 1;
+    }
 
-    // Generate output filename if not provided
-    char default_output[256];
+    input_file = argv[1];
+    output_file = (argc >= 3) ? argv[2] : NULL;
+
+    /* Generate output filename if not provided */
     if (!output_file) {
         strncpy(default_output, input_file, 250);
-        char* dot = strrchr(default_output, '.');
+        dot = strrchr(default_output, '.');
         if (dot) *dot = '\0';
         strcat(default_output, ".bin");
         output_file = default_output;
     }
 
-    // First pass: collect labels
-    FILE* fp = fopen(input_file, "r");
+    /* First pass: collect labels */
+    fp = fopen(input_file, "r");
     if (!fp) {
         fprintf(stderr, "Cannot open input file: %s\n", input_file);
+        free(instructions);
         return 1;
     }
 
-    char line[MAX_LINE];
-    int line_num = 0;
+    line_num = 0;
 
     while (fgets(line, sizeof(line), fp)) {
         line_num++;
@@ -410,17 +441,19 @@ int main(int argc, char** argv) {
 
     fclose(fp);
 
-    // Write output
-    FILE* out = fopen(output_file, "wb");
+    /* Write output */
+    out = fopen(output_file, "wb");
     if (!out) {
         fprintf(stderr, "Cannot open output file: %s\n", output_file);
+        free(instructions);
         return 1;
     }
 
-    // Write instructions as 16-bit big-endian
-    for (int i = 0; i < instruction_count; i++) {
-        uint16_t inst = instructions[i];
-        uint8_t bytes[2] = {(inst >> 8) & 0xFF, inst & 0xFF};
+    /* Write instructions as 16-bit big-endian */
+    for (i = 0; i < instruction_count; i++) {
+        inst = instructions[i];
+        bytes[0] = (inst >> 8) & 0xFF;
+        bytes[1] = inst & 0xFF;
         fwrite(bytes, 1, 2, out);
     }
 
@@ -430,5 +463,6 @@ int main(int argc, char** argv) {
            instruction_count, instruction_count * 2, output_file);
     printf("Labels defined: %d\n", label_count);
 
+    free(instructions);
     return 0;
 }

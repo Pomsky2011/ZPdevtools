@@ -12,21 +12,21 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdint.h>
+#include "compat.h"
 #include <string.h>
 
-#define MAX_SAMPLES 10000000  // 10 million samples max
+#define MAX_SAMPLES 10000000  /* 10 million samples max */
 
 typedef struct {
-    char chunk_id[4];      // "RIFF"
+    char chunk_id[4];      /* "RIFF" */
     uint32_t chunk_size;
-    char format[4];        // "WAVE"
+    char format[4];        /* "WAVE" */
 } WAVHeader;
 
 typedef struct {
-    char subchunk_id[4];   // "fmt "
+    char subchunk_id[4];   /* "fmt " */
     uint32_t subchunk_size;
-    uint16_t audio_format; // 1 = PCM
+    uint16_t audio_format; /* 1 = PCM */
     uint16_t num_channels;
     uint32_t sample_rate;
     uint32_t byte_rate;
@@ -35,7 +35,7 @@ typedef struct {
 } WAVFormat;
 
 typedef struct {
-    char subchunk_id[4];   // "data"
+    char subchunk_id[4];   /* "data" */
     uint32_t subchunk_size;
 } WAVDataHeader;
 
@@ -72,14 +72,27 @@ int16_t clamp_8bit(int16_t value) {
 }
 
 int read_wav(const char *filename, int16_t **samples, int *sample_count, int *sample_rate) {
-    FILE *f = fopen(filename, "rb");
+    FILE *f;
+    WAVHeader header;
+    WAVFormat fmt;
+    int found_fmt;
+    WAVDataHeader data_hdr;
+    int found_data;
+    int bytes_per_sample;
+    int num_samples;
+    int i;
+    int ch;
+    int32_t sample_sum;
+    int16_t sample;
+    uint8_t u8_sample;
+
+    f = fopen(filename, "rb");
     if (!f) {
         fprintf(stderr, "Error: Cannot open file: %s\n", filename);
         return 0;
     }
 
-    // Read RIFF header
-    WAVHeader header;
+    /* Read RIFF header */
     fread(&header.chunk_id, 1, 4, f);
     if (memcmp(header.chunk_id, "RIFF", 4) != 0) {
         fprintf(stderr, "Error: Not a valid WAV file (missing RIFF)\n");
@@ -95,9 +108,8 @@ int read_wav(const char *filename, int16_t **samples, int *sample_count, int *sa
         return 0;
     }
 
-    // Find and read fmt chunk
-    WAVFormat fmt;
-    int found_fmt = 0;
+    /* Find and read fmt chunk */
+    found_fmt = 0;
     while (!found_fmt && !feof(f)) {
         fread(&fmt.subchunk_id, 1, 4, f);
         fmt.subchunk_size = read_uint32_le(f);
@@ -111,12 +123,12 @@ int read_wav(const char *filename, int16_t **samples, int *sample_count, int *sa
             fmt.block_align = read_uint16_le(f);
             fmt.bits_per_sample = read_uint16_le(f);
 
-            // Skip any extra fmt data
+            /* Skip any extra fmt data */
             if (fmt.subchunk_size > 16) {
                 fseek(f, fmt.subchunk_size - 16, SEEK_CUR);
             }
         } else {
-            // Skip unknown chunk
+            /* Skip unknown chunk */
             fseek(f, fmt.subchunk_size, SEEK_CUR);
         }
     }
@@ -140,9 +152,8 @@ int read_wav(const char *filename, int16_t **samples, int *sample_count, int *sa
         return 0;
     }
 
-    // Find and read data chunk
-    WAVDataHeader data_hdr;
-    int found_data = 0;
+    /* Find and read data chunk */
+    found_data = 0;
     while (!found_data && !feof(f)) {
         fread(&data_hdr.subchunk_id, 1, 4, f);
         data_hdr.subchunk_size = read_uint32_le(f);
@@ -150,7 +161,7 @@ int read_wav(const char *filename, int16_t **samples, int *sample_count, int *sa
         if (memcmp(data_hdr.subchunk_id, "data", 4) == 0) {
             found_data = 1;
         } else {
-            // Skip unknown chunk
+            /* Skip unknown chunk */
             fseek(f, data_hdr.subchunk_size, SEEK_CUR);
         }
     }
@@ -161,9 +172,9 @@ int read_wav(const char *filename, int16_t **samples, int *sample_count, int *sa
         return 0;
     }
 
-    // Calculate number of samples
-    int bytes_per_sample = fmt.bits_per_sample / 8;
-    int num_samples = data_hdr.subchunk_size / (bytes_per_sample * fmt.num_channels);
+    /* Calculate number of samples */
+    bytes_per_sample = fmt.bits_per_sample / 8;
+    num_samples = data_hdr.subchunk_size / (bytes_per_sample * fmt.num_channels);
 
     if (num_samples > MAX_SAMPLES) {
         fprintf(stderr, "Error: Too many samples (%d, max %d)\n", num_samples, MAX_SAMPLES);
@@ -173,7 +184,7 @@ int read_wav(const char *filename, int16_t **samples, int *sample_count, int *sa
 
     printf("  %d samples\n", num_samples);
 
-    // Allocate sample buffer
+    /* Allocate sample buffer */
     *samples = (int16_t *)malloc(num_samples * sizeof(int16_t));
     if (!*samples) {
         fprintf(stderr, "Error: Cannot allocate memory for samples\n");
@@ -181,24 +192,22 @@ int read_wav(const char *filename, int16_t **samples, int *sample_count, int *sa
         return 0;
     }
 
-    // Read and convert samples
-    for (int i = 0; i < num_samples; i++) {
-        int32_t sample_sum = 0;
+    /* Read and convert samples */
+    for (i = 0; i < num_samples; i++) {
+        sample_sum = 0;
 
-        for (int ch = 0; ch < fmt.num_channels; ch++) {
-            int16_t sample;
-
+        for (ch = 0; ch < fmt.num_channels; ch++) {
             if (fmt.bits_per_sample == 16) {
                 sample = (int16_t)read_uint16_le(f);
-            } else {  // 8-bit
-                uint8_t u8_sample = fgetc(f);
+            } else {  /* 8-bit */
+                u8_sample = fgetc(f);
                 sample = ((int16_t)u8_sample - 128) * 256;
             }
 
             sample_sum += sample;
         }
 
-        // Average if multiple channels
+        /* Average if multiple channels */
         (*samples)[i] = sample_sum / fmt.num_channels;
     }
 
@@ -210,44 +219,60 @@ int read_wav(const char *filename, int16_t **samples, int *sample_count, int *sa
 }
 
 void downsample_to_8bit(int16_t *samples_16bit, int8_t *samples_8bit, int count) {
-    for (int i = 0; i < count; i++) {
-        // Use arithmetic right shift to match Python's floor division for signed values
-        int16_t sample_8 = samples_16bit[i] >> 8;
+    int i;
+    int16_t sample_8;
+
+    for (i = 0; i < count; i++) {
+        /* Use arithmetic right shift to match Python's floor division for signed values */
+        sample_8 = samples_16bit[i] >> 8;
         samples_8bit[i] = clamp_8bit(sample_8);
     }
 }
 
 int create_sst_blocks(int8_t *samples_8bit, int sample_count, SSTBlock **blocks, int loop) {
-    // Pad to multiple of 12
-    int padded_count = ((sample_count + 11) / 12) * 12;
-    int8_t *padded_samples = (int8_t *)calloc(padded_count, sizeof(int8_t));
+    int padded_count;
+    int8_t *padded_samples;
+    int num_blocks;
+    int block_idx;
+    SSTBlock *block;
+    int is_final;
+    uint8_t Y;
+    uint8_t L;
+    int i;
+    int sample_idx;
+    int8_t sample_signed;
+    uint8_t sample_unsigned;
+
+    /* Pad to multiple of 12 */
+    padded_count = ((sample_count + 11) / 12) * 12;
+    padded_samples = (int8_t *)calloc(padded_count, sizeof(int8_t));
     memcpy(padded_samples, samples_8bit, sample_count);
 
-    int num_blocks = padded_count / 12;
+    num_blocks = padded_count / 12;
     *blocks = (SSTBlock *)malloc(num_blocks * sizeof(SSTBlock));
 
-    for (int block_idx = 0; block_idx < num_blocks; block_idx++) {
-        SSTBlock *block = &(*blocks)[block_idx];
+    for (block_idx = 0; block_idx < num_blocks; block_idx++) {
+        block = &(*blocks)[block_idx];
         memset(block->data, 0, 16);
 
-        // Header byte 0: Loop count
+        /* Header byte 0: Loop count */
         block->data[0] = loop ? 0xFF : 0x00;
 
-        // Header byte 1: Y (loop start) and L (config)
-        int is_final = (block_idx == num_blocks - 1);
-        uint8_t Y = 0;  // Loop from sample 0
-        uint8_t L = is_final ? 0x4 : 0x0;  // W bit (bit 2)
+        /* Header byte 1: Y (loop start) and L (config) */
+        is_final = (block_idx == num_blocks - 1);
+        Y = 0;  /* Loop from sample 0 */
+        L = is_final ? 0x4 : 0x0;  /* W bit (bit 2) */
         block->data[1] = (Y << 4) | L;
 
-        // Header bytes 2-3: Clamping (disabled)
-        block->data[2] = 0x00;  // V=0, U=0
-        block->data[3] = 0x00;  // T=0, S=0
+        /* Header bytes 2-3: Clamping (disabled) */
+        block->data[2] = 0x00;  /* V=0, U=0 */
+        block->data[3] = 0x00;  /* T=0, S=0 */
 
-        // Sample data (bytes 4-15)
-        for (int i = 0; i < 12; i++) {
-            int sample_idx = block_idx * 12 + i;
-            int8_t sample_signed = padded_samples[sample_idx];
-            uint8_t sample_unsigned = (uint8_t)sample_signed;
+        /* Sample data (bytes 4-15) */
+        for (i = 0; i < 12; i++) {
+            sample_idx = block_idx * 12 + i;
+            sample_signed = padded_samples[sample_idx];
+            sample_unsigned = (uint8_t)sample_signed;
             block->data[4 + i] = sample_unsigned;
         }
     }
@@ -258,47 +283,51 @@ int create_sst_blocks(int8_t *samples_8bit, int sample_count, SSTBlock **blocks,
 
 void generate_inc_file(const char *output_path, SSTBlock *blocks, int num_blocks,
                        uint16_t sst_address, uint16_t stl_address, const char *label_prefix) {
-    FILE *f = fopen(output_path, "w");
+    FILE *f;
+    int block_idx;
+    SSTBlock *block;
+    uint16_t block_offset;
+    int i;
+
+    f = fopen(output_path, "w");
     if (!f) {
         fprintf(stderr, "Error: Cannot open output file: %s\n", output_path);
         return;
     }
 
-    // Header comments
+    /* Header comments */
     fprintf(f, "; Generated by wav2mmp\n");
     fprintf(f, "; SST blocks: %d (%d bytes)\n", num_blocks, num_blocks * 16);
     fprintf(f, "; SST address: $%04X\n", sst_address);
     fprintf(f, "; STL address: $%04X\n", stl_address);
     fprintf(f, "\n");
 
-    // SST data label
+    /* SST data label */
     fprintf(f, "%s_sst_data:\n", label_prefix);
 
-    // Generate SST blocks
-    for (int block_idx = 0; block_idx < num_blocks; block_idx++) {
-        SSTBlock *block = &blocks[block_idx];
+    /* Generate SST blocks */
+    for (block_idx = 0; block_idx < num_blocks; block_idx++) {
+        block = &blocks[block_idx];
+        block_offset = block_idx * 16;
 
-        fprintf(f, "    ; Block %d\n", block_idx);
+        fprintf(f, "    ; Block %d (offset $%02X)\n", block_idx, block_offset);
         fprintf(f, "    ; Header: loops=$%02X, Y/L=$%02X, V/U=$%02X, T/S=$%02X\n",
                 block->data[0], block->data[1], block->data[2], block->data[3]);
 
-        // Header (4 bytes)
-        for (int i = 0; i < 4; i += 2) {
-            fprintf(f, "    WRH $%02X\n", block->data[i]);
-            fprintf(f, "    WRL $%02X\n", block->data[i + 1]);
-        }
+        /* Set DB to block offset */
+        fprintf(f, "    SDB $%02X\n", block_offset);
+        fprintf(f, "    SBF 0\n");
 
-        // Samples (12 bytes)
-        fprintf(f, "    ; Samples (12 bytes)\n");
-        for (int i = 4; i < 16; i += 2) {
-            fprintf(f, "    WRH $%02X\n", block->data[i]);
-            fprintf(f, "    WRL $%02X\n", block->data[i + 1]);
+        /* Write all 16 bytes using STA */
+        for (i = 0; i < 16; i++) {
+            fprintf(f, "    SCR X, %d\n", block->data[i]);
+            fprintf(f, "    STA X, $%02X\n", block_offset + i);
         }
 
         fprintf(f, "\n");
     }
 
-    // STL entry
+    /* STL entry */
     fprintf(f, "%s_stl_entry:\n", label_prefix);
     fprintf(f, "    ; Sample data address = $%04X\n", sst_address);
     fprintf(f, "    WRH $%02X\n", sst_address >> 8);
@@ -308,7 +337,7 @@ void generate_inc_file(const char *output_path, SSTBlock *blocks, int num_blocks
     fprintf(f, "    WRL $00\n");
     fprintf(f, "\n");
 
-    // Usage example
+    /* Usage example */
     fprintf(f, "; Usage example:\n");
     fprintf(f, ";   SDP $%02X      ; Set DP to SST page\n", sst_address >> 8);
     fprintf(f, ";   SDB $00\n");
@@ -345,21 +374,35 @@ uint16_t parse_address(const char *str) {
     return (uint16_t)strtol(str, NULL, 10);
 }
 
-int main(int argc, char **argv) {
+int main(int argc, char* argv[]) {
+    const char *input_file;
+    const char *output_file;
+    uint16_t sst_addr;
+    uint16_t stl_addr;
+    const char *label;
+    int loop;
+    int i;
+    int16_t *samples_16bit;
+    int sample_count;
+    int sample_rate;
+    int8_t *samples_8bit;
+    SSTBlock *blocks;
+    int num_blocks;
+
     if (argc < 3) {
         print_usage(argv[0]);
         return 1;
     }
 
-    const char *input_file = argv[1];
-    const char *output_file = argv[2];
-    uint16_t sst_addr = 0x9000;
-    uint16_t stl_addr = 0x7000;
-    const char *label = "sfx";
-    int loop = 1;
+    input_file = argv[1];
+    output_file = argv[2];
+    sst_addr = 0x9000;
+    stl_addr = 0x7000;
+    label = "sfx";
+    loop = 1;
 
-    // Parse optional arguments
-    for (int i = 3; i < argc; i++) {
+    /* Parse optional arguments */
+    for (i = 3; i < argc; i++) {
         if (strcmp(argv[i], "--sst-addr") == 0 && i + 1 < argc) {
             sst_addr = parse_address(argv[++i]);
         } else if (strcmp(argv[i], "--stl-addr") == 0 && i + 1 < argc) {
@@ -377,10 +420,10 @@ int main(int argc, char **argv) {
 
     printf("Converting %s -> %s\n", input_file, output_file);
 
-    // Read WAV file
-    int16_t *samples_16bit = NULL;
-    int sample_count = 0;
-    int sample_rate = 0;
+    /* Read WAV file */
+    samples_16bit = NULL;
+    sample_count = 0;
+    sample_rate = 0;
 
     if (!read_wav(input_file, &samples_16bit, &sample_count, &sample_rate)) {
         return 1;
@@ -388,22 +431,22 @@ int main(int argc, char **argv) {
 
     printf("Read %d samples\n", sample_count);
 
-    // Convert to 8-bit
-    int8_t *samples_8bit = (int8_t *)malloc(sample_count * sizeof(int8_t));
+    /* Convert to 8-bit */
+    samples_8bit = (int8_t *)malloc(sample_count * sizeof(int8_t));
     downsample_to_8bit(samples_16bit, samples_8bit, sample_count);
     printf("Converted to 8-bit: %d samples\n", sample_count);
 
-    // Create SST blocks
-    SSTBlock *blocks = NULL;
-    int num_blocks = create_sst_blocks(samples_8bit, sample_count, &blocks, loop);
+    /* Create SST blocks */
+    blocks = NULL;
+    num_blocks = create_sst_blocks(samples_8bit, sample_count, &blocks, loop);
     printf("Created %d SST blocks\n", num_blocks);
 
-    // Generate .inc file
+    /* Generate .inc file */
     generate_inc_file(output_file, blocks, num_blocks, sst_addr, stl_addr, label);
 
     printf("\nConversion complete!\n");
 
-    // Cleanup
+    /* Cleanup */
     free(samples_16bit);
     free(samples_8bit);
     free(blocks);

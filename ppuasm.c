@@ -8,12 +8,12 @@
 #include <string.h>
 #include <ctype.h>
 
-#define MAX_LINE_LENGTH 512
-#define MAX_LABELS 1000
-#define MAX_INSTRUCTIONS 32768
+#define MAX_LINE_LENGTH 256
+#define MAX_LABELS 512
+#define MAX_INSTRUCTIONS 4096
 #define MAX_LABEL_LENGTH 64
-#define MAX_ALIASES 256
-#define MAX_EXPANDED_LINES 65536
+#define MAX_ALIASES 128
+#define MAX_EXPANDED_LINES 1024
 
 /* Instruction structure */
 typedef struct {
@@ -37,20 +37,20 @@ typedef struct {
     char to[MAX_LABEL_LENGTH];
 } Alias;
 
-/* Global tables */
-static Instruction instructions[MAX_INSTRUCTIONS];
+/* Global tables - using pointers for malloc */
+static Instruction* instructions = NULL;
 static int instruction_count = 0;
 
-static Label labels[MAX_LABELS];
+static Label* labels = NULL;
 static int label_count = 0;
 
-static Alias aliases[MAX_ALIASES];
+static Alias* aliases = NULL;
 static int alias_count = 0;
 
-static char expanded_lines[MAX_EXPANDED_LINES][MAX_LINE_LENGTH];
+static char** expanded_lines = NULL;
 static int expanded_line_count = 0;
 
-static unsigned char output_buffer[65536];
+static unsigned char* output_buffer = NULL;
 static int output_size = 0;
 
 /* Target register state tracking (for SETBYTE with labels) */
@@ -205,6 +205,8 @@ static int parse_target_register(const char *str, int line_num) {
 /* Parse byte selector (LSB or MSB) */
 static int parse_byte_selector(const char *str, int line_num) {
     char temp[64];
+    int value;
+
     strcpy(temp, str);
     to_upper(temp);
 
@@ -212,7 +214,7 @@ static int parse_byte_selector(const char *str, int line_num) {
     if (strcmp(temp, "MSB") == 0) return 1;
 
     /* Try as number */
-    int value = parse_immediate(str, line_num);
+    value = parse_immediate(str, line_num);
     if (value == 0 || value == 1) {
         return value;
     }
@@ -299,7 +301,7 @@ static int lookup_preset_f(const char *mnemonic) {
 static unsigned short assemble_preset_e(Instruction *inst) {
     int subop = lookup_preset_e(inst->mnemonic);
     int suboperand = 0;
-    int target_reg, byte_sel, source_reg, imm, dest_reg;
+    int target_reg, byte_sel, source_reg, imm, dest_reg, value;
 
     if (strcmp(inst->mnemonic, "TARREG") == 0) {
         /* TARREG T, Y, X - encoding: 00 TT Y 0 XXXXXX */
@@ -315,14 +317,20 @@ static unsigned short assemble_preset_e(Instruction *inst) {
     else if (strcmp(inst->mnemonic, "SETBYTE") == 0) {
         /* SETBYTE T, 0xXX - encoding: 01 TT XXXXXXXX */
         target_reg = parse_target_register(inst->operand1, inst->line_num);
-        int value = get_operand_value(inst->operand2, inst->line_num);
+        value = get_operand_value(inst->operand2, inst->line_num);
 
-        /* Apply byte selection based on target register state */
-        if (target_reg_byte_sel[target_reg] == 1) {
-            /* MSB - shift right by 8 */
-            imm = (value >> 8) & 0xFF;
+        /* Handle labels (addresses) vs literals (8-bit values) */
+        if (is_label(inst->operand2)) {
+            /* Label reference - extract appropriate byte based on target */
+            if (target_reg_byte_sel[target_reg] == 1) {
+                /* MSB - use high byte */
+                imm = (value >> 8) & 0xFF;
+            } else {
+                /* LSB - use low byte */
+                imm = value & 0xFF;
+            }
         } else {
-            /* LSB - just mask */
+            /* 8-bit literal - use as-is */
             imm = value & 0xFF;
         }
 
@@ -457,8 +465,17 @@ static unsigned short assemble_instruction(Instruction *inst) {
 static void expand_shorthands(FILE *fp) {
     char line[MAX_LINE_LENGTH];
     char *p;
-    int line_num = 0;
-    int auto_label_counter = 0;
+    int line_num;
+    int auto_label_counter;
+    char left[MAX_LABEL_LENGTH], right[MAX_LABEL_LENGTH];
+    char *left_ptr;
+    char temp_line[MAX_LINE_LENGTH];
+    char *label_end;
+    char mnemonic[64], op1[64], op2[64];
+    char *token;
+
+    line_num = 0;
+    auto_label_counter = 0;
 
     while (fgets(line, sizeof(line), fp)) {
         line_num++;
@@ -476,7 +493,6 @@ static void expand_shorthands(FILE *fp) {
         /* Check for alias definition */
         p = strstr(line, "=");
         if (p) {
-            char left[MAX_LABEL_LENGTH], right[MAX_LABEL_LENGTH];
             *p = 0;
             strcpy(left, line);
             strcpy(right, p + 1);
@@ -484,7 +500,7 @@ static void expand_shorthands(FILE *fp) {
             trim(right);
 
             /* Remove $ prefix if present from left side */
-            char *left_ptr = left;
+            left_ptr = left;
             if (left[0] == '$') left_ptr = left + 1;
 
             /* Alias syntax: LEFT = RIGHT means "replace RIGHT with LEFT" */
@@ -496,19 +512,20 @@ static void expand_shorthands(FILE *fp) {
         }
 
         /* Parse instruction mnemonic */
-        char temp_line[MAX_LINE_LENGTH];
         strcpy(temp_line, line);
 
         /* Handle labels */
-        char *label_end = strchr(temp_line, ':');
+        label_end = strchr(temp_line, ':');
         if (label_end) {
             strcpy(expanded_lines[expanded_line_count++], line);
             continue;
         }
 
         /* Get mnemonic and operands */
-        char mnemonic[64] = {0}, op1[64] = {0}, op2[64] = {0};
-        char *token = strtok(temp_line, " \t,");
+        mnemonic[0] = 0;
+        op1[0] = 0;
+        op2[0] = 0;
+        token = strtok(temp_line, " \t,");
         if (token) {
             strcpy(mnemonic, token);
             to_upper(mnemonic);
@@ -704,10 +721,37 @@ int main(int argc, char *argv[]) {
     FILE *input_fp, *output_fp;
     char *input_file, *output_file;
     char default_output[256];
+    int i;
+
+    /* Allocate memory for arrays */
+    instructions = (Instruction*)malloc(MAX_INSTRUCTIONS * sizeof(Instruction));
+    labels = (Label*)malloc(MAX_LABELS * sizeof(Label));
+    aliases = (Alias*)malloc(MAX_ALIASES * sizeof(Alias));
+    output_buffer = (unsigned char*)malloc(65536);
+    expanded_lines = (char**)malloc(MAX_EXPANDED_LINES * sizeof(char*));
+
+    if (!instructions || !labels || !aliases || !output_buffer || !expanded_lines) {
+        fprintf(stderr, "Error: Out of memory\n");
+        return 1;
+    }
+
+    for (i = 0; i < MAX_EXPANDED_LINES; i++) {
+        expanded_lines[i] = (char*)malloc(MAX_LINE_LENGTH);
+        if (!expanded_lines[i]) {
+            fprintf(stderr, "Error: Out of memory\n");
+            return 1;
+        }
+    }
 
     if (argc < 2) {
         fprintf(stderr, "Usage: ppuasm <input.asm> [-o output.bin]\n");
         fprintf(stderr, "  Assembles ZeroPoint PPU microcode\n");
+        free(instructions);
+        free(labels);
+        free(aliases);
+        free(output_buffer);
+        for (i = 0; i < MAX_EXPANDED_LINES; i++) free(expanded_lines[i]);
+        free(expanded_lines);
         return 1;
     }
 
@@ -729,6 +773,12 @@ int main(int argc, char *argv[]) {
     input_fp = fopen(input_file, "r");
     if (!input_fp) {
         fprintf(stderr, "Error: Cannot open input file: %s\n", input_file);
+        free(instructions);
+        free(labels);
+        free(aliases);
+        free(output_buffer);
+        for (i = 0; i < MAX_EXPANDED_LINES; i++) free(expanded_lines[i]);
+        free(expanded_lines);
         return 1;
     }
 
@@ -746,6 +796,12 @@ int main(int argc, char *argv[]) {
     output_fp = fopen(output_file, "wb");
     if (!output_fp) {
         fprintf(stderr, "Error: Cannot open output file: %s\n", output_file);
+        free(instructions);
+        free(labels);
+        free(aliases);
+        free(output_buffer);
+        for (i = 0; i < MAX_EXPANDED_LINES; i++) free(expanded_lines[i]);
+        free(expanded_lines);
         return 1;
     }
 
@@ -754,6 +810,14 @@ int main(int argc, char *argv[]) {
 
     printf("Assembled %d instructions -> %d bytes\n", instruction_count, output_size);
     printf("Output: %s\n", output_file);
+
+    /* Free allocated memory */
+    free(instructions);
+    free(labels);
+    free(aliases);
+    free(output_buffer);
+    for (i = 0; i < MAX_EXPANDED_LINES; i++) free(expanded_lines[i]);
+    free(expanded_lines);
 
     return 0;
 }

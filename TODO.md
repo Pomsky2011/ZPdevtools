@@ -168,6 +168,61 @@ The C compiler now supports a **comprehensive subset of C** suitable for game de
 - [ ] Verify interrupt handler examples work
 - [ ] Test PUSH/POP/JSR/RET stack operations
 
+## Recent Additions (2025-11-24)
+
+### ✅ MS-DOS 4.01 Compatibility - COMPLETE
+**Status**: COMPLETE - All tools compile and run on MS-DOS 4.01 with Turbo C 2.01
+
+#### Achievement
+Successfully ported all 10 ZeroPoint development tools to run on MS-DOS 4.01 (1988) with Turbo C 2.01 (1987) targeting Intel 80286 (1982) processors!
+
+#### Tools Ported
+- ✅ **cpuasm** - DEF88186 CPU assembler
+- ✅ **ppuasm** - PPU microcode assembler
+- ✅ **apuasm** - APU program assembler
+- ✅ **cpudasm** - CPU disassembler (DOS name for cpudisasm)
+- ✅ **ppudasm** - PPU disassembler (DOS name for ppudisasm)
+- ✅ **apudasm** - APU disassembler (DOS name for apudisasm)
+- ✅ **rombuild** - ROM builder (DOS name for rombuilder)
+- ✅ **hexview** - Hex viewer
+- ✅ **rominsp** - ROM inspector (DOS name for rominspect)
+- ✅ **wav2mmp** - WAV to MMP converter
+
+#### Technical Achievements
+- ✅ **Strict C89/ANSI C compliance** - No C99 features
+  - Variable declarations at function start
+  - C-style comments only (/* */)
+  - sprintf instead of snprintf
+  - %lu/%ld instead of %zu/%zd
+  - char* argv[] instead of char** argv
+  - No variadic macros
+
+- ✅ **Dynamic memory allocation** - Bypassed 64KB static data limit
+  - ppuasm: ~1MB malloc for tables
+  - apuasm: ~32KB malloc for instruction buffer
+  - Uses compact memory model (-mc)
+
+- ✅ **8.3 filename compatibility** - DOS filename limitations
+  - Created symlinks for modern builds
+  - Both naming schemes work seamlessly
+
+- ✅ **DOS line endings** - CRLF format for all files
+- ✅ **compat.h** - C89 compatibility header
+- ✅ **BUILD.BAT** - Automated DOS build script
+- ✅ **TURBOC.CFG** - Proper compiler configuration
+
+#### Documentation
+- ✅ **DOS_BUILD.md** - Complete DOS build guide
+- ✅ **DOS_COMPATIBILITY.txt** - Technical summary
+- ✅ **README.md** - Updated with DOS build section
+- ✅ **Makefile** - Still works for modern builds
+
+#### Impact
+**Complete retro-compatible toolchain** - Same source code compiles on:
+- Modern systems (macOS, Linux, Windows with GCC/Clang)
+- MS-DOS 4.01+ with Turbo C 2.01
+- Proven C89 portability to virtually any platform
+
 ## Recent Additions (2025-10-24)
 
 ### ✅ Development Tools Suite - COMPLETE

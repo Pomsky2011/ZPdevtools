@@ -45,19 +45,32 @@ See `docs/ppu/preset-e-and-shorthands.txt` for complete documentation.
 
 ## Building
 
-### PPU Assembler (zpasm)
+### Modern Systems (macOS, Linux, Windows)
+
+Build all tools at once:
 ```bash
-gcc -o zpasm zpasm.c
+make
 ```
 
-This creates the `zpasm` executable for assembling PPU programs.
-
-### APU Assembler (apuasm)
+Or build individual tool categories:
 ```bash
-gcc -o apuasm apuasm.c
+make assemblers      # ppuasm, apuasm, cpuasm
+make disassemblers   # cpudisasm, ppudisasm, apudisasm
+make rom-tools       # rombuilder, rominspect
+make utilities       # hexview, wav2mmp
 ```
 
-This creates the `apuasm` executable for assembling APU programs.
+### MS-DOS 4.01+ / Turbo C 2.01
+
+All tools are fully compatible with MS-DOS 4.01+ and can be compiled with Turbo C 2.01!
+
+See **[DOS_BUILD.md](DOS_BUILD.md)** for complete DOS build instructions.
+
+Quick build on DOS:
+1. Copy all `.c` files and `compat.h` to DOS
+2. Run `BUILD.BAT`
+
+**Note:** DOS versions use 8.3 filenames (e.g., `cpudasm.c` instead of `cpudisasm.c`). Modern builds support both names via symlinks.
 
 ## zpasm - PPU Assembler
 

@@ -1,0 +1,96 @@
+ZeroPoint DevTools - DOS Compatibility Summary
+==============================================
+
+All 10 ZeroPoint development tools are now fully compatible with MS-DOS 4.01+
+and compile successfully with Turbo C 2.01 (16-bit, 80286).
+
+TESTED CONFIGURATION
+--------------------
+- MS-DOS 4.01
+- Turbo C 2.01
+- DOSBox-X emulator
+- 32 MB RAM (16 MB minimum)
+- Intel 80286 or higher
+
+FILES
+-----
+All tools use the same source for both modern and DOS builds.
+DOS requires 8.3 filenames; modern systems use symlinks for compatibility.
+
+DOS Name       Modern Name      Description
+--------       -----------      -----------
+apuasm.c       (same)           APU assembler
+cpuasm.c       (same)           CPU assembler  
+ppuasm.c       (same)           PPU assembler
+apudasm.c   -> apudisasm.c      APU disassembler
+cpudasm.c   -> cpudisasm.c      CPU disassembler
+ppudasm.c   -> ppudisasm.c      PPU disassembler
+rombuild.c  -> rombuilder.c     ROM builder
+hexview.c      (same)           Hex viewer
+rominsp.c   -> rominspect.c     ROM inspector
+wav2mmp.c      (same)           WAV to MMP converter
+compat.h       (same)           C89 compatibility header
+
+C89/ANSI C COMPLIANCE
+---------------------
+All code is strictly C89 compliant with NO C99 features:
+  ✓ Variable declarations at function start
+  ✓ C-style comments only (/* */)
+  ✓ No for-loop variable declarations
+  ✓ sprintf instead of snprintf
+  ✓ %lu/%ld instead of %zu/%zd
+  ✓ char* argv[] instead of char** argv
+  ✓ No variadic macros
+  ✓ No inline keyword (defined away in compat.h)
+
+MEMORY MANAGEMENT
+-----------------
+Uses malloc() for large data structures to avoid 64KB static data limit:
+  - ppuasm: ~1MB for tables (instructions, labels, expanded lines)
+  - apuasm: ~32KB for instruction buffer
+  - All others use small static arrays
+
+Compact memory model (-mc):
+  - 64KB code segment
+  - Far data pointers (unlimited data in heap)
+  - Optimal for DOS with large malloc allocations
+
+LIMITATIONS
+-----------
+Reduced limits compared to modern versions (still adequate for typical use):
+  - cpuasm: 256 labels, 16KB code buffer, 256 fixups
+  - ppuasm: 512 labels, 4096 instructions, 128 aliases, 1024 expanded lines
+  - apuasm: 256 labels, 16384 instructions
+
+BUILDING ON DOS
+---------------
+1. Copy all .c files and compat.h to DOS-accessible directory
+2. Run BUILD.BAT (creates TURBOC.CFG and compiles all tools)
+3. Verify with: DIR *.EXE
+
+BUILDING ON MODERN SYSTEMS
+--------------------------
+make              # Build all tools
+make clean        # Clean build artifacts
+
+Both DOS and modern filenames work via symlinks.
+
+TESTING
+-------
+All 10 executables tested and verified working:
+  ✓ apuasm.exe, cpuasm.exe, ppuasm.exe - Assemble programs
+  ✓ apudasm.exe, cpudasm.exe, ppudasm.exe - Disassemble binaries
+  ✓ rombuild.exe - Package ROM files
+  ✓ hexview.exe - View binary files
+  ✓ rominsp.exe - Inspect ROM structure
+  ✓ wav2mmp.exe - Convert audio
+
+SUCCESS!
+--------
+Complete ZeroPoint development toolchain running on 1988 operating system
+with 1987 compiler targeting 1982 processor architecture!
+
+Built with Claude Code
+https://claude.com/claude-code
+
+Co-Authored-By: Claude <noreply@anthropic.com>

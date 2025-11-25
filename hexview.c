@@ -17,26 +17,29 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdint.h>
+#include "compat.h"
 #include <string.h>
 #include <ctype.h>
 
 #define DEFAULT_WIDTH 16
 #define MAX_WIDTH 64
 
-// Parse number (supports hex 0x prefix or decimal)
-static long long parse_number(const char* str) {
+/* Parse number (supports hex 0x prefix or decimal) */
+static long parse_number(const char* str) {
     if (str[0] == '0' && (str[1] == 'x' || str[1] == 'X')) {
-        return strtoll(str + 2, NULL, 16);
+        return strtol(str + 2, NULL, 16);
     }
-    return strtoll(str, NULL, 10);
+    return strtol(str, NULL, 10);
 }
 
-// Print ASCII representation
+/* Print ASCII representation */
 static void print_ascii(uint8_t* data, size_t size) {
+    size_t i;
+    char c;
+
     printf(" |");
-    for (size_t i = 0; i < size; i++) {
-        char c = data[i];
+    for (i = 0; i < size; i++) {
+        c = data[i];
         if (isprint(c) && c != '\n' && c != '\r' && c != '\t') {
             printf("%c", c);
         } else {
@@ -46,47 +49,52 @@ static void print_ascii(uint8_t* data, size_t size) {
     printf("|");
 }
 
-// Display hex dump
+/* Display hex dump */
 static void hexdump(FILE* in, FILE* out, size_t offset, size_t count,
                    int width, int group, int hex_only) {
     uint8_t buffer[MAX_WIDTH];
-    size_t total_read = 0;
+    size_t total_read;
+    size_t to_read;
+    size_t bytes_read;
+    size_t i;
 
-    // Seek to offset
+    total_read = 0;
+
+    /* Seek to offset */
     if (offset > 0) {
         fseek(in, offset, SEEK_SET);
     }
 
-    // Read and display
+    /* Read and display */
     while (total_read < count || count == 0) {
-        size_t to_read = width;
+        to_read = width;
         if (count > 0 && total_read + to_read > count) {
             to_read = count - total_read;
         }
 
-        size_t bytes_read = fread(buffer, 1, to_read, in);
+        bytes_read = fread(buffer, 1, to_read, in);
         if (bytes_read == 0) break;
 
-        // Print address
+        /* Print address */
         if (hex_only) {
             fprintf(out, "%08zX: ", offset + total_read);
         } else {
             fprintf(out, "%08zX (%8zu): ", offset + total_read, offset + total_read);
         }
 
-        // Print hex bytes
-        for (size_t i = 0; i < width; i++) {
+        /* Print hex bytes */
+        for (i = 0; i < (size_t)width; i++) {
             if (i < bytes_read) {
                 fprintf(out, "%02X", buffer[i]);
 
-                // Add space after group
+                /* Add space after group */
                 if (group > 1 && (i + 1) % group == 0) {
                     fprintf(out, " ");
                 } else if (group == 1) {
                     fprintf(out, " ");
                 }
             } else {
-                // Pad with spaces
+                /* Pad with spaces */
                 fprintf(out, "  ");
                 if (group > 1 && (i + 1) % group == 0) {
                     fprintf(out, " ");
@@ -96,7 +104,7 @@ static void hexdump(FILE* in, FILE* out, size_t offset, size_t count,
             }
         }
 
-        // Print ASCII
+        /* Print ASCII */
         fprintf(out, " ");
         print_ascii(buffer, bytes_read);
         fprintf(out, "\n");
@@ -104,17 +112,28 @@ static void hexdump(FILE* in, FILE* out, size_t offset, size_t count,
         total_read += bytes_read;
     }
 
-    // Summary
+    /* Summary */
     if (!hex_only) {
         fprintf(out, "\nTotal bytes displayed: %zu (0x%zX)\n", total_read, total_read);
     }
 }
 
-// Analyze file statistics
+/* Analyze file statistics */
 static void analyze_file(FILE* f) {
-    uint8_t byte_counts[256] = {0};
-    size_t total = 0;
+    uint8_t byte_counts[256];
+    size_t total;
     int c;
+    int pass;
+    int max_byte;
+    size_t max_count;
+    int i;
+
+    /* Initialize array */
+    for (i = 0; i < 256; i++) {
+        byte_counts[i] = 0;
+    }
+
+    total = 0;
 
     rewind(f);
     while ((c = fgetc(f)) != EOF) {
@@ -126,12 +145,12 @@ static void analyze_file(FILE* f) {
     printf("Total bytes: %zu (0x%zX)\n", total, total);
     printf("\nMost common bytes:\n");
 
-    // Find top 10 most common bytes
-    for (int pass = 0; pass < 10; pass++) {
-        int max_byte = 0;
-        size_t max_count = 0;
+    /* Find top 10 most common bytes */
+    for (pass = 0; pass < 10; pass++) {
+        max_byte = 0;
+        max_count = 0;
 
-        for (int i = 0; i < 256; i++) {
+        for (i = 0; i < 256; i++) {
             if (byte_counts[i] > max_count) {
                 max_count = byte_counts[i];
                 max_byte = i;
@@ -144,7 +163,7 @@ static void analyze_file(FILE* f) {
                max_byte, max_byte, max_count,
                (max_count * 100.0) / total);
 
-        byte_counts[max_byte] = 0;  // Remove for next pass
+        byte_counts[max_byte] = 0;  /* Remove for next pass */
     }
 
     printf("\n");
@@ -152,17 +171,30 @@ static void analyze_file(FILE* f) {
 }
 
 int main(int argc, char* argv[]) {
-    const char* input_file = NULL;
-    const char* output_file = NULL;
-    size_t offset = 0;
-    size_t count = 0;  // 0 = entire file
-    int width = DEFAULT_WIDTH;
-    int group = 1;
-    int hex_only = 0;
-    int analyze = 0;
+    const char* input_file;
+    const char* output_file;
+    size_t offset;
+    size_t count;
+    int width;
+    int group;
+    int hex_only;
+    int analyze;
+    int i;
+    FILE* in;
+    size_t file_size;
+    FILE* out;
 
-    // Parse arguments
-    for (int i = 1; i < argc; i++) {
+    input_file = NULL;
+    output_file = NULL;
+    offset = 0;
+    count = 0;  /* 0 = entire file */
+    width = DEFAULT_WIDTH;
+    group = 1;
+    hex_only = 0;
+    analyze = 0;
+
+    /* Parse arguments */
+    for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-s") == 0 && i + 1 < argc) {
             offset = parse_number(argv[++i]);
         } else if (strcmp(argv[i], "-n") == 0 && i + 1 < argc) {
@@ -208,28 +240,28 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Open input file
-    FILE* in = fopen(input_file, "rb");
+    /* Open input file */
+    in = fopen(input_file, "rb");
     if (!in) {
         fprintf(stderr, "Error: Cannot open file '%s'\n", input_file);
         return 1;
     }
 
-    // Get file size
+    /* Get file size */
     fseek(in, 0, SEEK_END);
-    size_t file_size = ftell(in);
+    file_size = ftell(in);
     rewind(in);
 
     printf("File: %s\n", input_file);
     printf("Size: %zu bytes (0x%zX)\n\n", file_size, file_size);
 
-    // Analyze if requested
+    /* Analyze if requested */
     if (analyze) {
         analyze_file(in);
     }
 
-    // Open output file if specified
-    FILE* out = stdout;
+    /* Open output file if specified */
+    out = stdout;
     if (output_file) {
         out = fopen(output_file, "w");
         if (!out) {
@@ -239,10 +271,10 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Perform hex dump
+    /* Perform hex dump */
     hexdump(in, out, offset, count, width, group, hex_only);
 
-    // Cleanup
+    /* Cleanup */
     fclose(in);
     if (output_file) fclose(out);
 

@@ -1,8 +1,10 @@
 # ZeroPoint Development Tools Makefile
+# Compatible with MS-DOS 4.01+ (use Makefile.dos for DOS builds)
 
 CC = gcc
 CXX = g++
-CFLAGS = -Wall -O2
+# Use C89/ANSI C for MS-DOS compatibility
+CFLAGS = -Wall -O2 -std=c89 -pedantic -I.
 CXXFLAGS = -Wall -O2 -std=c++17
 LDFLAGS =
 

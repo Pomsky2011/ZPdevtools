@@ -21,12 +21,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
-#include <stdint.h>
+#include "compat.h"
 
-#define MAX_LINE 1024
-#define MAX_LABELS 10000
-#define MAX_CODE 65536
-#define MAX_FIXUPS 10000
+#define MAX_LINE 256
+#define MAX_LABELS 256
+#define MAX_CODE 16384
+#define MAX_FIXUPS 256
 
 /* Addressing modes */
 typedef enum {
@@ -130,8 +130,9 @@ char *skip_whitespace(char *p) {
 
 /* Parse a token */
 char *parse_token(char *p, char *token) {
+    int i;
     p = skip_whitespace(p);
-    int i = 0;
+    i = 0;
     while (*p && !isspace(*p) && *p != ',' && *p != ';') {
         token[i++] = *p++;
     }
@@ -151,8 +152,9 @@ int parse_number(const char *str, uint32_t *value) {
         return sscanf(str + 2, "%x", value) == 1;
     } else if (str[0] == '0' && str[1] == 'b') {
         /* Binary */
+        const char *p;
         *value = 0;
-        for (const char *p = str + 2; *p; p++) {
+        for (p = str + 2; *p; p++) {
             if (*p == '0' || *p == '1') {
                 *value = (*value << 1) | (*p - '0');
             } else {
@@ -173,7 +175,8 @@ int parse_number(const char *str, uint32_t *value) {
 
 /* Find label by name */
 int find_label(const char *name) {
-    for (int i = 0; i < num_labels; i++) {
+    int i;
+    for (i = 0; i < num_labels; i++) {
         if (strcmp(labels[i].name, name) == 0) {
             return i;
         }
@@ -218,18 +221,23 @@ void add_fixup(uint16_t addr, const char *label, AddressingMode mode, int size) 
 
 /* Resolve all fixups */
 void resolve_fixups(void) {
-    for (int i = 0; i < num_fixups; i++) {
-        Fixup *f = &fixups[i];
-        int idx = find_label(f->label);
+    int i;
+    for (i = 0; i < num_fixups; i++) {
+        Fixup *f;
+        int idx;
+        uint16_t addr;
+        char msg[128];
+
+        f = &fixups[i];
+        idx = find_label(f->label);
 
         if (idx < 0 || !labels[idx].defined) {
-            char msg[128];
-            snprintf(msg, sizeof(msg), "Undefined label: %s", f->label);
+            sprintf(msg, "Undefined label: %s", f->label);
             error(msg);
             continue;
         }
 
-        uint16_t addr = labels[idx].address;
+        addr = labels[idx].address;
 
         if (f->mode == AM_PC_RELATIVE_LONG) {
             /* Calculate relative offset */
@@ -251,6 +259,15 @@ void resolve_fixups(void) {
 
 /* Detect addressing mode from operand */
 AddressingMode detect_addressing_mode(const char *operand, const char *mnemonic) {
+    uint32_t val;
+    char temp[MAX_LINE];
+    const char *start;
+    const char *end;
+    const char *close;
+    const char *num_str;
+    char *comma;
+    int len;
+
     if (!operand || !*operand) {
         /* Check for accumulator mode */
         if (strcmp(mnemonic, "INC") == 0 || strcmp(mnemonic, "DEC") == 0 ||
@@ -275,7 +292,7 @@ AddressingMode detect_addressing_mode(const char *operand, const char *mnemonic)
     /* Detect various indirect modes */
     if (operand[0] == '(') {
         /* Look for closing ) */
-        const char *close = strchr(operand, ')');
+        close = strchr(operand, ')');
         if (close) {
             /* Check what comes after ) */
             if (*(close + 1) == ',') {
@@ -289,11 +306,9 @@ AddressingMode detect_addressing_mode(const char *operand, const char *mnemonic)
             } else if (*(close + 1) == '\0' || *(close + 1) == ' ') {
                 /* ($12) or ($1234) */
                 /* Determine if DP or absolute based on value */
-                uint32_t val;
-                char temp[MAX_LINE];
-                const char *start = operand + 1;
-                const char *end = close;
-                int len = end - start;
+                start = operand + 1;
+                end = close;
+                len = end - start;
                 strncpy(temp, start, len);
                 temp[len] = '\0';
 
@@ -317,7 +332,7 @@ AddressingMode detect_addressing_mode(const char *operand, const char *mnemonic)
 
     /* Bracket notation for long indirect */
     if (operand[0] == '[') {
-        const char *close = strchr(operand, ']');
+        close = strchr(operand, ']');
         if (close) {
             if (*(close + 1) == ',') {
                 return AM_DP_INDIRECT_LONG_Y;
@@ -333,12 +348,9 @@ AddressingMode detect_addressing_mode(const char *operand, const char *mnemonic)
     /* Check for indexed modes */
     if (strstr(operand, ",X")) {
         /* Determine absolute vs DP vs long based on value */
-        char temp[MAX_LINE];
         strcpy(temp, operand);
-        char *comma = strstr(temp, ",");
+        comma = strstr(temp, ",");
         if (comma) *comma = '\0';
-
-        uint32_t val;
         if (parse_number(temp, &val)) {
             if (val <= 0xFF) {
                 return AM_DP_X;
@@ -352,12 +364,9 @@ AddressingMode detect_addressing_mode(const char *operand, const char *mnemonic)
     }
 
     if (strstr(operand, ",Y")) {
-        char temp[MAX_LINE];
         strcpy(temp, operand);
-        char *comma = strstr(temp, ",");
+        comma = strstr(temp, ",");
         if (comma) *comma = '\0';
-
-        uint32_t val;
         if (parse_number(temp, &val)) {
             if (val <= 0xFF) {
                 return AM_DP_Y;
@@ -373,9 +382,8 @@ AddressingMode detect_addressing_mode(const char *operand, const char *mnemonic)
     }
 
     /* Direct value - determine based on size */
-    uint32_t val;
     /* Make sure to handle $ prefix even without # */
-    const char *num_str = operand;
+    num_str = operand;
     if (*num_str == '$' || *num_str == '0' || isdigit(*num_str)) {
         if (parse_number(operand, &val)) {
             if (val <= 0xFF) {
@@ -394,8 +402,9 @@ AddressingMode detect_addressing_mode(const char *operand, const char *mnemonic)
 
 /* Find instruction by mnemonic and addressing mode */
 const Instruction *find_instruction(const char *mnemonic, AddressingMode mode) {
+    int i;
     /* First try exact match */
-    for (int i = 0; i < num_instructions; i++) {
+    for (i = 0; i < num_instructions; i++) {
         if (strcmp(instructions[i].mnemonic, mnemonic) == 0 &&
             instructions[i].mode == mode) {
             return &instructions[i];
@@ -405,7 +414,7 @@ const Instruction *find_instruction(const char *mnemonic, AddressingMode mode) {
     /* Try flexible matching for some instructions */
     if (mode == AM_IMPLIED) {
         /* Some instructions default to accumulator */
-        for (int i = 0; i < num_instructions; i++) {
+        for (i = 0; i < num_instructions; i++) {
             if (strcmp(instructions[i].mnemonic, mnemonic) == 0 &&
                 instructions[i].mode == AM_ACCUMULATOR) {
                 return &instructions[i];
@@ -415,7 +424,7 @@ const Instruction *find_instruction(const char *mnemonic, AddressingMode mode) {
 
     /* If AM_ABSOLUTE didn't match, try AM_ABSOLUTE_LONG (for labels) */
     if (mode == AM_ABSOLUTE) {
-        for (int i = 0; i < num_instructions; i++) {
+        for (i = 0; i < num_instructions; i++) {
             if (strcmp(instructions[i].mnemonic, mnemonic) == 0 &&
                 instructions[i].mode == AM_ABSOLUTE_LONG) {
                 return &instructions[i];
@@ -646,11 +655,30 @@ void init_instructions(void) {
 
 /* Assemble a single line */
 int assemble_line(char *line) {
-    char *p = line;
+    char *p;
     char token[MAX_LINE];
+    char *comment;
+    char *colon;
+    char *t;
+    char filename[MAX_LINE];
+    char *src;
+    char *end;
+    uint32_t addr;
+    uint32_t val;
+    char operand[MAX_LINE];
+    AddressingMode mode;
+    const Instruction *inst;
+    char msg[128];
+    uint32_t value;
+    int is_label;
+    const char *val_str;
+    char clean_val[MAX_LINE];
+    int i, j;
+
+    p = line;
 
     /* Remove comments */
-    char *comment = strchr(line, ';');
+    comment = strchr(line, ';');
     if (comment) *comment = '\0';
 
     /* Skip leading whitespace */
@@ -659,7 +687,7 @@ int assemble_line(char *line) {
 
     /* Check for label */
     if (isalpha(*p) || *p == '_' || *p == '.') {
-        char *colon = strchr(p, ':');
+        colon = strchr(p, ':');
         if (colon) {
             /* It's a label */
             *colon = '\0';
@@ -677,7 +705,7 @@ int assemble_line(char *line) {
     if (!*token) return 0;
 
     /* Convert to uppercase */
-    for (char *t = token; *t; t++) *t = toupper(*t);
+    for (t = token; *t; t++) *t = toupper(*t);
 
     /* Check for directives */
     if (strcmp(token, ".DATA") == 0) {
@@ -696,11 +724,10 @@ int assemble_line(char *line) {
         p = parse_token(p, token);
         if (*token) {
             /* Remove quotes if present */
-            char filename[MAX_LINE];
-            char *src = token;
+            src = token;
             if (*src == '"') src++;
             strcpy(filename, src);
-            char *end = filename + strlen(filename) - 1;
+            end = filename + strlen(filename) - 1;
             if (*end == '"') *end = '\0';
 
             /* Recursively assemble the included file */
@@ -712,7 +739,6 @@ int assemble_line(char *line) {
     if (strcmp(token, ".ORG") == 0) {
         p = skip_whitespace(p);
         p = parse_token(p, token);
-        uint32_t addr;
         if (parse_number(token, &addr)) {
             pc = addr;
             org = addr;
@@ -725,7 +751,6 @@ int assemble_line(char *line) {
         while (*p) {
             p = parse_token(p, token);
             if (!*token) break;
-            uint32_t val;
             if (parse_number(token, &val)) {
                 emit_byte(val & 0xFF);
             }
@@ -738,7 +763,6 @@ int assemble_line(char *line) {
     if (strcmp(token, ".WORD") == 0) {
         p = skip_whitespace(p);
         p = parse_token(p, token);
-        uint32_t val;
         if (parse_number(token, &val)) {
             emit_word(val & 0xFFFF);
         }
@@ -746,12 +770,12 @@ int assemble_line(char *line) {
     }
 
     /* Parse operand */
-    char operand[MAX_LINE] = "";
+    operand[0] = '\0';
     p = skip_whitespace(p);
     if (*p) {
         strcpy(operand, p);
         /* Trim trailing whitespace */
-        char *end = operand + strlen(operand) - 1;
+        end = operand + strlen(operand) - 1;
         while (end > operand && isspace(*end)) *end-- = '\0';
     }
 
@@ -769,13 +793,12 @@ int assemble_line(char *line) {
     }
 
     /* Detect addressing mode */
-    AddressingMode mode = detect_addressing_mode(operand, token);
+    mode = detect_addressing_mode(operand, token);
 
     /* Find instruction */
-    const Instruction *inst = find_instruction(token, mode);
+    inst = find_instruction(token, mode);
     if (!inst) {
-        char msg[128];
-        snprintf(msg, sizeof(msg), "Unknown instruction or addressing mode: %s %s", token, operand);
+        sprintf(msg, "Unknown instruction or addressing mode: %s %s", token, operand);
         error(msg);
         return -1;
     }
@@ -786,18 +809,17 @@ int assemble_line(char *line) {
     /* Emit operand bytes */
     if (inst->bytes > 1) {
         /* Parse operand value */
-        uint32_t value = 0;
-        int is_label = 0;
+        value = 0;
+        is_label = 0;
 
         /* Extract actual value (preserve $ for parse_number) */
-        const char *val_str = operand;
+        val_str = operand;
         if (*val_str == '#') val_str++;  /* Skip immediate marker */
         if (*val_str == '(' || *val_str == '[') val_str++;  /* Skip indirect markers */
 
         /* Remove closing ), ], and index registers */
-        char clean_val[MAX_LINE];
-        int j = 0;
-        for (int i = 0; val_str[i] && j < MAX_LINE - 1; i++) {
+        j = 0;
+        for (i = 0; val_str[i] && j < MAX_LINE - 1; i++) {
             if (val_str[i] != ')' && val_str[i] != ']' && val_str[i] != ',') {
                 clean_val[j++] = val_str[i];
             } else if (val_str[i] == ',') {
@@ -846,14 +868,17 @@ int assemble_line(char *line) {
 
 /* Assemble a file */
 void assemble_file(const char *filename) {
-    FILE *f = fopen(filename, "r");
+    FILE *f;
+    char line[MAX_LINE];
+    int line_num;
+
+    f = fopen(filename, "r");
     if (!f) {
         error("Cannot open input file");
         return;
     }
 
-    char line[MAX_LINE];
-    int line_num = 0;
+    line_num = 0;
 
     while (fgets(line, sizeof(line), f)) {
         line_num++;
@@ -867,14 +892,18 @@ void assemble_file(const char *filename) {
 }
 
 /* Main */
-int main(int argc, char **argv) {
+int main(int argc, char* argv[]) {
+    const char *input;
+    const char *output;
+    FILE *out;
+
     if (argc < 2) {
         fprintf(stderr, "Usage: %s input.asm [output.bin]\n", argv[0]);
         return 1;
     }
 
-    const char *input = argv[1];
-    const char *output = (argc > 2) ? argv[2] : "output.bin";
+    input = argv[1];
+    output = (argc > 2) ? argv[2] : "output.bin";
 
     printf("DEF88186 Assembler\n");
     printf("Input: %s\n", input);
@@ -903,7 +932,7 @@ int main(int argc, char **argv) {
     }
 
     /* Write output */
-    FILE *out = fopen(output, "wb");
+    out = fopen(output, "wb");
     if (!out) {
         error("Cannot open output file");
         return 1;
