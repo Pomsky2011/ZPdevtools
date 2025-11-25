@@ -3,34 +3,34 @@
 
 #include <stdlib.h>
 
-// AST node types
+/* AST node types */
 typedef enum {
-    // Expressions
+    /* Expressions */
     AST_NUMBER,
     AST_IDENTIFIER,
-    AST_STRING_LITERAL,   // String literal ("hello")
+    AST_STRING_LITERAL,   /* String literal ("hello") */
     AST_BINOP,
     AST_UNOP,
     AST_CALL,
     AST_ASSIGN,
     AST_ARRAY_SUBSCRIPT,
     AST_ARRAY_ASSIGN,
-    AST_ADDR_OF,          // Address-of operator (&)
-    AST_DEREF,            // Dereference operator (*)
-    AST_SIZEOF,           // sizeof operator
-    AST_CAST,             // Cast operator ((type)expr)
-    AST_COMMA,            // Comma operator (expr1, expr2)
-    AST_TERNARY,          // Ternary operator (cond ? then : else)
-    AST_MEMBER_ACCESS,    // Struct member access (.)
-    AST_PTR_MEMBER_ACCESS, // Pointer member access (->)
-    AST_MEMBER_ASSIGN,    // Struct member assignment (struct.member = value)
-    AST_PTR_MEMBER_ASSIGN, // Pointer member assignment (ptr->member = value)
-    AST_PRE_INC,          // Pre-increment (++x)
-    AST_POST_INC,         // Post-increment (x++)
-    AST_PRE_DEC,          // Pre-decrement (--x)
-    AST_POST_DEC,         // Post-decrement (x--)
+    AST_ADDR_OF,          /* Address-of operator (&) */
+    AST_DEREF,            /* Dereference operator (*) */
+    AST_SIZEOF,           /* sizeof operator */
+    AST_CAST,             /* Cast operator ((type)expr) */
+    AST_COMMA,            /* Comma operator (expr1, expr2) */
+    AST_TERNARY,          /* Ternary operator (cond ? then : else) */
+    AST_MEMBER_ACCESS,    /* Struct member access (.) */
+    AST_PTR_MEMBER_ACCESS, /* Pointer member access (->) */
+    AST_MEMBER_ASSIGN,    /* Struct member assignment (struct.member = value) */
+    AST_PTR_MEMBER_ASSIGN, /* Pointer member assignment (ptr->member = value) */
+    AST_PRE_INC,          /* Pre-increment (++x) */
+    AST_POST_INC,         /* Post-increment (x++) */
+    AST_PRE_DEC,          /* Pre-decrement (--x) */
+    AST_POST_DEC,         /* Post-decrement (x--) */
 
-    // Statements
+    /* Statements */
     AST_EXPR_STMT,
     AST_RETURN,
     AST_IF,
@@ -40,32 +40,32 @@ typedef enum {
     AST_BLOCK,
     AST_BREAK,
     AST_CONTINUE,
-    AST_GOTO,             // goto statement
-    AST_LABEL,            // Label declaration
-    AST_SWITCH,           // Switch statement
-    AST_CASE,             // Case label
-    AST_DEFAULT,          // Default label
-    AST_INIT_LIST,        // Initialization list {1, 2, 3}
-    AST_INLINE_ASM,       // Inline assembly
+    AST_GOTO,             /* goto statement */
+    AST_LABEL,            /* Label declaration */
+    AST_SWITCH,           /* Switch statement */
+    AST_CASE,             /* Case label */
+    AST_DEFAULT,          /* Default label */
+    AST_INIT_LIST,        /* Initialization list {1, 2, 3} */
+    AST_INLINE_ASM,       /* Inline assembly */
 
-    // Declarations
+    /* Declarations */
     AST_VAR_DECL,
-    AST_VAR_DECL_LIST,    // Multiple variable declarations (int a, b, c;)
+    AST_VAR_DECL_LIST,    /* Multiple variable declarations (int a, b, c;) */
     AST_FUNC_DECL,
     AST_PARAM,
-    AST_STRUCT_DECL,      // Struct definition
-    AST_UNION_DECL,       // Union definition
-    AST_ENUM_DECL,        // Enum definition
-    AST_TYPEDEF,          // Typedef declaration
+    AST_STRUCT_DECL,      /* Struct definition */
+    AST_UNION_DECL,       /* Union definition */
+    AST_ENUM_DECL,        /* Enum definition */
+    AST_TYPEDEF,          /* Typedef declaration */
 
-    // Program
+    /* Program */
     AST_PROGRAM
 } ASTNodeType;
 
-// Forward declaration for struct definition
+/* Forward declaration for struct definition */
 struct StructDef;
 
-// Data types
+/* Data types */
 typedef enum {
     TYPE_VOID,
     TYPE_INT,
@@ -77,21 +77,21 @@ typedef enum {
     TYPE_UNION
 } DataType;
 
-// Type modifiers (can be combined)
+/* Type modifiers (can be combined) */
 typedef enum {
     MOD_NONE = 0,
     MOD_SIGNED = 1 << 0,
     MOD_UNSIGNED = 1 << 1
 } TypeModifier;
 
-// Type qualifiers (can be combined)
+/* Type qualifiers (can be combined) */
 typedef enum {
     QUAL_NONE = 0,
     QUAL_CONST = 1 << 0,
     QUAL_VOLATILE = 1 << 1
 } TypeQualifier;
 
-// Storage classes
+/* Storage classes */
 typedef enum {
     STORAGE_NONE = 0,
     STORAGE_AUTO,
@@ -100,17 +100,17 @@ typedef enum {
     STORAGE_REGISTER
 } StorageClass;
 
-// Type information (includes base type, pointer levels, and struct name)
+/* Type information (includes base type, pointer levels, and struct name) */
 typedef struct TypeInfo {
     DataType base_type;
-    int pointer_level;        // 0 = not a pointer, 1 = *, 2 = **, etc.
-    char* struct_name;        // NULL for non-struct/union types
-    TypeModifier modifiers;   // Signed/unsigned modifiers
-    TypeQualifier qualifiers; // Const/volatile qualifiers
-    StorageClass storage;     // Storage class (static, extern, etc.)
+    int pointer_level;        /* 0 = not a pointer, 1 = *, 2 = **, etc. */
+    char* struct_name;        /* NULL for non-struct/union types */
+    TypeModifier modifiers;   /* Signed/unsigned modifiers */
+    TypeQualifier qualifiers; /* Const/volatile qualifiers */
+    StorageClass storage;     /* Storage class (static, extern, etc.) */
 } TypeInfo;
 
-// Binary operators
+/* Binary operators */
 typedef enum {
     OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_MOD,
     OP_EQ, OP_NE, OP_LT, OP_GT, OP_LE, OP_GE,
@@ -119,89 +119,89 @@ typedef enum {
     OP_SHL, OP_SHR
 } BinOpType;
 
-// Unary operators
+/* Unary operators */
 typedef enum {
     OP_NEG, OP_NOT, OP_BIT_NOT, OP_ADDR_OF, OP_DEREF
 } UnOpType;
 
-// Forward declaration
+/* Forward declaration */
 struct ASTNode;
 
-// AST node structure
+/* AST node structure */
 typedef struct ASTNode {
     ASTNodeType type;
     DataType data_type;
 
     union {
-        // Literals
+        /* Literals */
         int number;
         char* identifier;
         char* string_literal;
 
-        // Binary operation
+        /* Binary operation */
         struct {
             BinOpType op;
             struct ASTNode* left;
             struct ASTNode* right;
         } binop;
 
-        // Unary operation
+        /* Unary operation */
         struct {
             UnOpType op;
             struct ASTNode* operand;
         } unop;
 
-        // Function call
+        /* Function call */
         struct {
             char* name;
             struct ASTNode** args;
             int arg_count;
         } call;
 
-        // Assignment
+        /* Assignment */
         struct {
             char* var_name;
             struct ASTNode* value;
         } assign;
 
-        // Array subscript
+        /* Array subscript */
         struct {
             char* array_name;
             struct ASTNode* index;
         } array_subscript;
 
-        // Array assignment
+        /* Array assignment */
         struct {
             char* array_name;
             struct ASTNode* index;
             struct ASTNode* value;
         } array_assign;
 
-        // Return statement
+        /* Return statement */
         struct {
             struct ASTNode* value;
         } ret;
 
-        // If statement
+        /* If statement */
         struct {
             struct ASTNode* condition;
             struct ASTNode* then_stmt;
             struct ASTNode* else_stmt;
         } if_stmt;
 
-        // While statement
+        /* While statement */
         struct {
             struct ASTNode* condition;
             struct ASTNode* body;
         } while_stmt;
 
-        // Do-while statement
+        /* Do-while statement */
         struct {
             struct ASTNode* condition;
             struct ASTNode* body;
         } do_while_stmt;
 
-        // For statement
+        /* For statement */
         struct {
             struct ASTNode* init;
             struct ASTNode* condition;
@@ -209,203 +209,203 @@ typedef struct ASTNode {
             struct ASTNode* body;
         } for_stmt;
 
-        // Block statement
+        /* Block statement */
         struct {
             struct ASTNode** statements;
             int stmt_count;
         } block;
 
-        // Variable declaration
+        /* Variable declaration */
         struct {
             DataType var_type;
             char* var_name;
             struct ASTNode* init_value;
             int is_array;
-            int* array_sizes;        // Array of sizes for each dimension
-            int array_dimensions;    // Number of dimensions (0 = not array, 1 = arr[N], 2 = arr[N][M])
-            int pointer_level;       // 0 = not a pointer, 1 = *, 2 = **, etc.
-            char* struct_name;       // For struct/union types
-            TypeModifier modifiers;  // Signed/unsigned modifiers
-            TypeQualifier qualifiers; // Const/volatile qualifiers
-            StorageClass storage;    // Storage class (static, extern, etc.)
+            int* array_sizes;        /* Array of sizes for each dimension */
+            int array_dimensions;    /* Number of dimensions (0 = not array, 1 = arr[N], 2 = arr[N][M]) */
+            int pointer_level;       /* 0 = not a pointer, 1 = *, 2 = **, etc. */
+            char* struct_name;       /* For struct/union types */
+            TypeModifier modifiers;  /* Signed/unsigned modifiers */
+            TypeQualifier qualifiers; /* Const/volatile qualifiers */
+            StorageClass storage;    /* Storage class (static, extern, etc.) */
         } var_decl;
 
-        // Function declaration
+        /* Function declaration */
         struct {
             DataType return_type;
             char* func_name;
             struct ASTNode** params;
             int param_count;
             struct ASTNode* body;
-            TypeModifier return_modifiers;  // For return type modifiers
-            StorageClass storage;           // static/extern functions
+            TypeModifier return_modifiers;  /* For return type modifiers */
+            StorageClass storage;           /* static/extern functions */
         } func_decl;
 
-        // Parameter
+        /* Parameter */
         struct {
             DataType param_type;
             char* param_name;
             int pointer_level;
             char* struct_name;
-            TypeModifier modifiers;  // Parameter type modifiers
-            TypeQualifier qualifiers; // Parameter type qualifiers
+            TypeModifier modifiers;  /* Parameter type modifiers */
+            TypeQualifier qualifiers; /* Parameter type qualifiers */
         } param;
 
-        // Program (list of declarations)
+        /* Program (list of declarations) */
         struct {
             struct ASTNode** decls;
             int decl_count;
         } program;
 
-        // Expression statement
+        /* Expression statement */
         struct {
             struct ASTNode* expr;
         } expr_stmt;
 
-        // Struct declaration
+        /* Struct declaration */
         struct {
             char* struct_name;
-            struct ASTNode** members;  // Array of AST_VAR_DECL nodes
+            struct ASTNode** members;  /* Array of AST_VAR_DECL nodes */
             int member_count;
         } struct_decl;
 
-        // Union declaration
+        /* Union declaration */
         struct {
             char* union_name;
-            struct ASTNode** members;  // Array of AST_VAR_DECL nodes
+            struct ASTNode** members;  /* Array of AST_VAR_DECL nodes */
             int member_count;
         } union_decl;
 
-        // Variable declaration list (int a, b, c;)
+        /* Variable declaration list (int a, b, c;) */
         struct {
-            struct ASTNode** declarations;  // Array of AST_VAR_DECL nodes
+            struct ASTNode** declarations;  /* Array of AST_VAR_DECL nodes */
             int decl_count;
         } var_decl_list;
 
-        // Enum declaration
+        /* Enum declaration */
         struct {
             char* enum_name;
-            char** enumerator_names;   // Array of enumerator names
-            int* enumerator_values;    // Array of enumerator values
+            char** enumerator_names;   /* Array of enumerator names */
+            int* enumerator_values;    /* Array of enumerator values */
             int enumerator_count;
         } enum_decl;
 
-        // Typedef declaration
+        /* Typedef declaration */
         struct {
             DataType base_type;
-            char* type_name;          // The new type alias
-            int pointer_level;        // Number of pointer indirections
-            int* array_sizes;         // Array dimensions (NULL if not array)
-            int array_dim_count;      // Number of array dimensions
+            char* type_name;          /* The new type alias */
+            int pointer_level;        /* Number of pointer indirections */
+            int* array_sizes;         /* Array dimensions (NULL if not array) */
+            int array_dim_count;      /* Number of array dimensions */
         } typedef_decl;
 
-        // Member access (struct.member)
+        /* Member access (struct.member) */
         struct {
-            struct ASTNode* object;    // Can be identifier or another member access
+            struct ASTNode* object;    /* Can be identifier or another member access */
             char* member_name;
         } member_access;
 
-        // Pointer member access (ptr->member)
+        /* Pointer member access (ptr->member) */
         struct {
             struct ASTNode* pointer;
             char* member_name;
         } ptr_member_access;
 
-        // Member assignment (struct.member = value)
+        /* Member assignment (struct.member = value) */
         struct {
             struct ASTNode* object;
             char* member_name;
             struct ASTNode* value;
         } member_assign;
 
-        // Pointer member assignment (ptr->member = value)
+        /* Pointer member assignment (ptr->member = value) */
         struct {
             struct ASTNode* pointer;
             char* member_name;
             struct ASTNode* value;
         } ptr_member_assign;
 
-        // Increment/decrement (++x, x++, --x, x--)
+        /* Increment/decrement (++x, x++, --x, x--) */
         struct {
             char* var_name;
         } inc_dec;
 
-        // Sizeof expression
+        /* Sizeof expression */
         struct {
             DataType size_type;
-            char* type_name;     // For sizeof(type)
-            struct ASTNode* expr; // For sizeof(expr)
+            char* type_name;     /* For sizeof(type) */
+            struct ASTNode* expr; /* For sizeof(expr) */
             int pointer_level;
             int is_array;
             int array_size;
         } sizeof_expr;
 
-        // Cast expression ((type)expr)
+        /* Cast expression ((type)expr) */
         struct {
             DataType target_type;
-            char* type_name;     // For struct casts
+            char* type_name;     /* For struct casts */
             int pointer_level;
             struct ASTNode* expr;
         } cast;
 
-        // Comma expression (expr1, expr2, ...)
+        /* Comma expression (expr1, expr2, ...) */
         struct {
             struct ASTNode** expressions;
             int expr_count;
         } comma;
 
-        // Ternary expression (cond ? then : else)
+        /* Ternary expression (cond ? then : else) */
         struct {
             struct ASTNode* condition;
             struct ASTNode* then_expr;
             struct ASTNode* else_expr;
         } ternary;
 
-        // Switch statement
+        /* Switch statement */
         struct {
             struct ASTNode* expr;
-            struct ASTNode** cases;  // Array of AST_CASE and AST_DEFAULT nodes
+            struct ASTNode** cases;  /* Array of AST_CASE and AST_DEFAULT nodes */
             int case_count;
         } switch_stmt;
 
-        // Case statement
+        /* Case statement */
         struct {
-            int case_value;      // Value for case label
-            struct ASTNode** statements;  // Statements in this case
+            int case_value;      /* Value for case label */
+            struct ASTNode** statements;  /* Statements in this case */
             int stmt_count;
         } case_stmt;
 
-        // Default statement
+        /* Default statement */
         struct {
-            struct ASTNode** statements;  // Statements in default case
+            struct ASTNode** statements;  /* Statements in default case */
             int stmt_count;
         } default_stmt;
 
-        // Initialization list {1, 2, 3}
+        /* Initialization list {1, 2, 3} */
         struct {
-            struct ASTNode** values;  // Array of expression nodes
+            struct ASTNode** values;  /* Array of expression nodes */
             int value_count;
         } init_list;
 
-        // Goto statement
+        /* Goto statement */
         struct {
             char* label;
         } goto_stmt;
 
-        // Label statement
+        /* Label statement */
         struct {
             char* label;
-            struct ASTNode* statement;  // Statement after label
+            struct ASTNode* statement;  /* Statement after label */
         } label_stmt;
 
-        // Inline assembly
+        /* Inline assembly */
         struct {
-            char* asm_code;  // Raw assembly code as string
+            char* asm_code;  /* Raw assembly code as string */
         } inline_asm;
     };
 } ASTNode;
 
-// AST creation functions
+/* AST creation functions */
 ASTNode* ast_create_number(int value);
 ASTNode* ast_create_identifier(const char* name);
 ASTNode* ast_create_string_literal(const char* value);
@@ -461,7 +461,7 @@ ASTNode* ast_create_program(ASTNode** decls, int decl_count);
 ASTNode* ast_create_expr_stmt(ASTNode* expr);
 ASTNode* ast_create_inline_asm(const char* asm_code);
 
-// Free AST
+/* Free AST */
 void ast_free(ASTNode* node);
 
 #endif

@@ -25,7 +25,7 @@ ASTNode* ast_create_identifier(const char* name) {
 ASTNode* ast_create_string_literal(const char* value) {
     ASTNode* node = ast_create_node(AST_STRING_LITERAL);
     node->string_literal = strdup(value);
-    node->data_type = TYPE_POINTER;  // Strings are char*
+    node->data_type = TYPE_POINTER;  /* Strings are char* */
     return node;
 }
 
@@ -332,7 +332,7 @@ ASTNode* ast_create_sizeof_type(DataType type, const char* type_name, int pointe
     node->sizeof_expr.pointer_level = pointer_level;
     node->sizeof_expr.is_array = 0;
     node->sizeof_expr.array_size = 0;
-    node->data_type = TYPE_INT;  // sizeof returns int
+    node->data_type = TYPE_INT;  /* sizeof returns int */
     return node;
 }
 
@@ -344,7 +344,7 @@ ASTNode* ast_create_sizeof_expr(ASTNode* expr) {
     node->sizeof_expr.pointer_level = 0;
     node->sizeof_expr.is_array = 0;
     node->sizeof_expr.array_size = 0;
-    node->data_type = TYPE_INT;  // sizeof returns int
+    node->data_type = TYPE_INT;  /* sizeof returns int */
     return node;
 }
 
@@ -354,7 +354,7 @@ ASTNode* ast_create_cast(DataType target_type, const char* type_name, int pointe
     node->cast.type_name = type_name ? strdup(type_name) : NULL;
     node->cast.pointer_level = pointer_level;
     node->cast.expr = expr;
-    // Set the data type of the cast node to the target type
+    /* Set the data type of the cast node to the target type */
     if (pointer_level > 0) {
         node->data_type = TYPE_POINTER;
     } else {
@@ -367,7 +367,7 @@ ASTNode* ast_create_comma(ASTNode** expressions, int expr_count) {
     ASTNode* node = ast_create_node(AST_COMMA);
     node->comma.expressions = expressions;
     node->comma.expr_count = expr_count;
-    // Type of comma expression is type of rightmost expression
+    /* Type of comma expression is type of rightmost expression */
     if (expr_count > 0) {
         node->data_type = expressions[expr_count - 1]->data_type;
     }
@@ -412,7 +412,7 @@ ASTNode* ast_create_init_list(ASTNode** values, int value_count) {
     return node;
 }
 
-// New functions with type modifiers and qualifiers support
+/* New functions with type modifiers and qualifiers support */
 ASTNode* ast_create_var_decl_with_quals(DataType type, const char* name, ASTNode* init_value, int is_array, int array_size, int pointer_level, const char* struct_name, TypeModifier mods, TypeQualifier quals, StorageClass storage) {
     ASTNode* node = ast_create_var_decl(type, name, init_value, is_array, array_size, pointer_level, struct_name);
     node->var_decl.modifiers = mods;
@@ -467,7 +467,8 @@ void ast_free(ASTNode* node) {
             break;
         case AST_CALL:
             free(node->call.name);
-            for (int i = 0; i < node->call.arg_count; i++) {
+            int i;
+            for (i = 0; i < node->call.arg_count; i++) {
                 ast_free(node->call.args[i]);
             }
             free(node->call.args);
@@ -508,7 +509,7 @@ void ast_free(ASTNode* node) {
             ast_free(node->for_stmt.body);
             break;
         case AST_BLOCK:
-            for (int i = 0; i < node->block.stmt_count; i++) {
+            for (i = 0; i < node->block.stmt_count; i++) {
                 ast_free(node->block.statements[i]);
             }
             free(node->block.statements);
@@ -521,7 +522,7 @@ void ast_free(ASTNode* node) {
             break;
         case AST_FUNC_DECL:
             free(node->func_decl.func_name);
-            for (int i = 0; i < node->func_decl.param_count; i++) {
+            for (i = 0; i < node->func_decl.param_count; i++) {
                 ast_free(node->func_decl.params[i]);
             }
             free(node->func_decl.params);
@@ -533,27 +534,27 @@ void ast_free(ASTNode* node) {
             break;
         case AST_STRUCT_DECL:
             free(node->struct_decl.struct_name);
-            for (int i = 0; i < node->struct_decl.member_count; i++) {
+            for (i = 0; i < node->struct_decl.member_count; i++) {
                 ast_free(node->struct_decl.members[i]);
             }
             free(node->struct_decl.members);
             break;
         case AST_UNION_DECL:
             free(node->union_decl.union_name);
-            for (int i = 0; i < node->union_decl.member_count; i++) {
+            for (i = 0; i < node->union_decl.member_count; i++) {
                 ast_free(node->union_decl.members[i]);
             }
             free(node->union_decl.members);
             break;
         case AST_VAR_DECL_LIST:
-            for (int i = 0; i < node->var_decl_list.decl_count; i++) {
+            for (i = 0; i < node->var_decl_list.decl_count; i++) {
                 ast_free(node->var_decl_list.declarations[i]);
             }
             free(node->var_decl_list.declarations);
             break;
         case AST_ENUM_DECL:
             free(node->enum_decl.enum_name);
-            for (int i = 0; i < node->enum_decl.enumerator_count; i++) {
+            for (i = 0; i < node->enum_decl.enumerator_count; i++) {
                 free(node->enum_decl.enumerator_names[i]);
             }
             free(node->enum_decl.enumerator_names);
@@ -584,7 +585,7 @@ void ast_free(ASTNode* node) {
             free(node->inc_dec.var_name);
             break;
         case AST_PROGRAM:
-            for (int i = 0; i < node->program.decl_count; i++) {
+            for (i = 0; i < node->program.decl_count; i++) {
                 ast_free(node->program.decls[i]);
             }
             free(node->program.decls);
@@ -604,7 +605,7 @@ void ast_free(ASTNode* node) {
             ast_free(node->cast.expr);
             break;
         case AST_COMMA:
-            for (int i = 0; i < node->comma.expr_count; i++) {
+            for (i = 0; i < node->comma.expr_count; i++) {
                 ast_free(node->comma.expressions[i]);
             }
             free(node->comma.expressions);
@@ -616,25 +617,25 @@ void ast_free(ASTNode* node) {
             break;
         case AST_SWITCH:
             ast_free(node->switch_stmt.expr);
-            for (int i = 0; i < node->switch_stmt.case_count; i++) {
+            for (i = 0; i < node->switch_stmt.case_count; i++) {
                 ast_free(node->switch_stmt.cases[i]);
             }
             free(node->switch_stmt.cases);
             break;
         case AST_CASE:
-            for (int i = 0; i < node->case_stmt.stmt_count; i++) {
+            for (i = 0; i < node->case_stmt.stmt_count; i++) {
                 ast_free(node->case_stmt.statements[i]);
             }
             free(node->case_stmt.statements);
             break;
         case AST_DEFAULT:
-            for (int i = 0; i < node->default_stmt.stmt_count; i++) {
+            for (i = 0; i < node->default_stmt.stmt_count; i++) {
                 ast_free(node->default_stmt.statements[i]);
             }
             free(node->default_stmt.statements);
             break;
         case AST_INIT_LIST:
-            for (int i = 0; i < node->init_list.value_count; i++) {
+            for (i = 0; i < node->init_list.value_count; i++) {
                 ast_free(node->init_list.values[i]);
             }
             free(node->init_list.values);
