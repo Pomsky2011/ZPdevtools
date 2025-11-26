@@ -1,0 +1,216 @@
+# ZPdevtools .gitignore
+# Ignores compiled binaries and build artifacts
+
+# ========================================
+# Compiled Tools (Unix)
+# ========================================
+# Assemblers
+ppuasm
+apuasm
+cpuasm
+
+# Disassemblers
+ppudisasm
+apudisasm
+cpudisasm
+
+# ROM Tools
+rombuilder
+rominspect
+
+# Utilities
+hexview
+wav2mmp
+
+# Test programs
+test_assembled
+
+# ========================================
+# Compiled Tools (DOS/Windows)
+# ========================================
+# DOS build output directory
+BIN/
+bin/
+
+# Windows/DOS executables
+*.EXE
+*.exe
+PPUASM.EXE
+APUASM.EXE
+CPUASM.EXE
+PPUDISASM.EXE
+APUDISASM.EXE
+CPUDISASM.EXE
+ROMBUILDER.EXE
+ROMINSPECT.EXE
+HEXVIEW.EXE
+WAV2MMP.EXE
+DEF88186CC.EXE
+
+# ========================================
+# C Compiler
+# ========================================
+c_compiler/def88186cc
+c_compiler/*.exe
+c_compiler/*.EXE
+
+# Flex/Bison generated files
+c_compiler/lex.yy.c
+c_compiler/lexer.c
+c_compiler/parser.tab.c
+c_compiler/parser.tab.h
+c_compiler/parser.output
+
+# ========================================
+# Object Files
+# ========================================
+*.o
+*.obj
+*.OBJ
+*.lo
+*.slo
+
+# ========================================
+# Libraries
+# ========================================
+*.a
+*.lib
+*.LIB
+*.la
+*.so
+*.dylib
+*.dll
+*.DLL
+
+# ========================================
+# Assembled Output
+# ========================================
+# Binary output from assemblers
+*.bin
+!examples/**/*.bin
+!sine_*.bin
+!play_sine*.bin
+!gradient_demo.bin
+
+# ROM files
+*.rom
+*.ROM
+
+# Assembled listings (exclude source .asm files)
+# examples/**/*.bin are generated, but keep source .asm
+examples/**/*.bin
+
+# ========================================
+# Build Artifacts
+# ========================================
+# CMake/Make
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile.bak
+*.cmake
+!CMakeLists.txt
+
+# Turbo C / Borland Make
+*.tds
+*.dsk
+*.cfg
+
+# Microsoft C
+*.cod
+*.sbr
+*.bsc
+*.pdb
+*.ilk
+*.map
+
+# ========================================
+# Backup Files
+# ========================================
+*.bak
+*.backup
+*~
+*.swp
+*.swo
+*.tar.gz
+*.zip
+backup_*/
+c_compiler_backup_*.tar.gz
+
+# Keep documented backup
+!C89_PORTING_GUIDE.txt
+!README_DOS.txt
+
+# ========================================
+# macOS
+# ========================================
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# ========================================
+# IDE / Editors
+# ========================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.cproject
+.settings/
+*.sublime-*
+*.suo
+*.user
+*.ncb
+*.aps
+
+# ========================================
+# Logs
+# ========================================
+*.log
+*.LOG
+
+# ========================================
+# Temporary Files
+# ========================================
+tmp/
+temp/
+*.tmp
+*.TMP
+-o
+
+# ========================================
+# Audio/WAV files (test files)
+# ========================================
+# Keep specific test files but ignore others
+!sine_short.wav
+!sine_short-48k.wav
+*.wav
+
+# ========================================
+# Python
+# ========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+
+# ========================================
+# Version Control
+# ========================================
+.git/
+.gitattributes
