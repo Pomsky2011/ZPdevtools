@@ -525,17 +525,32 @@ Search 256 bytes:
 
 Typical Frame Budget (60 Hz):
 ------------------------------
-If CPU clock is 10 MHz:
-    10,000,000 cycles/sec ÷ 60 fps = 166,666 cycles/frame
+CPU clock is 16 MHz:
+    16,000,000 cycles/sec ÷ 60 fps = 266,666 cycles/frame
 
 Example breakdown:
-    Game logic:         50,000 cycles
-    Physics:            30,000 cycles
-    AI:                 20,000 cycles
-    Rendering prep:     40,000 cycles
-    Audio:              10,000 cycles
-    System:             16,666 cycles
-    Total:              166,666 cycles
+    Game logic:         80,000 cycles
+    Physics:            50,000 cycles
+    AI:                 30,000 cycles
+    Rendering prep:     60,000 cycles
+    Audio:              20,000 cycles
+    System:             26,666 cycles
+    Total:              266,666 cycles
+
+System Clock Synchronization:
+------------------------------
+The CPU runs at 16 MHz, executing on every 4th master clock cycle (64 MHz master).
+The execution pattern repeats every 16 master cycles:
+
+    Master cycles 0-15:
+    - CPU executes on cycles: 3, 7, 11, 15 (4 times per 16 cycles)
+    - This yields 16 MHz effective frequency (64 MHz ÷ 4)
+
+Other system components:
+    - PPU: 64 MHz (every cycle)
+    - DMA: 32 MHz (every 2 cycles)
+    - APU: 4 MHz (every 16 cycles)
+    - Display: 64 MHz (every cycle)
 
 ================================================================================
 PROFILING TECHNIQUES

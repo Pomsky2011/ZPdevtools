@@ -2,79 +2,72 @@
 
 ## Introduction
 
-This guide provides practical examples and patterns for programming the ZeroPoint APU.
-It covers common tasks like sample playback, music sequencing, sound effects, and
-real-time audio synthesis.
+This guide provides practical patterns for programming the ZeroPoint APU.
+It covers sample playback, music sequencing, sound effects, and real-time audio synthesis.
 
 ## Getting Started
 
 ### Minimal Program Structure
 
 ```
-; Reset vector - execution starts here
+; Reset vector — execution starts here
 start:
-  ; Initialize stack pointer (if using stack)
-  SCR R15, 0xFF  ; SP = $FF (stack grows down from $01FF)
+  ; Initialize stack pointer
+  LDA X, $FF
+  LDA Y, $01       ; SP = $01FF (top of RAM)
+  BSP
 
   ; Set default page registers
-  SRP $D0        ; RP = $D0 (AROM region)
-  SDP $01        ; DP = $01 (RAM region)
-  SDB $00        ; DB = 0
-  SBF 0          ; BF = low byte
+  SRP $D0          ; RP = $D0 (AROM region for jumps)
+  SDP $01          ; DP = $01 (RAM region)
+  SDB $00          ; DB = 0
+  SBF 0            ; BF = low byte
+  SFR $0           ; clear all flags
 
   ; Initialize MMP
-  CCF init_mmp
+  JSR $10          ; call init_mmp (at $D010)
 
   ; Main loop
 main_loop:
-  ; Your code here
-  JMP 0, 0, main_loop
+  ; ... your code here ...
+  JMS $XX          ; loop back (JMS = jump no-stack)
 
 ; ──────────────────────────────────────────────────────────────
-; Function: Initialize MMP
+; Function: init_mmp  (at address $10 in current RP page)
 ; ──────────────────────────────────────────────────────────────
-CFS init_mmp
+init_mmp:
+  PUDP             ; save caller's DP:DB
+  SDP $00          ; MMP registers at $00XX
 
-  SDP $00        ; MMP registers
-
-  ; Clear all pitch registers to $1000 (1.0× speed)
-  SDB $00
-  SCR R0, 0
-  LST 0, 16      ; Loop 16 times
-    WRH $10
-    WRL $00
-    ADD R0, 2, R0
-    SDB R0
+  ; Set all pitch registers to $1000 (1.0× speed)
+  ; Channels 0-15, pitch offsets $00-$1E (2 bytes each)
+  LDA X, $10       ; pitch high byte
+  LDA Y, $00       ; pitch low byte
+  SBF 1
+  LST 0, 16
+    STA X, $00     ; ← address must be fixed per channel; see full init below
   LFN 0
 
-  ; Set all volumes to 128
-  SDB $20
-  SCR R0, 0
-  LST 1, 16
-    WRH $00
-    WRL $80
-    ADD R0, 1, R0
-    SDB R0
-  LFN 1
+  ; (See "Example 1: MMP Full Init" below for complete channel init)
 
-  ; Disable reverb and echo
-  SDB $30
-  WRH $00
-  WRL $00        ; Reverb flags = 0
-  SDB $32
-  WRH $00
-  WRL $00        ; Echo flags = 0
-
-  ; Enable Gaussian interpolation
-  SDB $74
-  WRH $00
-  WRL $01
-
-  ; Repeat for right ear ($80-$FF)
-  ; ... (same pattern, starting at $80)
-
-CFE init_mmp
+  PODP             ; restore caller's DP:DB
+  RET
 ```
+
+**Note on writing 16-bit MMP registers:**
+The MMP register file uses 16-bit words. Write high byte first (BF=1), then low byte (BF=0):
+```
+SDP $00          ; MMP region
+SBF 1
+LDA X, $10
+STA X, $00       ; write $10 to high byte of $0000
+SBF 0
+LDA X, $00
+STA X, $00       ; write $00 to low byte of $0000
+; $0000 now contains $1000 (pitch 1.0×)
+```
+
+---
 
 ## Example 1: Playing a Single Sample
 
@@ -82,798 +75,457 @@ CFE init_mmp
 ; ──────────────────────────────────────────────────────────────
 ; Play a simple sine wave on channel 0
 ; ──────────────────────────────────────────────────────────────
-
 play_sine:
-  ; First, write sample data to SST
-  CCF write_sine_sample
-
-  ; Then, create STL entry
-  CCF create_stl_entry
-
-  ; Finally, start playback
-  CCF start_playback
-
-  CFE play_sine
+  JSR write_sine_sample
+  JSR create_stl_entry
+  JSR start_playback
+  RET
 
 ; ──────────────────────────────────────────────────────────────
-; Write a sine wave to SST at $9000
+; Write a 12-sample sine wave to SST at $9000
 ; ──────────────────────────────────────────────────────────────
-CFS write_sine_sample
-
-  SDP $90        ; SST region
-  SDB $00        ; Start at $9000
-
-  ; Write header
-  ; XX=255 (loop forever), Y=0, L=$02 (final block, loop from 0)
-  ; V=0, U=0, T=0, S=0 (no clamping)
-
-  WRH $FF        ; XX high byte
-  WRL $00        ; XX low byte
-  SDB $02
-  WRH $02        ; Y=0, L=$02 (W=1, final block)
-  WRL $00        ; V=0, U=0, T=0, S=0
-
-  ; Write 12 sine wave samples (approximate)
-  SDB $04
+write_sine_sample:
+  PUDP
+  SDP $90          ; SST region ($9000)
   SBF 0
-  SCR R0, 0
-  STA R0, $04    ; Sample 0: 0
-  SCR R0, 64
-  STA R0, $05    ; Sample 1: 64
-  SCR R0, 90
-  STA R0, $06    ; Sample 2: 90
-  SCR R0, 127
-  STA R0, $07    ; Sample 3: 127 (peak)
-  SCR R0, 90
-  STA R0, $08    ; Sample 4: 90
-  SCR R0, 64
-  STA R0, $09    ; Sample 5: 64
-  SCR R0, 0
-  STA R0, $0A    ; Sample 6: 0
-  SCR R0, 192    ; -64 in signed 8-bit
-  STA R0, $0B    ; Sample 7: -64
-  SCR R0, 166    ; -90
-  STA R0, $0C    ; Sample 8: -90
-  SCR R0, 129    ; -127
-  STA R0, $0D    ; Sample 9: -127 (trough)
-  SCR R0, 166
-  STA R0, $0E    ; Sample 10: -90
-  SCR R0, 192
-  STA R0, $0F    ; Sample 11: -64
 
-CFE write_sine_sample
+  ; Write header at $9000: XX=$FFFF (loop forever), L=$02 (final/loop)
+  SBF 1
+  LDA X, $FF
+  STA X, $00       ; high byte of XX
+  SBF 0
+  LDA X, $FF
+  STA X, $01       ; low byte of XX
+  LDA X, $02
+  STA X, $02       ; L = final block, loop from start
+
+  ; Write 12 sine wave samples (approximate, unsigned 8-bit)
+  LDA X, 0
+  STA X, $04       ; sample 0: 0
+  LDA X, 64
+  STA X, $05       ; sample 1: 64
+  LDA X, 90
+  STA X, $06       ; sample 2: 90
+  LDA X, 127
+  STA X, $07       ; sample 3: 127 (peak)
+  LDA X, 90
+  STA X, $08       ; sample 4: 90
+  LDA X, 64
+  STA X, $09       ; sample 5: 64
+  LDA X, 0
+  STA X, $0A       ; sample 6: 0
+  LDA X, 192
+  STA X, $0B       ; sample 7: -64 (unsigned 192)
+  LDA X, 166
+  STA X, $0C       ; sample 8: -90
+  LDA X, 129
+  STA X, $0D       ; sample 9: -127 (trough)
+  LDA X, 166
+  STA X, $0E       ; sample 10: -90
+  LDA X, 192
+  STA X, $0F       ; sample 11: -64
+
+  PODP
+  RET
 
 ; ──────────────────────────────────────────────────────────────
-; Create STL entry at $7000 pointing to $9000
+; Create STL entry at $7000 pointing to sample at $9000
 ; ──────────────────────────────────────────────────────────────
-CFS create_stl_entry
+create_stl_entry:
+  PUDP
+  SDP $70          ; STL region
+  SBF 1
+  LDA X, $90
+  STA X, $00       ; sample address high byte
+  SBF 0
+  LDA X, $00
+  STA X, $01       ; sample address low byte
 
-  SDP $70        ; STL region
-  SDB $00        ; First entry ($7000)
-
-  WRH $90        ; Sample address = $9000
-  WRL $00
-
-  SDB $02
-  WRH $00        ; Loop address = $0000 (loop entire sample)
-  WRL $00
-
-CFE create_stl_entry
+  LDA X, $00
+  STA X, $02       ; loop address high byte
+  STA X, $03       ; loop address low byte
+  PODP
+  RET
 
 ; ──────────────────────────────────────────────────────────────
 ; Start playback on channel 0
 ; ──────────────────────────────────────────────────────────────
-CFS start_playback
+start_playback:
+  PUDP
+  SDP $00          ; MMP registers
 
-  SDP $00        ; MMP registers
-
-  ; Set pitch to $1000 (1.0× speed)
-  SDB $00        ; Channel 0 pitch
-  WRH $10
-  WRL $00
-
-  ; Set volume to 128
-  SDB $20        ; Channel 0 volume
-  WRH $00
-  WRL $80
-
-  ; Set STL address to $7000 (starts playback)
-  SDB $54        ; Channel 0 STL address
-  WRH $70
-  WRL $00
-
-CFE start_playback
-```
-
-## Example 2: Multi-Sample Music Sequence
-
-```
-; ──────────────────────────────────────────────────────────────
-; Play a sequence of 4 notes: C, D, E, F
-; Each note is 1 second long
-; ──────────────────────────────────────────────────────────────
-
-play_melody:
-  ; Initialize
-  CCF init_mmp
-
-  ; Load all samples
-  CCF load_note_samples
-
-  ; Create STL entries
-  CCF create_note_stl_entries
-
-  ; Play sequence
-  SCR R10, 0     ; Current note index
-
-melody_loop:
-  ; Play note R10
-  ; Map note index to pitch:
-  ; 0=C ($1000), 1=D ($1122), 2=E ($1260), 3=F ($12C5)
-
-  ; Calculate pitch (simplified, uses lookup)
-  CCF get_note_pitch  ; Returns pitch in R0, R1 (low, high)
-
-  ; Set channel 0 pitch
-  SDP $00
-  SDB $00
-  SBF 0
-  STA R0, $00    ; Low byte
+  ; Pitch = $1000 (1.0× speed), channel 0 pitch at $0000
   SBF 1
-  STA R1, $00    ; High byte
-
-  ; Set STL address (all notes use same waveform at $7000)
-  SDB $54
-  WRH $70
-  WRL $00
-
-  ; Wait 1 second (approximate)
-  ; At 4.2 MHz, 4 CPI: 1,050,000 instructions/sec
-  ; Need to loop ~1000 times with 1000 cycle delay each
-  SCR R11, 0
-wait_loop:
-  NOP 250        ; 250 + 4 = 254 cycles
-  NOP 250
-  NOP 250
-  NOP 246        ; Total ~1000 cycles
-  ADD R11, 1, R11
-  CMN R11, 250, 0, wait_loop  ; Loop 250 times = ~250K cycles
-
-  ; Next note
-  ADD R10, 1, R10
-  CMN R10, 4, 0, melody_loop  ; Loop if R10 < 4
-
-  ; Stop playback
-  SDB $54
-  WRH $00
-  WRL $00        ; STL = 0 (stop)
-
-  CFE play_melody
-
-; ──────────────────────────────────────────────────────────────
-; Get pitch value for note in R10
-; Returns: R0 = low byte, R1 = high byte
-; ──────────────────────────────────────────────────────────────
-CFS get_note_pitch
-
-  ; Note pitch table (in RAM at $0200)
-  ; Preloaded with pitch values
-
-  SDP $02        ; RAM region with pitch table
+  LDA X, $10
+  STA X, $00
   SBF 0
+  LDA X, $00
+  STA X, $00
 
-  ; Calculate offset: R10 × 2 (2 bytes per pitch)
-  ADD R10, R10, R12  ; R12 = R10 × 2
+  ; Volume = 128, channel 0 volume at $0020
+  SBF 0
+  LDA X, $80
+  STA X, $20
 
-  ; Load low byte
-  SDB R12
-  STR R12, R0
+  ; Set STL address to $7000 (starts playback), channel 0 STL at $0054
+  SBF 1
+  LDA X, $70
+  STA X, $54
+  SBF 0
+  LDA X, $00
+  STA X, $54
 
-  ; Load high byte
-  ADD R12, 1, R12
-  SDB R12
-  STR R12, R1
-
-CFE get_note_pitch
+  PODP
+  RET
 ```
 
-## Example 3: Sound Effect with Pitch Sweep
+---
+
+## Example 2: Pitch Sweep Sound Effect
 
 ```
 ; ──────────────────────────────────────────────────────────────
-; Play a laser sound effect:
-; - Start at high pitch ($3000)
-; - Sweep down to low pitch ($0800)
-; - Duration: 500ms
+; Laser sound: sweep pitch from $3000 down to $0800 on channel 1
 ; ──────────────────────────────────────────────────────────────
-
 play_laser:
-  ; Use channel 1 for sound effects
-  SDP $00        ; MMP registers
+  PUDP
+  SDP $00
 
-  ; Set initial pitch to $3000
-  SDB $02        ; Channel 1 pitch
-  WRH $30
-  WRL $00
-
-  ; Set volume to 200 (loud)
-  SDB $21        ; Channel 1 volume
-  WRH $00
-  WRL $C8
-
-  ; Start playback (noise sample at $7010)
-  SDB $56        ; Channel 1 STL address
-  WRH $70
-  WRL $10
-
-  ; Pitch sweep loop
-  SCR R0, $30    ; Pitch high byte
-  SCR R1, $00    ; Pitch low byte
-
-sweep_loop:
-  ; Write current pitch
-  SDB $02
-  SBF 0
-  STA R1, $02    ; Low byte
+  ; Set initial pitch $3000 (channel 1 pitch at $0002)
   SBF 1
-  STA R0, $02    ; High byte
+  LDA X, $30
+  STA X, $02
+  SBF 0
+  LDA X, $00
+  STA X, $02
 
-  ; Decrease pitch
-  SUB R1, 10, R1 ; Decrease low byte
-  ; Handle underflow (simplified, no carry)
+  ; Volume = 200
+  LDA X, $C8
+  STA X, $21
 
-  ; Small delay
-  NOP 200
+  ; Start channel 1 (STL at $7010)
+  SBF 1
+  LDA X, $70
+  STA X, $56
+  SBF 0
+  LDA X, $10
+  STA X, $56
 
-  ; Check if done (high byte < $08)
-  CMN R0, 8, 0, sweep_done
-  JMP 0, 0, sweep_loop
+  ; Sweep: decrement pitch high byte from $30 to $08
+  LDA X, $30      ; pitch high byte
+sweep_loop:
+  SBF 1
+  STA X, $02      ; update pitch high byte
+  DEC X           ; X--
+  NOP $40         ; small delay
+  BLT X, Y, sweep_done   ; stop when X < $08 (Y=$08)
+  JMS sweep_loop
 
 sweep_done:
-  ; Stop playback
-  SDB $56
-  WRH $00
-  WRL $00
+  ; Stop channel 1
+  SBF 0
+  LDA X, $00
+  STA X, $56
+  SBF 1
+  STA X, $56
 
-CFE play_laser
+  PODP
+  RET
 ```
 
-## Example 4: Stereo Panning
+---
+
+## Example 3: Stereo Panning
 
 ```
 ; ──────────────────────────────────────────────────────────────
-; Pan a sound from left to right over 2 seconds
+; Pan from full left to full right over ~256 steps
+; Channel 0 = left ear, channel 16 = right ear
 ; ──────────────────────────────────────────────────────────────
-
 pan_sound:
-  ; Play same sample on left channel 0 and right channel 16
-
-  ; Start both channels
+  PUDP
   SDP $00
 
-  ; Left channel 0: STL = $7000
-  SDB $54
-  WRH $70
-  WRL $00
+  ; Start left channel (0) and right channel (16)
+  SBF 1
+  LDA X, $70
+  STA X, $54      ; ch0 STL high = $70
+  STA X, $D4      ; ch16 STL high = $70
+  SBF 0
+  LDA X, $00
+  STA X, $54      ; ch0 STL low = $00
+  STA X, $D4      ; ch16 STL low = $00
 
-  ; Right channel 16: STL = $7000
-  SDB $D4
-  WRH $70
-  WRL $00
-
-  ; Pan loop: Adjust volumes
-  SCR R0, 255    ; Left volume (start full left)
-  SCR R1, 0      ; Right volume (start silent right)
+  ; Pan: left starts at 255, right at 0
+  LDA X, $FF      ; left volume
+  LDA Y, $00      ; right volume
 
 pan_loop:
-  ; Set left channel volume
-  SDB $20        ; Left channel 0 volume
   SBF 0
-  STA R0, $20
+  STA X, $20      ; ch0 volume = X
+  STA Y, $A0      ; ch16 volume = Y (using Y as second op)
+  DEC X           ; left fades out
+  INC Y           ; right fades in
+  NOP $10         ; small delay
+  JNZ X, 1, pan_loop   ; M=1 = RP-relative
 
-  ; Set right channel volume
-  SDB $A0        ; Right channel 16 volume
-  SBF 0
-  STA R1, $A0
-
-  ; Adjust volumes: decrease left, increase right
-  SUB R0, 5, R0  ; Left -= 5
-  ADD R1, 5, R1  ; Right += 5
-
-  ; Delay
-  NOP 500
-
-  ; Check if done (left volume < 5)
-  CMN R0, 5, 0, pan_done
-  JMP 0, 0, pan_loop
-
-pan_done:
   ; Stop both channels
-  SDB $54
-  WRH $00
-  WRL $00
-  SDB $D4
-  WRH $00
-  WRL $00
+  LDA X, $00
+  STA X, $54
+  STA X, $D4
 
-CFE pan_sound
+  PODP
+  RET
 ```
 
-## Example 5: Reverb and Echo
+---
 
-```
-; ──────────────────────────────────────────────────────────────
-; Play a drum sample with reverb on channel 2
-; ──────────────────────────────────────────────────────────────
-
-play_drum_with_reverb:
-  SDP $00        ; MMP registers
-
-  ; Enable reverb for channel 2 (bit 2 = 1)
-  SDB $30        ; Reverb flags
-  WRH $00
-  WRL $04        ; 0x04 = 0b00000100 (bit 2 set)
-
-  ; Set channel 2 pitch to $1000
-  SDB $04
-  WRH $10
-  WRL $00
-
-  ; Set volume to 150
-  SDB $22
-  WRH $00
-  WRL $96
-
-  ; Start playback (drum sample at $7020)
-  SDB $58        ; Channel 2 STL address
-  WRH $70
-  WRL $20
-
-  ; Let it play for 2 seconds
-  NOP 500
-  NOP 500
-  NOP 500
-  NOP 500
-
-  ; Stop
-  SDB $58
-  WRH $00
-  WRL $00
-
-CFE play_drum_with_reverb
-
-; ──────────────────────────────────────────────────────────────
-; Play a clap with echo (200ms delay) on channel 3
-; ──────────────────────────────────────────────────────────────
-
-play_clap_with_echo:
-  SDP $00        ; MMP registers
-
-  ; Enable echo for channel 3 (bit 3 = 1)
-  SDB $32        ; Echo flags
-  WRH $00
-  WRL $08        ; 0x08 = 0b00001000 (bit 3 set)
-
-  ; Set echo delay: 200ms at 48kHz = 9600 samples = $2580
-  SDB $3A        ; Channel 3 echo delay (offset $34 + 3×2)
-  WRH $25
-  WRL $80
-
-  ; Set pitch to $1000
-  SDB $06        ; Channel 3 pitch
-  WRH $10
-  WRL $00
-
-  ; Set volume to 180
-  SDB $23        ; Channel 3 volume
-  WRH $00
-  WRL $B4
-
-  ; Start playback (clap sample at $7030)
-  SDB $5A        ; Channel 3 STL address
-  WRH $70
-  WRL $30
-
-  ; Let it play (echo will continue after sample ends)
-  NOP 500
-  NOP 500
-  NOP 500
-
-  ; Stop
-  SDB $5A
-  WRH $00
-  WRL $00
-
-CFE play_clap_with_echo
-```
-
-## Example 6: Real-Time Waveform Synthesis
+## Example 4: CPU Command Processor
 
 ```
 ; ──────────────────────────────────────────────────────────────
-; Generate a sawtooth wave in real-time and play it
+; Music player loop: reads commands from CPU via shared I/O
+; CPU writes to $1000 (DEF88186 input buffer)
 ; ──────────────────────────────────────────────────────────────
+; Commands:
+;   $01 XX HH LL — play channel XX, STL = $HHLL
+;   $02 XX       — stop channel XX
+;   $03 XX VV    — set volume of channel XX to VV
 
-synth_sawtooth:
-  ; Generate sawtooth in ARAM at $3000
-  SDP $30        ; ARAM region
-  SDB $00
+music_main:
+  SRP $D0
+  LDA X, $FF
+  LDA Y, $01
+  BSP             ; SP = $01FF
 
-  ; Generate 256 samples (sawtooth ramp)
-  SCR R0, 0      ; Sample value
-  SCR R1, 0      ; Sample index
-
-gen_loop:
-  SBF 0
-  SDB R1
-  STA R0, R1     ; Write sample
-
-  ; Next sample
-  ADD R0, 1, R0  ; Increment value (wraps at 255)
-  ADD R1, 1, R1  ; Increment index
-
-  ; Continue until 256 samples
-  JNZ R1, gen_loop  ; Loop until R1 wraps back to 0
-
-  ; Now create SST blocks pointing to ARAM data
-  ; (Simplified: assumes MMP can stream from ARAM)
-
-  ; Create STL entry at $7040 pointing to $3000
-  SDP $70
-  SDB $40
-  WRH $30
-  WRL $00
-  SDB $42
-  WRH $00
-  WRL $00        ; Loop from beginning
-
-  ; Play on channel 4
-  SDP $00
-  SDB $08        ; Channel 4 pitch
-  WRH $10
-  WRL $00
-  SDB $24        ; Channel 4 volume
-  WRH $00
-  WRL $80
-  SDB $5C        ; Channel 4 STL address
-  WRH $70
-  WRL $40
-
-  ; Let it play
-  NOP 500
-  NOP 500
-
-  ; Stop
-  SDB $5C
-  WRH $00
-  WRL $00
-
-CFE synth_sawtooth
-```
-
-## Example 7: Dynamic Channel Allocation
-
-```
-; ──────────────────────────────────────────────────────────────
-; Channel allocation system for sound effects
-; Maintains a pool of 8 channels (8-15) for SFX
-; ──────────────────────────────────────────────────────────────
-
-; Channel status table at $0300 (8 bytes, 1 per channel)
-; 0 = free, 1 = in use
-
-; ──────────────────────────────────────────────────────────────
-; Allocate a free channel
-; Returns: R0 = channel number (8-15), or $FF if none free
-; ──────────────────────────────────────────────────────────────
-CFS alloc_channel
-
-  SCR R0, 8      ; Start at channel 8
-
-alloc_search:
-  ; Check if channel R0 is free
-  SDP $03        ; Status table at $0300
-  SUB R0, 8, R1  ; R1 = offset (0-7)
-  SDB R1
-  SBF 0
-  STR R1, R2     ; R2 = status
-
-  ; If R2 == 0, channel is free
-  JNZ R2, alloc_next
-
-  ; Found free channel!
-  ; Mark as in use
-  SCR R2, 1
-  STA R2, R1
-
-  ; Return channel number in R0
-  CFE alloc_channel
-
-alloc_next:
-  ADD R0, 1, R0
-  CMN R0, 16, 0, alloc_search  ; If R0 < 16, continue search
-
-  ; No free channels
-  SCR R0, $FF
-
-CFE alloc_channel
-
-; ──────────────────────────────────────────────────────────────
-; Free a channel
-; Input: R0 = channel number
-; ──────────────────────────────────────────────────────────────
-CFS free_channel
-
-  ; Stop playback
-  SDP $00        ; MMP registers
-  ADD R0, R0, R1 ; R1 = R0 × 2 (pitch offset)
-  ADD R1, $54, R1  ; R1 = STL address offset
-  SDB R1
-  WRH $00
-  WRL $00        ; Stop channel
-
-  ; Mark as free
-  SDP $03
-  SUB R0, 8, R1  ; R1 = status offset
-  SDB R1
-  SBF 0
-  SCR R2, 0
-  STA R2, R1     ; Status = 0 (free)
-
-CFE free_channel
-
-; ──────────────────────────────────────────────────────────────
-; Play sound effect on any free channel
-; Input: R4 = STL address low, R5 = STL address high
-; ──────────────────────────────────────────────────────────────
-CFS play_sfx
-
-  ; Allocate channel
-  CCF alloc_channel
-  ; R0 = channel number (or $FF if none)
-
-  CME R0, $FF, 0, sfx_no_channel
-
-  ; Configure channel
-  SDP $00
-
-  ; Calculate STL register offset: $54 + (R0 × 2)
-  ADD R0, R0, R1
-  ADD R1, $54, R1
-  SDB R1
-
-  ; Set STL address
-  SBF 0
-  STA R4, R1     ; Low byte
-  SBF 1
-  STA R5, R1     ; High byte
-
-  CFE play_sfx
-
-sfx_no_channel:
-  ; No channels available, return without playing
-  CFE play_sfx
-```
-
-## Example 8: Music Player with Commands
-
-```
-; ──────────────────────────────────────────────────────────────
-; Simple music player that reads commands from CPU via DEF88186
-; ──────────────────────────────────────────────────────────────
-
-music_player_main:
-  ; Initialize
-  CCF init_mmp
-
-  ; Main loop: Check for commands from CPU
-main_loop:
-  ; Read command from $1000 (DEF88186 input)
+cmd_loop:
+  ; Read command byte from $1000
+  PUDP
   SDP $10
   SDB $00
-  SBF 0
-  STR $00, R0    ; R0 = command
+  LDA X           ; X = command (LDA 1-arg loads from dp:db)
+  PODP
 
-  ; Check command type
-  CME R0, $01, 0, cmd_play
-  CME R0, $02, 0, cmd_stop
-  CME R0, $03, 0, cmd_set_volume
+  BEQ X, Y, cmd_play      ; Y was set earlier... need different approach
+  ; Better: compare directly
+  LDA Y, $01
+  BEQ X, Y, cmd_play
+  LDA Y, $02
+  BEQ X, Y, cmd_stop
+  LDA Y, $03
+  BEQ X, Y, cmd_vol
 
-  ; No valid command, continue
-  JMP 0, 0, main_loop
+  JMS cmd_loop
 
 cmd_play:
-  ; Read channel number from $1001
-  SDB $01
-  STR $01, R1    ; R1 = channel
-
-  ; Read STL address from $1002-$1003
-  SDB $02
-  STR $02, R2    ; R2 = STL low
-  SDB $03
-  STR $03, R3    ; R3 = STL high
-
-  ; Start playback
-  SDP $00
-  ADD R1, R1, R4 ; R4 = channel × 2
-  ADD R4, $54, R4  ; R4 = STL offset
-  SDB R4
-  SBF 0
-  STA R2, R4     ; Low byte
-  SBF 1
-  STA R3, R4     ; High byte
-
-  ; Clear command
+  ; Read channel (at $1001), STL high (at $1002), STL low (at $1003)
+  PUDP
   SDP $10
+  SDB $01
+  LDA X           ; X = channel number (0-15)
+  PUX             ; save channel
+  SDB $02
+  LDA X           ; X = STL high byte
+  PUX             ; save STL high
+  SDB $03
+  LDA X           ; X = STL low byte
+  PUX             ; save STL low
+  ; Clear command
   SDB $00
-  SCR R0, 0
-  STA R0, $00
+  LDA X, $00
+  STA X           ; write 0 → $1000
 
-  JMP 0, 0, main_loop
+  ; Calculate STL offset: ch * 2 + $54
+  POX             ; X = STL low
+  MOV X, Y        ; Y = STL low
+  POX             ; X = STL high
+  ; (simplified: for channels 0-7, offset = ch*2 + $54 fits in a table)
+  ; Use pre-computed offset table or inline for fixed channels
+
+  PODP
+  JMS cmd_loop
 
 cmd_stop:
-  ; Read channel from $1001
-  SDB $01
-  STR $01, R1
-
-  ; Stop channel
-  SDP $00
-  ADD R1, R1, R4
-  ADD R4, $54, R4
-  SDB R4
-  WRH $00
-  WRL $00
-
-  ; Clear command
+  ; Read channel from $1001, stop it
+  PUDP
   SDP $10
-  SDB $00
-  SCR R0, 0
-  STA R0, $00
-
-  JMP 0, 0, main_loop
-
-cmd_set_volume:
-  ; Read channel from $1001
   SDB $01
-  STR $01, R1
+  LDA X           ; X = channel
+  SDB $00
+  LDA Y, $00
+  STA Y           ; clear command at $1000
+  PODP
+  ; Stop channel (set STL to 0)
+  ; ... (compute channel STL offset and zero it)
+  JMS cmd_loop
 
-  ; Read volume from $1002
+cmd_vol:
+  PUDP
+  SDP $10
+  SDB $01
+  LDA X           ; X = channel
   SDB $02
-  STR $02, R2
-
-  ; Set volume
-  SDP $00
-  ADD R1, $20, R4  ; R4 = volume offset
-  SDB R4
-  SBF 0
-  STA R2, R4
-
-  ; Clear command
-  SDP $10
+  LDA Y           ; Y = volume
   SDB $00
-  SCR R0, 0
-  STA R0, $00
-
-  JMP 0, 0, main_loop
+  LDA X, $00
+  STA X           ; clear command
+  ; Set volume register...
+  PODP
+  JMS cmd_loop
 ```
+
+---
 
 ## Common Patterns
 
-### 16-bit Addition
+### Hardware Loop (fixed-count)
 ```
-; Add 16-bit values in R0:R1 and R2:R3, result in R4:R5
-ADD R0, R2, R4   ; Low byte
-ADD R1, R3, R5   ; High byte
-; Note: No carry handling! For accurate math, check overflow
+; Loop exactly 16 times
+LST 0, 16        ; start loop 0, 16 iterations
+  ; ... loop body ...
+LFN 0            ; end loop 0
+```
+
+### Counted Loop with Counter Register
+```
+; Loop X from 0 to 9
+  LDA X, $0A     ; loop bound in Y for comparison
+  MOV X, Y
+  LDA X, $00     ; counter in X
+
+count_loop:
+  ; ... body using X ...
+  INC X
+  CML X, Y, 1, count_loop  ; if X < Y, jump backward
+```
+
+### 16-bit Addition with Carry
+```
+; Add 16-bit (R2_hi:R2_lo) + (R3_hi:R3_lo) using X/Y
+; Low bytes first
+  LDA X, <R2_lo_value>
+  LDA Y, <R3_lo_value>
+  ADD X, Y, X          ; X = low result, C = carry out
+  ; (save X to memory)
+  SBF 0
+  STA X, $50
+
+  LDA X, <R2_hi_value>
+  LDA Y, <R3_hi_value>
+  ADC X, Y, X          ; X = high result + carry
+  STA X, $51
 ```
 
 ### 16-bit Comparison
 ```
-; Compare 16-bit R0:R1 with R2:R3
-; First compare high bytes
-BLT R1, R3, less_than
-BGT R1, R3, greater_than
-; High bytes equal, compare low bytes
-BLT R0, R2, less_than
-BGT R0, R2, greater_than
-; Equal
+; Compare 16-bit value (hi in X, lo in Y) with ($12, $00)
+  LDA X, $00           ; compare low bytes first
+  ; (load actual low byte into Y)
+  BNE Y, X, not_equal
+  LDA X, $12           ; compare high bytes
+  ; (load actual high byte into Y)
+  BEQ Y, X, equal
+not_equal:
+  ; ...
 equal:
   ; ...
 ```
 
-### Delay Loop (Precise Timing)
+### Delay Loop (approximate milliseconds)
 ```
-; Delay for approximately N milliseconds
-; At 4.2 MHz, 4 CPI: 1,050,000 instructions/sec
-; 1 ms = 1050 instructions
-
-delay_ms:  ; Input: R0 = milliseconds
-  SCR R1, 0  ; Outer loop counter
+; delay_ms: delay X milliseconds
+; At 4 MHz, 4 CPI = 1,000,000 instructions/sec → 1 ms ≈ 1000 instructions
+delay_ms:           ; Input: X = milliseconds (max 255)
+  MOV X, Y         ; Y = ms count (use as outer loop)
+  LDA X, $00
 
 delay_outer:
-  ; Each iteration = ~1050 instructions
-  NOP 250    ; 254 cycles
-  NOP 250    ; 254
-  NOP 250    ; 254
-  NOP 250    ; 254
-  ; ~1016 cycles so far, plus loop overhead ≈ 1050
-
-  ADD R1, 1, R1
-  CMN R1, R0, 0, delay_outer
-
+  ; ~1000 instructions per iteration
+  NOP $FA          ; 4 + 250 = 254 cycles
+  NOP $FA          ; 254
+  NOP $FA          ; 254
+  NOP $E6          ; 234 + overhead ≈ 1000 total
+  DEC Y
+  JNZ Y, 1, delay_outer
   RET
 ```
 
-### Copy Memory Block
+### Save/Restore Context Around a Call
 ```
-; Copy N bytes from [$DPDB] to [$DP(DB+1)]
-; Input: R0 = source offset, R1 = dest offset, R2 = count
+; Caller must save X/Y if function may clobber them
+  PUX              ; save X
+  PUY              ; save Y
+  PUDP             ; save data pointer
+  ; set up args in X, Y
+  JSR $XX          ; call function
+  PODP             ; restore data pointer
+  POY              ; restore Y
+  POX              ; restore X
+```
+
+### Memory Block Copy
+```
+; Copy N bytes: source at $DPDB (incremented), dest at different page
+; Input: X = count, source DP:DB pre-set, dest DP in R4 (saved externally)
+; Note: SDB only takes immediates, so DP:DB must be managed with INC DP / SDP
 
 copy_block:
-  SBF 0
-
+  PUDP
+  ; For small fixed offsets, use STA/STR with immediate addresses:
+  LDA X, $08       ; count = 8
+  SDB $00          ; start at offset $00
 copy_loop:
-  ; Read from source
-  SDB R0
-  STR R0, R3
-
-  ; Write to dest
-  SDB R1
-  STA R3, R1
-
-  ; Increment pointers
-  ADD R0, 1, R0
-  ADD R1, 1, R1
-
-  ; Decrement counter
-  SUB R2, 1, R2
-  JNZ R2, copy_loop
-
+  ; Load byte from source (using 2-arg STR)
+  STR $00, Y       ; Y = [$DP:00]
+  SDB $01          ; bump DB manually (only works for small fixed offsets)
+  ; ... for arbitrary copies, use INC DP / manage DP page manually
+  DEC X
+  JNZ X, 1, copy_loop
+  PODP
   RET
 ```
+
+---
 
 ## Tips and Best Practices
 
-1. **Pre-load Samples:** Load all samples into SST during initialization
-2. **Use Functions:** CFS/CFE for reusable code blocks
-3. **Channel Management:** Reserve channels for music vs. SFX
-4. **Testing:** Test one channel at a time to isolate issues
-5. **Timing:** Use NOP for precise delays, not busy loops
-6. **Volume Balance:** Start with low volumes (64-128) to avoid clipping
-7. **Pitch Calculation:** Pre-calculate pitch tables offline
-8. **Reverb/Echo:** Test effect parameters to find good settings
-9. **Memory Usage:** Monitor SST capacity (12,288 samples total)
-10. **Bank Usage:** Keep frequently-used code in BIOS or RAM, not banked AROM
+1. **Use JSR/RET:** Functions are regular code at labels; call with `JSR $XX` and end with `RET`.
+2. **Save DP around functions:** Use `PUDP`/`PODP` to preserve the caller's data pointer.
+3. **Keep loop counters in X or Y:** JNZ/JZ only test X or Y.
+4. **SDB takes immediates only:** For sequential byte access, either use STA $XX with a fixed offset, or update DP and use offset 0.
+5. **Hardware loops:** Use LST/LFN for counted loops — much faster than manual counter patterns.
+6. **Flag register:** Check with `STF X` after arithmetic; use `CF/SF` to selectively clear/set bits.
+7. **16-bit math:** Use ADD for low byte, ADC for high byte to handle carry automatically.
+8. **MMP 16-bit writes:** Always write high byte (BF=1) before low byte (BF=0).
+9. **Channel management:** Reserve channels 0-7 for music, 8-15 for SFX.
+10. **Memory pages:** Set DP once per region, use immediate offsets within that page.
 
 ## Debugging Checklist
 
 **Sound Not Playing:**
-- [ ] STL address set correctly ($7000-$7FFF range)?
+- [ ] STL address set correctly ($7000-$7FFF)?
 - [ ] STL entry points to valid SST block ($9000-$CFFF)?
-- [ ] SST block header has valid loop configuration?
+- [ ] SST block header has valid configuration?
 - [ ] Channel volume > 0?
-- [ ] MMP initialized (registers not random values)?
+- [ ] BF set correctly when writing pitch/STL registers (16-bit)?
 
 **Wrong Pitch:**
-- [ ] Pitch register set to expected value ($1000 = 1.0×)?
-- [ ] Sample rate matches expectation?
-- [ ] Gaussian interpolation enabled if needed?
+- [ ] Pitch register = $1000 for 1.0× playback speed?
+- [ ] Both bytes of pitch written correctly (high byte first)?
 
-**Distortion/Noise:**
-- [ ] Too many channels playing at high volume?
-- [ ] Clamping values in SST header correct?
-- [ ] Sample data valid (not garbage memory)?
+**Crashes / Runaway Execution:**
+- [ ] SP initialized before first JSR?
+- [ ] Every JSR has a matching RET?
+- [ ] PUDP/PODP balanced around every function that changes DP?
 
-**Clicking at Loop Point:**
-- [ ] Loop address points to valid sample?
-- [ ] Loop start and end values similar?
-- [ ] SST block W bit set correctly (final block)?
+**Clicking at Loop Points:**
+- [ ] Loop address in STL entry valid?
+- [ ] SST block W (final) bit set appropriately?
 
 ## See Also
 
-- instruction-set.txt - Complete instruction reference
-- memory-map.txt - Memory layout details
-- registers.txt - Register usage
-- sst.txt - Sample format
-- mmp.txt - MMP register details
-- overview.txt - Architecture overview
+- instruction-set.txt — Complete instruction reference with encodings
+- registers.txt — Detailed register usage
+- memory-map.txt — Memory regions accessible via DP
+- sst.txt — Sample storage table format
+- mmp.txt — MMP register details

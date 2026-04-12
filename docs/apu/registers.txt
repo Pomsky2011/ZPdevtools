@@ -2,135 +2,169 @@
 
 ## Register Overview
 
-The APU has 7 primary registers divided into two categories:
+The APU has 256 general-purpose 8-bit registers plus several special-purpose registers.
 
-### General Purpose Registers (usable in operations)
-- **X Index** (8-bit) - Primary accumulator and index register
-- **Y Index** (8-bit) - Secondary accumulator and index register
-- **R0-R2** (8-bit each, implied) - Additional general purpose registers
+### General Purpose Registers
+- **R0 (X)** (8-bit) - Primary accumulator/index register
+- **R1 (Y)** (8-bit) - Secondary accumulator/index register
+- **R2-R255** (8-bit each) - Extended general purpose registers
 
-Note: The instruction set refers to registers by number (e.g., "X" in encoding).
-Total general purpose registers available depends on instruction encoding space.
-Actual number may be more than 2-3 based on operand fields.
+Note: Arithmetic instructions (NOR, AND, ADD, SUB, ADC, SBC, XOR, NOR) encode source
+operands in 1 bit (0=R0/X, 1=R1/Y). Destination can be any register R0-R255 or memory.
+Extended registers R2-R255 are used as destinations or via STA/STR/LDA.
 
 ### Special Purpose Registers
 - **PC** (Program Counter) - 16-bit, tracks current instruction address
-- **RP** (ROM Page) - 8-bit, high byte for jump addressing
+- **SP** (Stack Pointer) - 16-bit, hardware stack pointer
+- **RP** (ROM Page) - 8-bit, high byte for jump target addressing
 - **DP** (Data Page) - 8-bit, high byte for memory addressing
-- **DB** (Data Byte) - 8-bit, offset for WRH/WRL instructions
+- **DB** (Data Byte) - 8-bit, secondary memory addressing byte
 - **BF** (Byte Flip) - 1-bit, selects high/low byte in word operations
+- **FLAGS** - 4-bit status flags register (0bzglc)
+
+---
 
 ## Detailed Register Descriptions
 
-### X Index Register (8-bit)
+### R0 / X Register (8-bit)
 
-**Purpose:** Primary general-purpose register for arithmetic and logic operations.
+**Purpose:** Primary general-purpose register. Encoded as source operand 0 in arithmetic.
 
 **Can Be Used In:**
-- NOR, AND, ADD, SUB (source/destination)
-- STA, STR (data storage/loading)
+- NOR, AND, ADD, SUB, ADC, SBC, XOR (source/destination)
+- STA, STR / LDA (data storage/loading)
 - SCR (load immediate constant)
-- ZOR (zero out)
-- IOO, IOI (I/O operations)
-- BEQ, BNE, BLT, BGT (comparisons)
-- CME, CMN, CML, CMG (conditional jumps)
-- JNZ (test for non-zero)
-- SBF (set byte flip flag)
+- ZOR, ZOA (zero out)
+- BEQ, BNE, BLT, BGT (conditional branches)
+- CME, CMN, CML, CMG (compare-and-jump)
+- JNZ, JZ (conditional jumps)
+- MOV, EXC (register transfer/exchange)
+- INC, DEC (increment/decrement)
+- PUX, POX (push/pop to hardware stack)
 
 **Common Use Cases:**
 ```
-SCR X, 42         ; X = 42
+LDA X, 42         ; X = 42
 ADD X, Y, X       ; X = X + Y
-STA X, $50        ; Store X to memory
-JNZ X, 0, $10     ; Jump if X != 0
+STA X, $50        ; Store X to [DP:$50]
+JNZ X, $10        ; Jump to [RP:$10] if X != 0
 ```
 
-**Notes:**
-- Most versatile register
-- Often used as accumulator
-- Preserve X across function calls if needed
+---
 
-### Y Index Register (8-bit)
+### R1 / Y Register (8-bit)
 
-**Purpose:** Secondary general-purpose register for arithmetic and logic operations.
+**Purpose:** Secondary general-purpose register. Encoded as source operand 1 in arithmetic.
 
 **Can Be Used In:**
-- All same operations as X register
-- Often used as second operand in binary operations
+- All same instructions as R0/X
+- Typically used as the second operand in binary operations
 
 **Common Use Cases:**
 ```
-SCR X, 10
-SCR Y, 20
+LDA X, 10
+LDA Y, 20
 ADD X, Y, X       ; X = 30
-BEQ X, Y, $50     ; Branch if X == Y
-IOO X, Y, 0x00    ; Output X and Y to I/O
+BEQ X, Y, $50     ; Branch to [RP:$50] if X == Y
 ```
 
-**Notes:**
-- Equal capability to X register
-- Use for two-operand operations
-- Good for loop counters
+---
 
-### Additional General Purpose Registers
+### R2-R255 Extended Registers (8-bit each)
 
-Based on the instruction encodings, register operands can be 1-8 bits wide,
-suggesting up to 256 registers may be addressable (implementation dependent).
+**Purpose:** General purpose storage. Not addressable as arithmetic sources directly,
+but usable as destinations and via STA/STR.
 
-**Typical Count:** 8-32 general purpose registers (R0-R31 or similar)
+**Conventions (suggested):**
+- R0-R3:   Temporaries / function arguments / return values
+- R4-R15:  Callee-saved locals
+- R16-R31: General locals
+- R32-R255: Extended storage / large arrays
 
-**Usage Pattern:**
+**Usage:**
 ```
-SCR R0, 0
-SCR R1, 100
-ADD R0, R1, R2    ; R2 = R0 + R1
+LDA X, 42
+STA X, $20        ; Store X into [DP:$20] (accessible as R-indexed memory)
+STR $20, X        ; Load [DP:$20] back into X
 ```
 
-**Convention Suggestions:**
-- R0-R3: Temporary/scratch registers
-- R4-R7: Function parameters
-- R8-R15: Local variables
-- R16-R31: Preserved across calls
+---
 
 ### PC - Program Counter (16-bit)
 
-**Purpose:** Tracks the address of the currently executing instruction.
+**Purpose:** Address of the currently executing instruction.
 
 **Characteristics:**
-- 16-bit register (full address space)
-- Automatically increments after each instruction fetch
-- Can be modified by jump/branch instructions
+- 16-bit (full 64 KiB address space)
+- Increments by 2 after each instruction fetch
+- Modified by all jump/branch/call/return instructions
 
-**Direct Modification:**
-Not typically modified directly by MOV/STA. Use jump instructions:
-- JMP (unconditional jump)
-- JNZ (jump if not zero)
-- BEQ, BNE, BLT, BGT (conditional branches)
-- CME, CMN, CML, CMG (conditional jumps)
-- CCF (call function, modifies PC)
+**Modification Instructions:**
+- `JMP $ZZ` / `JMP DP` — unconditional jump
+- `JSR $ZZ` / `JSR DP` — call (pushes return address)
+- `RET` — return (pops return address)
+- `JNZ X, $ZZ` — jump if R0/R1 != 0
+- `JZ X, $ZZ` — jump if R0/R1 == 0
+- `BEQ/BNE/BLT/BGT X, Y, $ZZ` — compare-and-branch
 
-**Indirect Access:**
-Some architectures allow reading PC value, but no explicit instruction here.
-PC value is implicit in position-dependent code.
+**Executable Regions:**
+```
+$0100-$0FFF  RAM (self-modifying code)
+$8000-$8FFF  BIOS ROM
+$D000-$FFFF  AROM (banked)
+```
 
-**Address Range:**
-- $0000-$FFFF (64 KiB addressing)
-- PC can point to any executable region:
-  - $0100-$0FFF (RAM)
-  - $8000-$8FFF (BIOS ROM)
-  - $D000-$FFFF (AROM)
+---
+
+### SP - Stack Pointer (16-bit)
+
+**Purpose:** Hardware stack pointer. Manages the call stack and push/pop operations.
+
+**Characteristics:**
+- 16-bit register
+- Grows downward (SP decrements on push, increments on pop)
+- Managed automatically by push/pop and call/return instructions
+- Can be manually adjusted with `INC SP` / `DEC SP`
+
+**Instructions that use SP:**
+- `PUX` — push R0 (X) onto stack
+- `PUY` — push R1 (Y) onto stack
+- `PUDP` — push DP onto stack
+- `POX` — pop from stack into R0 (X)
+- `POY` — pop from stack into R1 (Y)
+- `PODP` — pop from stack into DP
+- `JSR $ZZ` / `JSR DP` — pushes return address (2 bytes)
+- `RET` — pops return address (2 bytes)
+- `INC SP` / `DEC SP` — manual SP adjustment
+- `BSP $XX` — set SP low byte
+
+**Set By:**
+```
+BSP $FF       ; SP low byte = $FF (initial stack setup)
+INC SP        ; SP++
+DEC SP        ; SP--
+```
+
+**Stack Layout Example:**
+```
+; Stack grows down from $01FF
+BSP $FF       ; SP = $xxFF
+SRP $01
+; Stack now starts at $01FF
+```
+
+---
 
 ### RP - ROM Page Register (8-bit)
 
-**Purpose:** Provides the high byte for jump target addresses in certain instructions.
+**Purpose:** High byte of jump target addresses.
 
 **Used In:**
-- JMP $ZZ (absolute jump with Y=1) → jumps to $RPZZ
-- JNZ X, Y, $ZZ (if Y=1) → jumps to $RPZZ if X != 0
-- BEQ X, Y, $ZZ → jumps to $RPZZ if X == Y
-- BNE X, Y, $ZZ → jumps to $RPZZ if X != Y
-- BLT X, Y, $ZZ → jumps to $RPZZ if X < Y
-- BGT X, Y, $ZZ → jumps to $RPZZ if X > Y
+- `JMP $ZZ` (Y=0) → jumps to $RPZZ
+- `JNZ X, $ZZ` → jumps to $RPZZ if X != 0
+- `JZ X, $ZZ` → jumps to $RPZZ if X == 0
+- `JSR $ZZ` → calls $RPZZ (pushes return address)
+- `BEQ/BNE/BLT/BGT X, Y, $ZZ` → conditional branch to $RPZZ
 
 **Set By:**
 ```
@@ -140,52 +174,39 @@ SRP $D0       ; RP = $D0
 **Example:**
 ```
 SRP $80       ; Set RP to BIOS region
-JMP $10       ; Jump to $8010 (BIOS function)
+JMP $10       ; Jump to $8010
 
 SRP $D0       ; Set RP to AROM region
-BEQ R0, R1, $50  ; If R0 == R1, jump to $D050
+BEQ X, Y, $50 ; If X == Y, jump to $D050
 ```
-
-**Notes:**
-- Does not affect PC increment (only jump targets)
-- Not related to RBC (ROM banking)
-- Common to set once and perform multiple jumps within same page
-- Use $80 for BIOS, $D0-$FF for AROM access
 
 **Memory Page Mapping:**
 ```
 RP=$00 → Jumps to $00XX (MMP registers)
-RP=$01 → Jumps to $01XX (General RAM)
+RP=$01 → Jumps to $01XX (RAM)
 RP=$10 → Jumps to $10XX (DEF88186 Input)
 RP=$80 → Jumps to $80XX (BIOS)
 RP=$D0 → Jumps to $D0XX (AROM)
 ```
 
+---
+
 ### DP - Data Page Register (8-bit)
 
-**Purpose:** Provides the high byte for memory addresses in data access instructions.
+**Purpose:** High byte for memory data addresses.
 
 **Used In:**
-- STA X, $YY → stores to $DPYY
-- STR $YY, X → loads from $DPYY
-- NOR/AND/ADD/SUB with memory destination → result to $DPZZ
-- ZOA $XX → zeros out $DPXX
-- IOI X, Y, $ZZ → third byte from I/O to $DPZZ
-- WRH/WRL → writes to $DPDB (see DB register)
+- `STA X, $YY` → stores to $DPYY
+- `STR $YY, X` → loads from $DPYY
+- `NOR/AND/ADD/SUB/ADC/SBC/XOR` with memory destination → result to $DPZZ
+- `ZOA $XX` → zeros $DPXX
+- `JMP DP` / `JSR DP` → jumps to $DPDB (combined with DB)
 
 **Set By:**
 ```
-SDP $30       ; DP = $30
-```
-
-**Example:**
-```
-SDP $10       ; DP = $10
-SCR R0, 42
-STA R0, $50   ; Store 42 to $1050
-
-SDP $90       ; DP = $90 (SST region)
-STR $00, R1   ; Load from $9000 into R1
+SDP $30             ; DP = $30 (immediate)
+SDP b, $XX          ; DP[b] = $XX (set high or low nibble)
+PODP                ; Pop DP from stack
 ```
 
 **Common Values:**
@@ -201,18 +222,29 @@ SDP $90  ; SST
 SDP $D0  ; AROM (read-only)
 ```
 
+**Example:**
+```
+SDP $10       ; DP = $10
+LDA X, 42
+STA X, $50    ; Store 42 to $1050
+
+SDP $90       ; DP = $90 (SST region)
+STR $00, X    ; Load from $9000 into X
+```
+
 **Notes:**
-- Change DP to access different memory regions
-- More efficient to set once and access multiple addresses in same page
-- Does not affect banking (use RBC for that)
+- Push/pop with `PUDP`/`PODP` for context switches
+- Set once and access multiple offsets in same page
+
+---
 
 ### DB - Data Byte Register (8-bit)
 
-**Purpose:** Provides an offset within the DP page for WRH/WRL instructions.
+**Purpose:** Low byte offset for `JMP DP` / `JSR DP` indirect jumps.
 
 **Used In:**
-- WRH 0xXX → writes XX to high byte of $DPDB
-- WRL 0xXX → writes XX to low byte of $DPDB
+- `JMP DP` → jumps to address formed as ($DP << 8) | $DB
+- `JSR DP` → calls address ($DP << 8) | $DB (pushes return address)
 
 **Set By:**
 ```
@@ -221,55 +253,29 @@ SDB $50       ; DB = $50
 
 **Example:**
 ```
-SDP $10       ; Data page = $10
-SDB $30       ; Data byte = $30
-WRH 0xAB      ; Write 0xAB to high byte of $1030
-WRL 0xCD      ; Write 0xCD to low byte of $1030
-; Memory $1030 now contains $ABCD
-```
-
-**Use Cases:**
-1. **Quick Initialization:**
-```
-SDP $70       ; STL region
-SDB $00
-WRH 0x90      ; High byte of address
-WRL 0x50      ; Low byte of address
-; $7000 now contains $9050 (pointer to SST)
-```
-
-2. **Table Writing:**
-```
-SDP $70       ; STL region
-SCR R0, 0     ; Counter
-
-loop:
-  SDB R0      ; DB = current index
-  WRH 0x90    ; Write high byte
-  WRL 0x00    ; Write low byte
-  ADD R0, 2, R0  ; Next word
-  CML R0, 64, 1, loop  ; Loop if R0 < 64
+SDP $D0       ; DP = $D0
+SDB $40       ; DB = $40
+JMP DP        ; Jump to $D040
 ```
 
 **Notes:**
-- Only used with WRH/WRL
-- Allows indexed access within a page
-- DB is an offset, final address is $DPDB
-- More efficient than setting DP repeatedly
+- DB is secondary to DP for indirect jumps
+- Not used for STA/STR addressing (those use $DPYY directly)
+
+---
 
 ### BF - Byte Flip Register (1-bit)
 
-**Purpose:** Selects whether to access the high or low byte of a 16-bit word.
+**Purpose:** Selects high or low byte in 16-bit word memory operations.
 
 **Values:**
-- 0 = Access low byte (bits 7-0)
-- 1 = Access high byte (bits 15-8)
+- 0 = Low byte (bits 7-0)
+- 1 = High byte (bits 15-8)
 
 **Used In:**
-- STA X, $YY (which byte of $DPYY to write)
-- STR $YY, X (which byte of $DPYY to read)
-- NOR/AND/ADD/SUB with memory destination
-- IOI X, Y, $ZZ (which byte of $DPZZ for third byte)
+- `STA X, $YY` — which byte of $DPYY to write
+- `STR $YY, X` — which byte of $DPYY to read
+- Arithmetic instructions with memory destination
 
 **Set By:**
 ```
@@ -279,158 +285,182 @@ SBF 1         ; BF = 1 (high byte)
 
 **Example - Reading a 16-bit Value:**
 ```
-SDP $10       ; DP = $10
-SBF 0         ; Select low byte
-STR $50, R0   ; R0 = low byte of $1050
-SBF 1         ; Select high byte
-STR $50, R1   ; R1 = high byte of $1050
-; Now R0 = low byte, R1 = high byte
+SDP $10
+SBF 0
+STR $50, X    ; X = low byte of $1050
+SBF 1
+STR $50, Y    ; Y = high byte of $1050
 ```
 
 **Example - Writing a 16-bit Value:**
 ```
-SDP $20       ; DP = $20
-SCR R0, 0xCD  ; Low byte value
-SCR R1, 0xAB  ; High byte value
-SBF 0         ; Select low byte
-STA R0, $30   ; Write low byte to $2030
-SBF 1         ; Select high byte
-STA R1, $30   ; Write high byte to $2030
-; Memory $2030 now contains $ABCD
+SDP $20
+LDA X, $CD    ; Low byte
+LDA Y, $AB    ; High byte
+SBF 0
+STA X, $30    ; Write low byte to $2030
+SBF 1
+STA Y, $30    ; Write high byte to $2030
+; $2030 now contains $ABCD
 ```
 
-**Notes:**
-- Must be set before each byte operation
-- Does not automatically toggle between operations
-- Affects all memory operations that access words
-- WRH/WRL do not use BF (always write their respective bytes)
+---
+
+### FLAGS - Status Flags Register (4-bit)
+
+**Purpose:** Condition codes set by arithmetic/compare instructions.
+
+**Bit Layout:** `0b0zglc` (4 bits)
+```
+Bit 3 (0x08): Z = Zero flag      — result was zero
+Bit 2 (0x04): G = Greater flag   — left operand > right
+Bit 1 (0x02): L = Less flag      — left operand < right
+Bit 0 (0x01): C = Carry flag     — arithmetic carry/borrow
+```
+
+**Set By:**
+| Instruction | Flags Affected         |
+|-------------|------------------------|
+| ADD X, Y    | Z, C                   |
+| SUB X, Y    | Z, C, G, L             |
+| ADC X, Y    | Z, C                   |
+| SBC X, Y    | Z, C, G, L             |
+| CME/CMN/CML/CMG | Z, G, L           |
+| BEQ/BNE/BLT/BGT | Z, G, L (before branch) |
+| SF n        | Sets specific flag bit  |
+| CF n        | Clears specific flag bit |
+| SFR reg     | FLAGS = reg & 0x0F      |
+| STF reg     | reg = FLAGS             |
+
+**Read By:**
+- `BEQ/BNE/BLT/BGT` — branch based on Z/G/L
+- `ADC/SBC` — reads C flag to include carry
+- `STF X` — reads FLAGS into X for manual inspection
+
+**Flag Instructions:**
+```
+SF 0          ; Set carry flag (FLAGS |= 0x01)
+SF 1          ; Set less flag
+SF 2          ; Set greater flag
+SF 3          ; Set zero flag
+CF 0          ; Clear carry flag
+CF 1          ; Clear less flag
+SFR X         ; Load FLAGS from X (FLAGS = X & 0x0F)
+STF X         ; Store FLAGS into X
+```
+
+**Example - Carry Arithmetic:**
+```
+; Add 16-bit values: (R2:R3) + (R4:R5)
+LDA X, R3     ; not direct, use STA/STR
+; assume X = low byte, Y = low byte of second
+ADD X, Y, X   ; X = low + low (sets C on overflow)
+STF Y         ; save flags
+; now do high bytes
+LDA X, R2_high
+LDA Y, R4_high
+ADC X, Y, X   ; X = high + high + carry
+```
+
+**Example - Manual Flag Check:**
+```
+SUB X, Y, X   ; X = X - Y, sets Z/G/L/C
+STF Y         ; Y = flags
+AND Y, X, Y   ; check zero: Y &= 0x08 (FLAG_Z)
+JNZ Y, zero_case
+```
+
+---
 
 ## Register Usage Conventions
 
-### Function Calling Convention (Suggested)
+### Function Calling Convention
 
-**Caller-Saved (Temporary):**
-- R0, R1, R2, R3
-- X, Y (if separate from R0/R1)
-- Caller must save these if needed across calls
+**Arguments (caller-provided):**
+- R0 (X), R1 (Y) for up to 2 single-byte parameters
+- Additional args pushed on stack before call
 
-**Callee-Saved (Preserved):**
-- R4-R15 (if available)
-- Callee must save and restore if modified
+**Return values:**
+- R0 (X) for single byte
+- R0 (X) + R1 (Y) for two bytes
 
-**Parameters:**
-- R0-R3 or X, Y for up to 4 byte parameters
-- Additional parameters via stack (using DP/DB)
+**Caller-saved (caller must preserve if needed):**
+- R0 (X), R1 (Y), FLAGS
 
-**Return Value:**
-- R0 or X for single byte return
-- R0+R1 or X+Y for two byte return
+**Callee-saved (callee must preserve):**
+- RP, DP, DB, BF
+- R4-R15 (by convention)
 
-### Stack Pointer Convention
-
-No dedicated stack pointer register, but recommended:
-- Use R14 or R15 as stack pointer (SP)
-- Stack at $01F0-$01FF (grows downward)
-
-**Example Stack Operations:**
+**Call/Return Example:**
 ```
-; Push R0 onto stack (assuming R15 = SP)
-SDP $01
-SBF 0
-STA R0, R15    ; Store low byte
-SBF 1
-STA R0, R15    ; Store high byte (if 16-bit values)
-SUB R15, 1, R15  ; Decrement SP
+; Caller
+LDA X, 5      ; arg0 = 5
+LDA Y, 3      ; arg1 = 3
+SRP $D0
+JSR $40       ; call multiply at $D040
+; X = result
 
-; Pop from stack into R0
-ADD R15, 1, R15  ; Increment SP
-SBF 0
-STR R15, R0    ; Load low byte
+; Callee (multiply: X * Y)
+multiply:
+  PUY           ; save Y across loop
+  ; ... compute ...
+  POY           ; restore Y
+  RET
 ```
 
-Note: APU does not have hardware stack instructions (no PUSH/POP).
+### Stack Operations
 
-### Register Preservation Example
+The APU has hardware stack instructions. No manual SP tracking needed:
 
 ```
-function_start:
-  ; Save registers R4, R5
-  SDP $01
-  SDB $F0       ; Save area at $01F0
-  SBF 0
-  STA R4, $F0
-  STA R5, $F1
-
-  ; Function body
-  ; ... use R4, R5 freely ...
-
-  ; Restore registers
-  STR $F0, R4
-  STR $F1, R5
-
-  CFE function_id
+PUX           ; push X
+PUY           ; push Y
+PUDP          ; push DP
+JSR $XX       ; call (auto-pushes return address)
+RET           ; return (auto-pops return address)
+POX           ; pop into X
+POY           ; pop into Y
+PODP          ; pop into DP
 ```
 
-## Register State Management
+**Saving/restoring a register across a call:**
+```
+PUX           ; save X
+JSR $XX       ; call function (may clobber X)
+POX           ; restore X
+```
 
-### Initialization
+---
 
-On APU power-on/reset:
-- PC: Set to reset vector (typically $8000 or $D000)
-- RP, DP, DB, BF: Undefined, should be initialized
-- General purpose registers: Undefined
+## Register State on Reset
 
-**Recommended Initialization:**
+On APU reset:
+- PC: $8000 (BIOS entry point)
+- SP: $01FF (top of RAM stack area)
+- RP, DP, DB, BF: $00, $00, $00, 0
+- FLAGS: $00 (all clear)
+- R0-R255: undefined, should be initialized
+
+**Recommended Boot Sequence:**
 ```
 start:
-  SRP $D0       ; Default RP to AROM region
-  SDP $01       ; Default DP to RAM region
+  SRP $D0       ; RP → AROM region
+  SDP $01       ; DP → RAM
   SDB $00       ; DB = 0
   SBF 0         ; BF = low byte
-
-  ZOR R0        ; Clear all general purpose registers
-  ZOR R1
-  ZOR R2
-  ; ... etc
+  CF 0          ; clear carry
+  CF 1          ; clear less
+  CF 2          ; clear greater
+  CF 3          ; clear zero
+  ZOR X         ; clear X
+  ZOR Y         ; clear Y
+  ; ... initialize RAM, then jump to main
 ```
 
-### Interrupt Context
-
-If APU has interrupts (implementation-specific):
-- Save all registers used in ISR
-- Restore before returning
-- Use a dedicated save area in RAM
-
-## Register Limitations
-
-1. **No 16-bit Operations:** All GP registers are 8-bit. For 16-bit math:
-   - Perform low byte operation
-   - Perform high byte operation with carry (if needed)
-   - Manually track overflow/carry
-
-2. **No Status Flags:** Unlike many architectures:
-   - No carry flag
-   - No zero flag (use JNZ or comparisons)
-   - No overflow flag
-   - Comparisons only via BEQ/BNE/BLT/BGT
-
-3. **No Automatic Increment:** No post-increment addressing modes.
-   - Must manually increment index registers
-   - Example: `ADD R0, 1, R0`
-
-4. **Limited Immediate Values:** Only SCR and WRH/WRL support immediate values.
-   - Other instructions must use registers
-
-## Register Tips
-
-1. **Set RP/DP Early:** Set once per code region to minimize instruction count
-2. **Use BF Consistently:** Always set before STA/STR to avoid wrong byte access
-3. **Reserve Registers:** Dedicate R14/R15 for stack/frame pointers
-4. **Minimize DB Changes:** Set DB once and use STR/STA for sequential access
-5. **Document Conventions:** If using calling conventions, document them clearly
+---
 
 ## See Also
 
-- instruction-set.txt - Instructions that use each register
-- memory-map.txt - Memory regions accessible via DP
-- programming-guide.txt - Practical register usage examples
+- instruction-set.txt — Full instruction reference with encodings
+- memory-map.txt — Memory regions accessible via DP
+- programming-guide.txt — Practical examples

@@ -5,7 +5,7 @@
 
 static CodegenContext ctx;
 
-/* Forward declarations */
+// Forward declarations
 static void codegen_function(ASTNode* node);
 static void codegen_statement(ASTNode* node);
 static void codegen_expression(ASTNode* node);
@@ -15,7 +15,7 @@ static void codegen_ptr_member_assign(ASTNode* node);
 static void codegen_addr_of(ASTNode* node);
 static void codegen_deref(ASTNode* node);
 
-/* Struct management functions */
+// Struct management functions
 static void add_struct(StructDef def) {
     if (ctx.struct_count >= ctx.struct_capacity) {
         ctx.struct_capacity = ctx.struct_capacity == 0 ? 16 : ctx.struct_capacity * 2;
@@ -25,8 +25,7 @@ static void add_struct(StructDef def) {
 }
 
 static StructDef* find_struct(const char* name) {
-    int i;
-    for (i = 0; i < ctx.struct_count; i++) {
+    for (int i = 0; i < ctx.struct_count; i++) {
         if (strcmp(ctx.structs[i].name, name) == 0) {
             return &ctx.structs[i];
         }
@@ -34,7 +33,7 @@ static StructDef* find_struct(const char* name) {
     return NULL;
 }
 
-/* Loop management functions */
+// Loop management functions
 static void push_loop(int break_label, int continue_label) {
     if (ctx.loop_depth >= ctx.loop_capacity) {
         ctx.loop_capacity = ctx.loop_capacity == 0 ? 8 : ctx.loop_capacity * 2;
@@ -58,7 +57,7 @@ static LoopContext* current_loop() {
     return NULL;
 }
 
-/* Symbol table functions */
+// Symbol table functions
 static void init_context(FILE* output) {
     ctx.output = output;
     ctx.symbols = NULL;
@@ -77,8 +76,7 @@ static void init_context(FILE* output) {
 }
 
 static void clear_symbols() {
-    int i;
-    for (i = 0; i < ctx.symbol_count; i++) {
+    for (int i = 0; i < ctx.symbol_count; i++) {
         free(ctx.symbols[i].name);
         if (ctx.symbols[i].array_sizes) {
             free(ctx.symbols[i].array_sizes);
@@ -96,7 +94,7 @@ static void clear_symbols() {
 static int local_var_index = 0;
 
 static int get_type_size(DataType type, int pointer_level, const char* struct_name) {
-    /* Pointers are always 2 bytes (16-bit addresses) */
+    // Pointers are always 2 bytes (16-bit addresses)
     if (pointer_level > 0) {
         return 2;
     }
@@ -113,7 +111,7 @@ static int get_type_size(DataType type, int pointer_level, const char* struct_na
                     return sdef->total_size;
                 }
             }
-            return 2;  /* Default fallback */
+            return 2;  // Default fallback
         default:
             return 2;
     }
@@ -142,30 +140,29 @@ static void add_symbol(const char* name, DataType type, int is_param, int param_
     ctx.symbols[ctx.symbol_count].struct_name = struct_name ? strdup(struct_name) : NULL;
 
     if (is_param) {
-        /* Parameters are accessed via stack relative addressing */
-        /* After JSR: [ret_addr:2] [saved_regs...] [params...] */
-        /* We'll calculate actual offset later */
+        // Parameters are accessed via stack relative addressing
+        // After JSR: [ret_addr:2] [saved_regs...] [params...]
+        // We'll calculate actual offset later
         ctx.symbols[ctx.symbol_count].offset = 0;
     } else {
-        /* Local variables - positive offset from SP after allocation */
+        // Local variables - positive offset from SP after allocation
         int elem_size = get_type_size(type, pointer_level, struct_name);
         if (is_array) {
-            /* Arrays take multiple slots */
+            // Arrays take multiple slots
             ctx.symbols[ctx.symbol_count].offset = local_var_index * 2;
-            local_var_index += array_size * (elem_size / 2);  /* Reserve space for all elements */
+            local_var_index += array_size * (elem_size / 2);  // Reserve space for all elements
         } else {
-            /* Regular variables take one slot */
+            // Regular variables take one slot
             ctx.symbols[ctx.symbol_count].offset = local_var_index * 2;
-            local_var_index += (elem_size + 1) / 2;  /* Round up to word boundary */
+            local_var_index += (elem_size + 1) / 2;  // Round up to word boundary
         }
     }
 
     ctx.symbol_count++;
 }
 
-/* Add symbol with multi-dimensional array support */
+// Add symbol with multi-dimensional array support
 static void add_symbol_multidim(const char* name, DataType type, int is_param, int param_index, int* array_sizes, int dimensions, int pointer_level, const char* struct_name) {
-    int i;
     if (ctx.symbol_count >= ctx.symbol_capacity) {
         ctx.symbol_capacity = ctx.symbol_capacity == 0 ? 16 : ctx.symbol_capacity * 2;
         ctx.symbols = realloc(ctx.symbols, ctx.symbol_capacity * sizeof(Symbol));
@@ -192,9 +189,9 @@ static void add_symbol_multidim(const char* name, DataType type, int is_param, i
     } else {
         int elem_size = get_type_size(type, pointer_level, struct_name);
         if (dimensions > 0) {
-            /* Calculate total array size */
+            // Calculate total array size
             int total_elements = 1;
-            for (i = 0; i < dimensions; i++) {
+            for (int i = 0; i < dimensions; i++) {
                 total_elements *= array_sizes[i];
             }
             ctx.symbols[ctx.symbol_count].offset = local_var_index * 2;
@@ -209,7 +206,7 @@ static void add_symbol_multidim(const char* name, DataType type, int is_param, i
 }
 
 static Symbol* find_symbol(const char* name) {
-    for (i = ctx.symbol_count - 1; i >= 0; i--) {
+    for (int i = ctx.symbol_count - 1; i >= 0; i--) {
         if (strcmp(ctx.symbols[i].name, name) == 0) {
             return &ctx.symbols[i];
         }
@@ -221,7 +218,7 @@ static int new_label() {
     return ctx.label_counter++;
 }
 
-/* Emit functions */
+// Emit functions
 static void emit(const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
@@ -229,9 +226,9 @@ static void emit(const char* fmt, ...) {
     va_end(args);
 }
 
-/* Code generation for expressions */
+// Code generation for expressions
 static void codegen_number(ASTNode* node) {
-    /* Load immediate into A */
+    // Load immediate into A
     emit("    LDA #$%04X\n", node->number & 0xFFFF);
 }
 
@@ -243,139 +240,139 @@ static void codegen_identifier(ASTNode* node) {
     }
 
     if (sym->is_param) {
-        /* Parameter - might be in register or on stack */
+        // Parameter - might be in register or on stack
         if (sym->param_index == 0) {
-            /* First parameter is already in A */
-            /* Nothing to do if it's already there */
+            // First parameter is already in A
+            // Nothing to do if it's already there
         } else if (sym->param_index == 1) {
-            /* Second parameter is in X */
-);  /* Transfer X to A */
+            // Second parameter is in X
+            emit("    TXA\n");  // Transfer X to A
         } else if (sym->param_index == 2) {
-            /* Third parameter is in Y */
-);  /* Transfer Y to A */
+            // Third parameter is in Y
+            emit("    TYA\n");  // Transfer Y to A
         } else {
-            /* Stack parameter */
-            /* Calculate offset: after saved registers */
+            // Stack parameter
+            // Calculate offset: after saved registers
             int offset = 3 + (sym->param_index - 3) * 2;
             emit("    LDA %d,S\n", offset);
         }
     } else {
-        /* Local variable */
+        // Local variable
         emit("    LDA %d,S\n", sym->offset);
     }
 }
 
 static void codegen_string_literal(ASTNode* node) {
-    /* Generate unique label for this string */
+    // Generate unique label for this string
     int str_id = ctx.string_counter++;
 
-    /* Load address of string into A */
+    // Load address of string into A
     emit("    LDA #.STR%d\n", str_id);
 
-    /* Store string in data section (will be emitted at end) */
-    /* For now, we'll emit it inline with a comment */
+    // Store string in data section (will be emitted at end)
+    // For now, we'll emit it inline with a comment
     emit("    ; String literal: %s\n", node->string_literal);
 
-    /* Note: Full implementation would collect strings and emit them in .rodata section */
+    // Note: Full implementation would collect strings and emit them in .rodata section
 }
 
 static void codegen_sizeof(ASTNode* node) {
     int size = 0;
 
     if (node->sizeof_expr.expr) {
-        /* sizeof(expression) - determine type of expression */
-        /* For now, simplified: assume int */
-        size = 2;  /* int is 2 bytes */
+        // sizeof(expression) - determine type of expression
+        // For now, simplified: assume int
+        size = 2;  // int is 2 bytes
     } else {
-        /* sizeof(type) */
+        // sizeof(type)
         size = get_type_size(node->sizeof_expr.size_type,
                             node->sizeof_expr.pointer_level,
                             node->sizeof_expr.type_name);
     }
 
-    /* Load size as immediate */
+    // Load size as immediate
     emit("    LDA #$%04X\n", size);
 }
 
-/* Code generation for cast expressions */
+// Code generation for cast expressions
 static void codegen_cast(ASTNode* node) {
-    /* Evaluate the expression being cast */
+    // Evaluate the expression being cast
     codegen_expression(node->cast.expr);
 
-    /* Perform type conversion based on target type */
-    /* Note: DEF88186 is always in 16-bit mode (REP #$30) */
+    // Perform type conversion based on target type
+    // Note: DEF88186 is always in 16-bit mode (REP #$30)
 
     if (node->cast.pointer_level > 0) {
-        /* Casting to pointer - no conversion needed (pointers are always 16-bit) */
-        /* Result is already in A register */
+        // Casting to pointer - no conversion needed (pointers are always 16-bit)
+        // Result is already in A register
         return;
     }
 
     switch (node->cast.target_type) {
         case TYPE_INT:
-            /* Casting to int - value is already 16-bit in A, no conversion needed */
+            // Casting to int - value is already 16-bit in A, no conversion needed
             break;
 
         case TYPE_CHAR:
-            /* Casting to char - mask off high byte to get 8-bit value */
+            // Casting to char - mask off high byte to get 8-bit value
             emit("    AND #$00FF    ; Cast to char (truncate to 8 bits)\n");
             break;
 
         case TYPE_VOID:
-            /* Casting to void - no-op (discard value semantics) */
+            // Casting to void - no-op (discard value semantics)
             break;
 
         case TYPE_SHORT:
-            /* Casting to short - same as int (16-bit) */
+            // Casting to short - same as int (16-bit)
             break;
 
         case TYPE_LONG:
-            /* Casting to long - for now treat as int (16-bit) */
-            /* TODO: Implement 32-bit long support */
+            // Casting to long - for now treat as int (16-bit)
+            // TODO: Implement 32-bit long support
             break;
 
         case TYPE_STRUCT:
-            /* Struct casts not supported (would require memcpy) */
+            // Struct casts not supported (would require memcpy)
             break;
 
         case TYPE_UNION:
-            /* Union casts not supported (would require memcpy) */
-            /* Just leave value as-is */
+            // Union casts not supported (would require memcpy)
+            // Just leave value as-is
             break;
 
         case TYPE_POINTER:
-            /* Already handled above */
+            // Already handled above
             break;
     }
 }
 
-/* Code generation for comma expressions */
+// Code generation for comma expressions
 static void codegen_comma(ASTNode* node) {
-    /* Evaluate all expressions left to right */
-    /* Only the last expression's result remains in A */
-    for (i = 0; i < node->comma.expr_count; i++) {
+    // Evaluate all expressions left to right
+    // Only the last expression's result remains in A
+    for (int i = 0; i < node->comma.expr_count; i++) {
         codegen_expression(node->comma.expressions[i]);
-        /* Result of all but last expression is discarded */
+        // Result of all but last expression is discarded
     }
-    /* Final result is in A register (from last expression) */
+    // Final result is in A register (from last expression)
 }
 
 static void codegen_ternary(ASTNode* node) {
     int else_label = new_label();
     int done_label = new_label();
 
-    /* Evaluate condition */
+    // Evaluate condition
     codegen_expression(node->ternary.condition);
 
-    /* Branch if false */
+    // Branch if false
     emit("    CMP #$0000\n");
     emit("    BEQ .L%d\n", else_label);
 
-    /* True branch */
+    // True branch
     codegen_expression(node->ternary.then_expr);
     emit("    BRA .L%d\n", done_label);
 
-    /* False branch */
+    // False branch
     emit(".L%d:\n", else_label);
     codegen_expression(node->ternary.else_expr);
 
@@ -383,22 +380,22 @@ static void codegen_ternary(ASTNode* node) {
 }
 
 static void codegen_binop(ASTNode* node) {
-    /* Generate code for left operand (result in A) */
+    // Generate code for left operand (result in A)
     codegen_expression(node->binop.left);
 
-    /* Save A to stack */
+    // Save A to stack
     emit("    PHA\n");
 
-    /* Generate code for right operand (result in A) */
+    // Generate code for right operand (result in A)
     codegen_expression(node->binop.right);
 
-    /* Move right operand to X */
+    // Move right operand to X
     emit("    TAX\n");
 
-    /* Restore left operand to A */
+    // Restore left operand to A
     emit("    PLA\n");
 
-    /* Perform operation */
+    // Perform operation
     switch (node->binop.op) {
         case OP_ADD:
             emit("    CLC\n");
@@ -411,20 +408,20 @@ static void codegen_binop(ASTNode* node) {
             emit("    SBC temp\n");
             break;
         case OP_MUL:
-);  /* Hardware multiply */
+            emit("    MUL X\n");  // Hardware multiply
             break;
         case OP_DIV:
-);  /* Hardware divide */
+            emit("    DIV X\n");  // Hardware divide
             break;
         case OP_MOD:
-            /* A % X: compute A - (A/X)*X */
-);           /* Save A */
-);         /* A = A / X */
-);         /* A = (A/X) * X */
-);      /* Save result */
-);           /* Restore original A */
+            // A % X: compute A - (A/X)*X
+            emit("    PHA\n");           // Save A
+            emit("    DIV X\n");         // A = A / X
+            emit("    MUL X\n");         // A = (A/X) * X
+            emit("    STA temp\n");      // Save result
+            emit("    PLA\n");           // Restore original A
             emit("    SEC\n");
-);      /* A = A - (A/X)*X */
+            emit("    SBC temp\n");      // A = A - (A/X)*X
             break;
         case OP_BIT_AND:
             emit("    STX temp\n");
@@ -439,7 +436,7 @@ static void codegen_binop(ASTNode* node) {
             emit("    EOR temp\n");
             break;
         case OP_SHL:
-            /* Shift A left by X times */
+            // Shift A left by X times
             emit("    CPX #$00\n");
             int shl_loop = new_label();
             int shl_done = new_label();
@@ -451,7 +448,7 @@ static void codegen_binop(ASTNode* node) {
             emit(".L%d:\n", shl_done);
             break;
         case OP_SHR:
-            /* Shift A right by X times */
+            // Shift A right by X times
             emit("    CPX #$00\n");
             int shr_loop = new_label();
             int shr_done = new_label();
@@ -468,7 +465,7 @@ static void codegen_binop(ASTNode* node) {
         case OP_GT:
         case OP_LE:
         case OP_GE:
-            /* Comparison: A CMP X */
+            // Comparison: A CMP X
             emit("    STX temp\n");
             emit("    CMP temp\n");
 
@@ -486,18 +483,18 @@ static void codegen_binop(ASTNode* node) {
                     emit("    BMI .L%d\n", true_label);
                     break;
                 case OP_GT:
-                    /* A > X: not equal and not less */
+                    // A > X: not equal and not less
                     emit("    BEQ .L%d\n", done_label);
                     emit("    BMI .L%d\n", done_label);
                     emit("    BRA .L%d\n", true_label);
                     break;
                 case OP_LE:
-                    /* A <= X: less or equal */
+                    // A <= X: less or equal
                     emit("    BEQ .L%d\n", true_label);
                     emit("    BMI .L%d\n", true_label);
                     break;
                 case OP_GE:
-                    /* A >= X: not less (equal or greater) */
+                    // A >= X: not less (equal or greater)
                     emit("    BEQ .L%d\n", true_label);
                     emit("    BPL .L%d\n", true_label);
                     break;
@@ -505,20 +502,20 @@ static void codegen_binop(ASTNode* node) {
                     break;
             }
 
-            /* False */
+            // False
             emit("    LDA #$0000\n");
             emit("    BRA .L%d\n", done_label);
-            /* True */
+            // True
             emit(".L%d:\n", true_label);
             emit("    LDA #$0001\n");
             emit(".L%d:\n", done_label);
             break;
         case OP_AND:
         case OP_OR:
-            /* Logical operators: treat non-zero as true */
-            /* Already have left in A, right in X */
+            // Logical operators: treat non-zero as true
+            // Already have left in A, right in X
 
-            /* Convert A to boolean (0 or 1) */
+            // Convert A to boolean (0 or 1)
             emit("    CMP #$0000\n");
             int a_true = new_label();
             int a_done = new_label();
@@ -529,9 +526,9 @@ static void codegen_binop(ASTNode* node) {
             emit("    LDA #$0001\n");
             emit(".L%d:\n", a_done);
 
-);  /* Save boolean A */
+            emit("    PHA\n");  // Save boolean A
 
-            /* Convert X to boolean */
+            // Convert X to boolean
             emit("    TXA\n");
             emit("    CMP #$0000\n");
             int x_true = new_label();
@@ -543,13 +540,13 @@ static void codegen_binop(ASTNode* node) {
             emit("    LDA #$0001\n");
             emit(".L%d:\n", x_done);
 
-);  /* X = boolean right */
-);  /* A = boolean left */
+            emit("    TAX\n");  // X = boolean right
+            emit("    PLA\n");  // A = boolean left
 
             if (node->binop.op == OP_AND) {
                 emit("    STX temp\n");
                 emit("    AND temp\n");
-            } else {  /* OP_OR */
+            } else {  // OP_OR
                 emit("    STX temp\n");
                 emit("    ORA temp\n");
             }
@@ -560,11 +557,11 @@ static void codegen_binop(ASTNode* node) {
 static void codegen_unop(ASTNode* node) {
     switch (node->unop.op) {
         case OP_ADDR_OF:
-            /* Handled by codegen_addr_of */
+            // Handled by codegen_addr_of
             codegen_addr_of(node);
             return;
         case OP_DEREF:
-            /* Handled by codegen_deref */
+            // Handled by codegen_deref
             codegen_deref(node);
             return;
         default:
@@ -575,12 +572,12 @@ static void codegen_unop(ASTNode* node) {
 
     switch (node->unop.op) {
         case OP_NEG:
-            /* Negate: 0 - A */
+            // Negate: 0 - A
             emit("    EOR #$FFFF\n");
             emit("    INC A\n");
             break;
         case OP_NOT:
-            /* Logical not: A = (A == 0) ? 1 : 0 */
+            // Logical not: A = (A == 0) ? 1 : 0
             emit("    CMP #$0000\n");
             int not_true = new_label();
             int not_done = new_label();
@@ -596,41 +593,41 @@ static void codegen_unop(ASTNode* node) {
             break;
         case OP_ADDR_OF:
         case OP_DEREF:
-            /* Already handled above */
+            // Already handled above
             break;
     }
 }
 
 static void codegen_call(ASTNode* node) {
-    /* Generate code for arguments in reverse order (push right to left) */
-    /* First 3 go in A, X, Y; rest on stack */
+    // Generate code for arguments in reverse order (push right to left)
+    // First 3 go in A, X, Y; rest on stack
 
-    /* Push arguments > 3 onto stack (in reverse) */
-    for (i = node->call.arg_count - 1; i >= 3; i--) {
+    // Push arguments > 3 onto stack (in reverse)
+    for (int i = node->call.arg_count - 1; i >= 3; i--) {
         codegen_expression(node->call.args[i]);
         emit("    PHA\n");
     }
 
-    /* Load first 3 arguments into registers */
+    // Load first 3 arguments into registers
     if (node->call.arg_count >= 3) {
         codegen_expression(node->call.args[2]);
-);  /* Third arg in Y */
+        emit("    TAY\n");  // Third arg in Y
     }
 
     if (node->call.arg_count >= 2) {
         codegen_expression(node->call.args[1]);
-);  /* Second arg in X */
+        emit("    TAX\n");  // Second arg in X
     }
 
     if (node->call.arg_count >= 1) {
         codegen_expression(node->call.args[0]);
-        /* First arg already in A */
+        // First arg already in A
     }
 
-    /* Call function */
+    // Call function
     emit("    JSR %s\n", node->call.name);
 
-    /* Clean up stack if we pushed any arguments */
+    // Clean up stack if we pushed any arguments
     if (node->call.arg_count > 3) {
         int stack_bytes = (node->call.arg_count - 3) * 2;
         emit("    TSC\n");
@@ -639,7 +636,7 @@ static void codegen_call(ASTNode* node) {
         emit("    TCS\n");
     }
 
-    /* Result is in A */
+    // Result is in A
 }
 
 static void codegen_assign(ASTNode* node) {
@@ -649,25 +646,25 @@ static void codegen_assign(ASTNode* node) {
         return;
     }
 
-    /* Generate code for value (result in A) */
+    // Generate code for value (result in A)
     codegen_expression(node->assign.value);
 
-    /* Store to variable */
+    // Store to variable
     if (sym->is_param) {
         if (sym->param_index == 0) {
-            /* First parameter - just leave in A */
-            /* But also need to update stack location if there is one */
+            // First parameter - just leave in A
+            // But also need to update stack location if there is one
         } else if (sym->param_index == 1) {
-);  /* Update X register */
+            emit("    TAX\n");  // Update X register
         } else if (sym->param_index == 2) {
-);  /* Update Y register */
+            emit("    TAY\n");  // Update Y register
         } else {
-            /* Stack parameter */
+            // Stack parameter
             int offset = 3 + (sym->param_index - 3) * 2;
             emit("    STA %d,S\n", offset);
         }
     } else {
-        /* Local variable */
+        // Local variable
         emit("    STA %d,S\n", sym->offset);
     }
 }
@@ -684,35 +681,35 @@ static void codegen_array_subscript(ASTNode* node) {
         return;
     }
 
-    /* Calculate address: base + (index * 2) */
-    /* First, evaluate index expression */
+    // Calculate address: base + (index * 2)
+    // First, evaluate index expression
     codegen_expression(node->array_subscript.index);
 
-    /* A now contains the index */
-    /* Multiply by 2 (shift left once for 16-bit elements) */
-);  /* A = index * 2 */
+    // A now contains the index
+    // Multiply by 2 (shift left once for 16-bit elements)
+    emit("    ASL A\n");  // A = index * 2
 
-    /* Add base offset */
+    // Add base offset
     emit("    CLC\n");
-, sym->offset);  /* A = base + (index * 2) */
+    emit("    ADC #$%04X\n", sym->offset);  // A = base + (index * 2)
 
-    /* Now A contains the offset from SP */
-    /* Calculate effective address: SP + A */
-);      /* Save offset */
-);           /* A = SP */
+    // Now A contains the offset from SP
+    // Calculate effective address: SP + A
+    emit("    STA temp\n");      // Save offset
+    emit("    TSC\n");           // A = SP
     emit("    CLC\n");
-);      /* A = SP + offset */
-);           /* X = effective address */
+    emit("    ADC temp\n");      // A = SP + offset
+    emit("    TAX\n");           // X = effective address
 
-    /* Load from address in X (using absolute indexed by 0) */
-    /* DEF88186 doesn't have (X) addressing, so we need to use DP */
-    /* Set DP = X, then load from (DP) */
+    // Load from address in X (using absolute indexed by 0)
+    // DEF88186 doesn't have (X) addressing, so we need to use DP
+    // Set DP = X, then load from (DP)
     emit("    TXA\n");
-);           /* DP = address */
-);       /* Load from (DP) */
+    emit("    TCD\n");           // DP = address
+    emit("    LDA $00\n");       // Load from (DP)
 
-    /* Restore DP to 0 (or previous value) */
-);           /* Will need to restore later - skip for now */
+    // Restore DP to 0 (or previous value)
+    emit("    PHD\n");           // Will need to restore later - skip for now
 }
 
 static void codegen_array_assign(ASTNode* node) {
@@ -727,32 +724,32 @@ static void codegen_array_assign(ASTNode* node) {
         return;
     }
 
-    /* Generate code for value (result in A) */
+    // Generate code for value (result in A)
     codegen_expression(node->array_assign.value);
-);  /* Save value on stack */
+    emit("    PHA\n");  // Save value on stack
 
-    /* Calculate address: base + (index * 2) */
+    // Calculate address: base + (index * 2)
     codegen_expression(node->array_assign.index);
 
-    /* A now contains the index */
-);  /* A = index * 2 */
+    // A now contains the index
+    emit("    ASL A\n");  // A = index * 2
 
-    /* Add base offset */
+    // Add base offset
     emit("    CLC\n");
-, sym->offset);  /* A = base + (index * 2) */
+    emit("    ADC #$%04X\n", sym->offset);  // A = base + (index * 2)
 
-    /* Now A contains the offset from SP */
-);           /* X = offset */
+    // Now A contains the offset from SP
+    emit("    TAX\n");           // X = offset
 
-    /* Restore value from stack */
-);           /* A = value */
+    // Restore value from stack
+    emit("    PLA\n");           // A = value
 
-    /* Store to SP + X */
-);     /* Store to [SP + X] */
+    // Store to SP + X
+    emit("    STA 0,S,X\n");     // Store to [SP + X]
 }
 
 static void codegen_addr_of(ASTNode* node) {
-    /* Calculate address of operand and leave it in A */
+    // Calculate address of operand and leave it in A
     ASTNode* operand = node->unop.operand;
 
     if (operand->type == AST_IDENTIFIER) {
@@ -762,15 +759,15 @@ static void codegen_addr_of(ASTNode* node) {
             return;
         }
 
-        /* Calculate address: SP + offset */
-);           /* A = SP */
+        // Calculate address: SP + offset
+        emit("    TSC\n");           // A = SP
         if (sym->offset != 0) {
             emit("    CLC\n");
-, sym->offset);  /* A = SP + offset */
+            emit("    ADC #$%04X\n", sym->offset);  // A = SP + offset
         }
-        /* A now contains the address */
+        // A now contains the address
     } else if (operand->type == AST_ARRAY_SUBSCRIPT) {
-        /* Address of array element - similar to array subscript code */
+        // Address of array element - similar to array subscript code
         Symbol* sym = find_symbol(operand->array_subscript.array_name);
         if (!sym) {
             fprintf(stderr, "Error: Undefined array '%s'\n", operand->array_subscript.array_name);
@@ -778,18 +775,18 @@ static void codegen_addr_of(ASTNode* node) {
         }
 
         codegen_expression(operand->array_subscript.index);
-);  /* A = index * 2 */
+        emit("    ASL A\n");  // A = index * 2
         emit("    CLC\n");
         emit("    ADC #$%04X\n", sym->offset);
         emit("    STA temp\n");
         emit("    TSC\n");
         emit("    CLC\n");
-);  /* A = SP + offset + (index * 2) */
+        emit("    ADC temp\n");  // A = SP + offset + (index * 2)
     } else if (operand->type == AST_DEREF) {
-        /* &(*ptr) = ptr, so just evaluate the pointer */
+        // &(*ptr) = ptr, so just evaluate the pointer
         codegen_expression(operand->unop.operand);
     } else if (operand->type == AST_MEMBER_ACCESS) {
-        /* Address of struct member */
+        // Address of struct member
         codegen_member_address(operand);
     } else {
         fprintf(stderr, "Error: Cannot take address of this expression\n");
@@ -797,20 +794,20 @@ static void codegen_addr_of(ASTNode* node) {
 }
 
 static void codegen_deref(ASTNode* node) {
-    /* Evaluate pointer expression (result in A = address) */
+    // Evaluate pointer expression (result in A = address)
     codegen_expression(node->unop.operand);
 
-    /* Load value from address in A */
-);           /* X = address */
+    // Load value from address in A
+    emit("    TAX\n");           // X = address
     emit("    TXA\n");
-);           /* DP = address */
-);       /* Load from (DP) */
+    emit("    TCD\n");           // DP = address
+    emit("    LDA $00\n");       // Load from (DP)
 }
 
 static void codegen_member_address(ASTNode* node) {
-    /* Calculate address of struct member */
+    // Calculate address of struct member
     if (node->type == AST_MEMBER_ACCESS) {
-        /* Get base object address */
+        // Get base object address
         if (node->member_access.object->type == AST_IDENTIFIER) {
             Symbol* sym = find_symbol(node->member_access.object->identifier);
             if (!sym || sym->type != TYPE_STRUCT) {
@@ -824,9 +821,9 @@ static void codegen_member_address(ASTNode* node) {
                 return;
             }
 
-            /* Find member offset */
+            // Find member offset
             int member_offset = -1;
-            for (i = 0; i < sdef->member_count; i++) {
+            for (int i = 0; i < sdef->member_count; i++) {
                 if (strcmp(sdef->members[i].name, node->member_access.member_name) == 0) {
                     member_offset = sdef->members[i].offset;
                     break;
@@ -838,7 +835,7 @@ static void codegen_member_address(ASTNode* node) {
                 return;
             }
 
-            /* Calculate address: SP + var_offset + member_offset */
+            // Calculate address: SP + var_offset + member_offset
             emit("    TSC\n");
             emit("    CLC\n");
             emit("    ADC #$%04X\n", sym->offset + member_offset);
@@ -849,7 +846,7 @@ static void codegen_member_address(ASTNode* node) {
 }
 
 static void codegen_member_access(ASTNode* node) {
-    /* Get address of member, then load value */
+    // Get address of member, then load value
     codegen_member_address(node);
     emit("    TAX\n");
     emit("    TXA\n");
@@ -858,18 +855,18 @@ static void codegen_member_access(ASTNode* node) {
 }
 
 static void codegen_ptr_member_access(ASTNode* node) {
-    /* ptr->member is equivalent to (*ptr).member */
-    /* First evaluate pointer to get address */
+    // ptr->member is equivalent to (*ptr).member
+    // First evaluate pointer to get address
     codegen_expression(node->ptr_member_access.pointer);
 
-    /* A now contains the base address of the struct */
-    /* Need to add member offset */
+    // A now contains the base address of the struct
+    // Need to add member offset
 
-    /* Get struct type from pointer expression */
-    /* This is simplified - in full implementation would need type tracking */
+    // Get struct type from pointer expression
+    // This is simplified - in full implementation would need type tracking
     fprintf(stderr, "Warning: Pointer member access not fully implemented\n");
 
-    /* For now, just load from the address (member offset 0) */
+    // For now, just load from the address (member offset 0)
     emit("    TAX\n");
     emit("    TXA\n");
     emit("    TCD\n");
@@ -877,13 +874,13 @@ static void codegen_ptr_member_access(ASTNode* node) {
 }
 
 static void codegen_member_assign(ASTNode* node) {
-    /* Evaluate the value to assign (result in A) */
+    // Evaluate the value to assign (result in A)
     codegen_expression(node->member_assign.value);
 
-    /* Push value onto stack to preserve it */
+    // Push value onto stack to preserve it
     emit("    PHA\n");
 
-    /* Calculate address of member */
+    // Calculate address of member
     if (node->member_assign.object->type == AST_IDENTIFIER) {
         Symbol* sym = find_symbol(node->member_assign.object->identifier);
         if (!sym || sym->type != TYPE_STRUCT) {
@@ -897,9 +894,9 @@ static void codegen_member_assign(ASTNode* node) {
             return;
         }
 
-        /* Find member offset */
+        // Find member offset
         int member_offset = -1;
-        for (i = 0; i < sdef->member_count; i++) {
+        for (int i = 0; i < sdef->member_count; i++) {
             if (strcmp(sdef->members[i].name, node->member_assign.member_name) == 0) {
                 member_offset = sdef->members[i].offset;
                 break;
@@ -911,17 +908,17 @@ static void codegen_member_assign(ASTNode* node) {
             return;
         }
 
-        /* Calculate address: SP + var_offset + member_offset */
+        // Calculate address: SP + var_offset + member_offset
         emit("    TSC\n");
         emit("    CLC\n");
         emit("    ADC #$%04X\n", sym->offset + member_offset);
 
-        /* Store address in X, then use it via direct page */
+        // Store address in X, then use it via direct page
         emit("    TAX\n");
         emit("    TXA\n");
         emit("    TCD\n");
 
-        /* Pop value and store it */
+        // Pop value and store it
         emit("    PLA\n");
         emit("    STA $00\n");
     } else {
@@ -930,25 +927,25 @@ static void codegen_member_assign(ASTNode* node) {
 }
 
 static void codegen_ptr_member_assign(ASTNode* node) {
-    /* ptr->member = value */
-    /* Evaluate the value to assign (result in A) */
+    // ptr->member = value
+    // Evaluate the value to assign (result in A)
     codegen_expression(node->ptr_member_assign.value);
 
-    /* Push value onto stack to preserve it */
+    // Push value onto stack to preserve it
     emit("    PHA\n");
 
-    /* Evaluate pointer to get base address */
+    // Evaluate pointer to get base address
     codegen_expression(node->ptr_member_assign.pointer);
 
-    /* For now, assume member offset is 0 (simplified) */
+    // For now, assume member offset is 0 (simplified)
     fprintf(stderr, "Warning: Pointer member assignment not fully implemented\n");
 
-    /* Store address in X, then use it via direct page */
+    // Store address in X, then use it via direct page
     emit("    TAX\n");
     emit("    TXA\n");
     emit("    TCD\n");
 
-    /* Pop value and store it */
+    // Pop value and store it
     emit("    PLA\n");
     emit("    STA $00\n");
 }
@@ -962,9 +959,9 @@ static void codegen_inc_dec(ASTNode* node) {
 
     switch (node->type) {
         case AST_PRE_INC:
-            /* Increment first, then load value */
+            // Increment first, then load value
             if (sym->is_param && sym->param_index < 3) {
-                /* Parameter in register */
+                // Parameter in register
                 if (sym->param_index == 0) {
                     emit("    INC A\n");
                 } else if (sym->param_index == 1) {
@@ -975,22 +972,22 @@ static void codegen_inc_dec(ASTNode* node) {
                     emit("    TYA\n");
                 }
             } else {
-                /* Local variable or stack parameter */
+                // Local variable or stack parameter
                 emit("    LDA %d,S\n", sym->offset);
                 emit("    INC A\n");
                 emit("    STA %d,S\n", sym->offset);
-                /* Result is already in A */
+                // Result is already in A
             }
             break;
 
         case AST_POST_INC:
-            /* Load value first, then increment */
+            // Load value first, then increment
             if (sym->is_param && sym->param_index < 3) {
-                /* Parameter in register */
+                // Parameter in register
                 if (sym->param_index == 0) {
-);           /* Save old value */
+                    emit("    PHA\n");           // Save old value
                     emit("    INC A\n");
-);           /* Restore old value to A */
+                    emit("    PLA\n");           // Restore old value to A
                 } else if (sym->param_index == 1) {
                     emit("    TXA\n");
                     emit("    PHA\n");
@@ -1003,17 +1000,17 @@ static void codegen_inc_dec(ASTNode* node) {
                     emit("    PLA\n");
                 }
             } else {
-                /* Local variable or stack parameter */
+                // Local variable or stack parameter
                 emit("    LDA %d,S\n", sym->offset);
-);              /* Save old value */
+                emit("    PHA\n");              // Save old value
                 emit("    INC A\n");
                 emit("    STA %d,S\n", sym->offset);
-);              /* Restore old value to A */
+                emit("    PLA\n");              // Restore old value to A
             }
             break;
 
         case AST_PRE_DEC:
-            /* Decrement first, then load value */
+            // Decrement first, then load value
             if (sym->is_param && sym->param_index < 3) {
                 if (sym->param_index == 0) {
                     emit("    DEC A\n");
@@ -1032,7 +1029,7 @@ static void codegen_inc_dec(ASTNode* node) {
             break;
 
         case AST_POST_DEC:
-            /* Load value first, then decrement */
+            // Load value first, then decrement
             if (sym->is_param && sym->param_index < 3) {
                 if (sym->param_index == 0) {
                     emit("    PHA\n");
@@ -1136,14 +1133,14 @@ static void codegen_expression(ASTNode* node) {
     }
 }
 
-/* Code generation for statements */
+// Code generation for statements
 static void codegen_return(ASTNode* node) {
     if (node->ret.value) {
         codegen_expression(node->ret.value);
-        /* Result is in A */
+        // Result is in A
     }
 
-    /* Epilogue - deallocate locals */
+    // Epilogue - deallocate locals
     if (ctx.stack_offset < 0) {
         emit("    TSC\n");
         emit("    CLC\n");
@@ -1158,10 +1155,10 @@ static void codegen_if(ASTNode* node) {
     int else_label = new_label();
     int done_label = new_label();
 
-    /* Evaluate condition */
+    // Evaluate condition
     codegen_expression(node->if_stmt.condition);
 
-    /* Branch if false */
+    // Branch if false
     emit("    CMP #$0000\n");
     if (node->if_stmt.else_stmt) {
         emit("    BEQ .L%d\n", else_label);
@@ -1169,7 +1166,7 @@ static void codegen_if(ASTNode* node) {
         emit("    BEQ .L%d\n", done_label);
     }
 
-    /* Then branch */
+    // Then branch
     codegen_statement(node->if_stmt.then_stmt);
 
     if (node->if_stmt.else_stmt) {
@@ -1185,96 +1182,96 @@ static void codegen_while(ASTNode* node) {
     int loop_label = new_label();
     int done_label = new_label();
 
-    /* Push loop context for break/continue */
+    // Push loop context for break/continue
     push_loop(done_label, loop_label);
 
     emit(".L%d:\n", loop_label);
 
-    /* Evaluate condition */
+    // Evaluate condition
     codegen_expression(node->while_stmt.condition);
 
-    /* Branch if false */
+    // Branch if false
     emit("    CMP #$0000\n");
     emit("    BEQ .L%d\n", done_label);
 
-    /* Loop body */
+    // Loop body
     codegen_statement(node->while_stmt.body);
 
-    /* Jump back to condition */
+    // Jump back to condition
     emit("    BRA .L%d\n", loop_label);
 
     emit(".L%d:\n", done_label);
 
-    /* Pop loop context */
+    // Pop loop context
     pop_loop();
 }
 
-/* Code generation for do-while statements */
+// Code generation for do-while statements
 static void codegen_do_while(ASTNode* node) {
     int loop_label = new_label();
     int done_label = new_label();
 
-    /* Push loop context for break/continue */
+    // Push loop context for break/continue
     push_loop(done_label, loop_label);
 
     emit(".L%d:\n", loop_label);
 
-    /* Loop body (executes at least once) */
+    // Loop body (executes at least once)
     codegen_statement(node->do_while_stmt.body);
 
-    /* Evaluate condition */
+    // Evaluate condition
     codegen_expression(node->do_while_stmt.condition);
 
-    /* Branch back if true (using BEQ + BRA since DEF88186 has no BNE) */
+    // Branch back if true (using BEQ + BRA since DEF88186 has no BNE)
     emit("    CMP #$0000\n");
-, done_label);  /* If false (zero), exit */
-, loop_label);  /* Otherwise loop */
+    emit("    BEQ .L%d\n", done_label);  // If false (zero), exit
+    emit("    BRA .L%d\n", loop_label);  // Otherwise loop
 
     emit(".L%d:\n", done_label);
 
-    /* Pop loop context */
+    // Pop loop context
     pop_loop();
 }
 
-/* Helper to detect simple counted loop suitable for LOOP/LPEND */
+// Helper to detect simple counted loop suitable for LOOP/LPEND
 static int is_simple_counted_loop(ASTNode* init, ASTNode* cond, ASTNode* incr,
                                    char** loop_var, int* loop_count) {
     if (!init || !cond || !incr) return 0;
 
-    /* Check init: must be "var = 0" or similar assignment */
+    // Check init: must be "var = 0" or similar assignment
     if (init->type != AST_EXPR_STMT || !init->expr_stmt.expr) return 0;
     ASTNode* init_expr = init->expr_stmt.expr;
     if (init_expr->type != AST_ASSIGN) return 0;
 
-    /* Check that init is "var = 0" */
+    // Check that init is "var = 0"
     if (init_expr->assign.value->type != AST_NUMBER) return 0;
     if (init_expr->assign.value->number != 0) return 0;
 
     *loop_var = init_expr->assign.var_name;
 
-    /* Check condition: must be "var < N" where N is constant */
+    // Check condition: must be "var < N" where N is constant
     if (cond->type != AST_EXPR_STMT || !cond->expr_stmt.expr) return 0;
     ASTNode* cond_expr = cond->expr_stmt.expr;
     if (cond_expr->type != AST_BINOP) return 0;
     if (cond_expr->binop.op != OP_LT) return 0;
 
-    /* Left side must be same variable */
+    // Left side must be same variable
     if (cond_expr->binop.left->type != AST_IDENTIFIER) return 0;
     if (strcmp(cond_expr->binop.left->identifier, *loop_var) != 0) return 0;
 
-    /* Right side must be constant */
+    // Right side must be constant
     if (cond_expr->binop.right->type != AST_NUMBER) return 0;
     *loop_count = cond_expr->binop.right->number;
 
-    /* Check increment: must be "var = var + 1" or simple increment */
+    // Check increment: must be "var = var + 1" or simple increment
     if (incr->type != AST_EXPR_STMT || !incr->expr_stmt.expr) return 0;
     ASTNode* incr_expr = incr->expr_stmt.expr;
     if (incr_expr->type != AST_ASSIGN) return 0;
 
-    /* Must be same variable */
+    // Must be same variable
     if (strcmp(incr_expr->assign.var_name, *loop_var) != 0) return 0;
 
-    /* Value must be "var + 1" */
+    // Value must be "var + 1"
     if (incr_expr->assign.value->type != AST_BINOP) return 0;
     if (incr_expr->assign.value->binop.op != OP_ADD) return 0;
 
@@ -1287,14 +1284,14 @@ static int is_simple_counted_loop(ASTNode* init, ASTNode* cond, ASTNode* incr,
     if (add_right->type != AST_NUMBER) return 0;
     if (add_right->number != 1) return 0;
 
-    return 1;  /* This is a simple counted loop! */
+    return 1;  // This is a simple counted loop!
 }
 
 static void codegen_for(ASTNode* node) {
     char* loop_var = NULL;
     int loop_count = 0;
 
-    /* Try to use hardware LOOP/LPEND for simple counted loops */
+    // Try to use hardware LOOP/LPEND for simple counted loops
     if (is_simple_counted_loop(node->for_stmt.init, node->for_stmt.condition,
                                 node->for_stmt.increment, &loop_var, &loop_count)) {
 
@@ -1304,93 +1301,93 @@ static void codegen_for(ASTNode* node) {
         int loop_start = new_label();
         int done_label = new_label();
 
-        /* Initialize loop variable to 0 */
+        // Initialize loop variable to 0
         codegen_statement(node->for_stmt.init);
 
-        /* Use hardware LOOP instruction */
+        // Use hardware LOOP instruction
         emit("    LOOP #$%04X\n", loop_count);
 
         emit(".L%d:\n", loop_start);
 
-        /* Push loop context */
+        // Push loop context
         push_loop(done_label, loop_start);
 
-        /* Loop body */
+        // Loop body
         codegen_statement(node->for_stmt.body);
 
-        /* Increment the loop variable */
+        // Increment the loop variable
         codegen_statement(node->for_stmt.increment);
 
-        /* LPEND decrements hardware counter and loops back if non-zero */
+        // LPEND decrements hardware counter and loops back if non-zero
         emit("    LPEND\n");
 
         emit(".L%d:\n", done_label);
 
-        /* Pop loop context */
+        // Pop loop context
         pop_loop();
 
         return;
     }
 
-    /* Fall back to manual loop for complex cases */
+    // Fall back to manual loop for complex cases
     emit("    ; Manual loop (complex condition)\n");
 
     int loop_label = new_label();
     int done_label = new_label();
     int increment_label = new_label();
 
-    /* Initialization */
+    // Initialization
     if (node->for_stmt.init) {
         codegen_statement(node->for_stmt.init);
     }
 
-    /* Push loop context (continue goes to increment, break goes to done) */
+    // Push loop context (continue goes to increment, break goes to done)
     push_loop(done_label, increment_label);
 
     emit(".L%d:\n", loop_label);
 
-    /* Condition */
+    // Condition
     if (node->for_stmt.condition && node->for_stmt.condition->expr_stmt.expr) {
         codegen_expression(node->for_stmt.condition->expr_stmt.expr);
         emit("    CMP #$0000\n");
         emit("    BEQ .L%d\n", done_label);
     }
 
-    /* Body */
+    // Body
     codegen_statement(node->for_stmt.body);
 
-    /* Increment label (for continue) */
+    // Increment label (for continue)
     emit(".L%d:\n", increment_label);
 
-    /* Increment */
+    // Increment
     if (node->for_stmt.increment) {
         codegen_statement(node->for_stmt.increment);
     }
 
-    /* Jump back to condition */
+    // Jump back to condition
     emit("    BRA .L%d\n", loop_label);
 
     emit(".L%d:\n", done_label);
 
-    /* Pop loop context */
+    // Pop loop context
     pop_loop();
 }
 
 static void codegen_block(ASTNode* node) {
-    for (i = 0; i < node->block.stmt_count; i++) {
+    for (int i = 0; i < node->block.stmt_count; i++) {
         codegen_statement(node->block.statements[i]);
     }
 }
 
 static void codegen_var_decl(ASTNode* node) {
-    /* Add variable to symbol table */
+    // Add variable to symbol table
     if (node->var_decl.array_dimensions > 0) {
-        /* Multi-dimensional array */
+        // Multi-dimensional array
         add_symbol_multidim(node->var_decl.var_name, node->var_decl.var_type, 0, 0,
                            node->var_decl.array_sizes, node->var_decl.array_dimensions,
                            node->var_decl.pointer_level, node->var_decl.struct_name);
     } else {
-        /* Regular variable or 1D array (backwards compatibility) */
+        // Regular variable or 1D array (backwards compatibility)
         int array_size = (node->var_decl.array_sizes && node->var_decl.is_array) ?
                          node->var_decl.array_sizes[0] : 0;
         add_symbol(node->var_decl.var_name, node->var_decl.var_type, 0, 0,
@@ -1398,34 +1395,34 @@ static void codegen_var_decl(ASTNode* node) {
                    node->var_decl.pointer_level, node->var_decl.struct_name);
     }
 
-    /* Initialize if there's an initial value */
+    // Initialize if there's an initial value
     if (node->var_decl.init_value) {
         Symbol* sym = find_symbol(node->var_decl.var_name);
         if (!sym) return;
 
         if (node->var_decl.init_value->type == AST_INIT_LIST) {
-            /* Array initialization: int arr[3] = {1, 2, 3}; */
+            // Array initialization: int arr[3] = {1, 2, 3};
             ASTNode* init_list = node->var_decl.init_value;
             int elem_size = (node->var_decl.var_type == TYPE_CHAR) ? 1 : 2;
 
-            for (i = 0; i < init_list->init_list.value_count; i++) {
-                /* Evaluate the expression for this element */
+            for (int i = 0; i < init_list->init_list.value_count; i++) {
+                // Evaluate the expression for this element
                 codegen_expression(init_list->init_list.values[i]);
 
-                /* Store to array element */
+                // Store to array element
                 int offset = sym->offset + (i * elem_size);
                 if (node->var_decl.var_type == TYPE_CHAR) {
-                    /* For char arrays, store byte */
+                    // For char arrays, store byte
                     emit("    SEP #$20        ; 8-bit A\n");
                     emit("    STA %d,S\n", offset);
                     emit("    REP #$20        ; 16-bit A\n");
                 } else {
-                    /* For int arrays, store word */
+                    // For int arrays, store word
                     emit("    STA %d,S\n", offset);
                 }
             }
         } else if (!node->var_decl.is_array) {
-            /* Regular variable initialization */
+            // Regular variable initialization
             codegen_expression(node->var_decl.init_value);
             emit("    STA %d,S\n", sym->offset);
         }
@@ -1435,64 +1432,63 @@ static void codegen_var_decl(ASTNode* node) {
 static void codegen_switch(ASTNode* node) {
     int end_label = new_label();
 
-    /* Push loop context for break statements */
+    // Push loop context for break statements
     push_loop(end_label, end_label);
 
-    /* Evaluate switch expression once and save to stack */
+    // Evaluate switch expression once and save to stack
     codegen_expression(node->switch_stmt.expr);
-);  /* Save switch value */
+    emit("    PHA\n");  // Save switch value
 
-    /* Generate labels for each case */
+    // Generate labels for each case
     int* case_labels = malloc(sizeof(int) * node->switch_stmt.case_count);
     int default_label = -1;
 
-    for (i = 0; i < node->switch_stmt.case_count; i++) {
+    for (int i = 0; i < node->switch_stmt.case_count; i++) {
         case_labels[i] = new_label();
         if (node->switch_stmt.cases[i]->type == AST_DEFAULT) {
             default_label = case_labels[i];
         }
     }
 
-    /* Generate comparisons for each case */
-    for (i = 0; i < node->switch_stmt.case_count; i++) {
+    // Generate comparisons for each case
+    for (int i = 0; i < node->switch_stmt.case_count; i++) {
         ASTNode* case_node = node->switch_stmt.cases[i];
         if (case_node->type == AST_CASE) {
-);  /* Load switch value from stack */
+            emit("    LDA 1,S\n");  // Load switch value from stack
             emit("    CMP #$%04X\n", case_node->case_stmt.case_value);
             emit("    BEQ .L%d\n", case_labels[i]);
         }
     }
 
-    /* If no case matched, jump to default or end */
+    // If no case matched, jump to default or end
     if (default_label >= 0) {
         emit("    BRA .L%d\n", default_label);
     } else {
         emit("    BRA .L%d\n", end_label);
     }
 
-    /* Generate code for each case */
-    for (i = 0; i < node->switch_stmt.case_count; i++) {
+    // Generate code for each case
+    for (int i = 0; i < node->switch_stmt.case_count; i++) {
         ASTNode* case_node = node->switch_stmt.cases[i];
         emit(".L%d:\n", case_labels[i]);
 
         if (case_node->type == AST_CASE) {
-            int j;
-            for (j = 0; j < case_node->case_stmt.stmt_count; j++) {
+            for (int j = 0; j < case_node->case_stmt.stmt_count; j++) {
                 codegen_statement(case_node->case_stmt.statements[j]);
             }
         } else if (case_node->type == AST_DEFAULT) {
-            for (j = 0; j < case_node->default_stmt.stmt_count; j++) {
+            for (int j = 0; j < case_node->default_stmt.stmt_count; j++) {
                 codegen_statement(case_node->default_stmt.statements[j]);
             }
         }
     }
 
     emit(".L%d:\n", end_label);
-);  /* Clean up stack (remove switch value) */
+    emit("    PLA\n");  // Clean up stack (remove switch value)
 
     free(case_labels);
 
-    /* Pop loop context */
+    // Pop loop context
     pop_loop();
 }
 
@@ -1520,17 +1516,17 @@ static void codegen_continue(ASTNode* node) {
     emit("    BRA .L%d\n", loop->continue_label);
 }
 
-/* Code generation for goto statements */
+// Code generation for goto statements
 static void codegen_goto(ASTNode* node) {
-    /* Emit unconditional branch to user label */
+    // Emit unconditional branch to user label
     emit("    BRA %s\n", node->goto_stmt.label);
 }
 
-/* Code generation for label statements */
+// Code generation for label statements
 static void codegen_label(ASTNode* node) {
-    /* Emit label */
+    // Emit label
     emit("%s:\n", node->label_stmt.label);
-    /* Generate code for statement following the label */
+    // Generate code for statement following the label
     codegen_statement(node->label_stmt.statement);
 }
 
@@ -1563,8 +1559,8 @@ static void codegen_statement(ASTNode* node) {
             codegen_var_decl(node);
             break;
         case AST_VAR_DECL_LIST:
-            /* Process each declaration in the list */
-            for (i = 0; i < node->var_decl_list.decl_count; i++) {
+            // Process each declaration in the list
+            for (int i = 0; i < node->var_decl_list.decl_count; i++) {
                 codegen_var_decl(node->var_decl_list.declarations[i]);
             }
             break;
@@ -1584,7 +1580,7 @@ static void codegen_statement(ASTNode* node) {
             codegen_label(node);
             break;
         case AST_INLINE_ASM:
-            /* Emit inline assembly directly */
+            // Emit inline assembly directly
             emit("    %s\n", node->inline_asm.asm_code);
             break;
         default:
@@ -1593,12 +1589,12 @@ static void codegen_statement(ASTNode* node) {
     }
 }
 
-/* Helper to count local variables in a statement */
+// Helper to count local variables in a statement
 static int count_locals(ASTNode* node);
 
 static int count_locals_block(ASTNode* node) {
     int count = 0;
-    for (i = 0; i < node->block.stmt_count; i++) {
+    for (int i = 0; i < node->block.stmt_count; i++) {
         count += count_locals(node->block.statements[i]);
     }
     return count;
@@ -1609,16 +1605,16 @@ static int count_locals(ASTNode* node) {
 
     switch (node->type) {
         case AST_VAR_DECL:
-            /* Arrays count as multiple locals */
+            // Arrays count as multiple locals
             if (node->var_decl.is_array) {
                 return (node->var_decl.array_sizes && node->var_decl.array_dimensions > 0) ?
                        node->var_decl.array_sizes[0] : 0;
             }
             return 1;
         case AST_VAR_DECL_LIST: {
-            /* Count all declarations in the list */
+            // Count all declarations in the list
             int count = 0;
-            for (i = 0; i < node->var_decl_list.decl_count; i++) {
+            for (int i = 0; i < node->var_decl_list.decl_count; i++) {
                 count += count_locals(node->var_decl_list.declarations[i]);
             }
             return count;
@@ -1638,7 +1634,7 @@ static int count_locals(ASTNode* node) {
     }
 }
 
-/* Code generation for functions */
+// Code generation for functions
 static void codegen_function(ASTNode* node) {
     ctx.current_function = node->func_decl.func_name;
     ctx.stack_offset = 0;
@@ -1647,22 +1643,22 @@ static void codegen_function(ASTNode* node) {
     emit("\n; Function: %s\n", node->func_decl.func_name);
     emit("%s:\n", node->func_decl.func_name);
 
-    /* Set to 16-bit mode */
+    // Set to 16-bit mode
     emit("    REP #$30        ; 16-bit A, X, Y\n");
 
-    /* Add parameters to symbol table */
-    for (i = 0; i < node->func_decl.param_count; i++) {
+    // Add parameters to symbol table
+    for (int i = 0; i < node->func_decl.param_count; i++) {
         ASTNode* param = node->func_decl.params[i];
         add_symbol(param->param.param_name, param->param.param_type, 1, i, 0, 0,
                    param->param.pointer_level, param->param.struct_name);
     }
 
-    /* Count local variables to allocate stack space */
+    // Count local variables to allocate stack space
     int num_locals = count_locals(node->func_decl.body);
 
-    /* Allocate stack space for locals if needed */
+    // Allocate stack space for locals if needed
     if (num_locals > 0) {
-        int stack_size = num_locals * 2;  /* 2 bytes per variable */
+        int stack_size = num_locals * 2;  // 2 bytes per variable
         emit("    TSC\n");
         emit("    SEC\n");
         emit("    SBC #$%04X\n", stack_size);
@@ -1670,10 +1666,10 @@ static void codegen_function(ASTNode* node) {
         ctx.stack_offset = -stack_size;
     }
 
-    /* Generate code for function body */
+    // Generate code for function body
     codegen_statement(node->func_decl.body);
 
-    /* Add default return if needed */
+    // Add default return if needed
     if (num_locals > 0) {
         emit("    ; Epilogue\n");
         emit("    TSC\n");
@@ -1683,7 +1679,7 @@ static void codegen_function(ASTNode* node) {
     }
     emit("    RTS\n");
 
-    /* Clear symbols for next function */
+    // Clear symbols for next function
     clear_symbols();
     ctx.current_function = NULL;
 }
@@ -1695,7 +1691,7 @@ static void codegen_struct_decl(ASTNode* node) {
     sdef.members = malloc(sizeof(StructMember) * sdef.member_count);
 
     int offset = 0;
-    for (i = 0; i < sdef.member_count; i++) {
+    for (int i = 0; i < sdef.member_count; i++) {
         ASTNode* member = node->struct_decl.members[i];
         sdef.members[i].name = strdup(member->var_decl.var_name);
         sdef.members[i].type = member->var_decl.var_type;
@@ -1714,19 +1710,19 @@ static void codegen_struct_decl(ASTNode* node) {
 }
 
 static void codegen_union_decl(ASTNode* node) {
-    StructDef udef;  /* Use StructDef for unions too (same structure) */
+    StructDef udef;  // Use StructDef for unions too (same structure)
     udef.name = strdup(node->union_decl.union_name);
     udef.member_count = node->union_decl.member_count;
     udef.members = malloc(sizeof(StructMember) * udef.member_count);
 
     int max_size = 0;
-    for (i = 0; i < udef.member_count; i++) {
+    for (int i = 0; i < udef.member_count; i++) {
         ASTNode* member = node->union_decl.members[i];
         udef.members[i].name = strdup(member->var_decl.var_name);
         udef.members[i].type = member->var_decl.var_type;
         udef.members[i].pointer_level = member->var_decl.pointer_level;
         udef.members[i].struct_name = member->var_decl.struct_name ? strdup(member->var_decl.struct_name) : NULL;
-        udef.members[i].offset = 0;  /* All union members start at offset 0 */
+        udef.members[i].offset = 0;  // All union members start at offset 0
 
         int size = get_type_size(member->var_decl.var_type, member->var_decl.pointer_level, member->var_decl.struct_name);
         if (size > max_size) {
@@ -1734,39 +1730,39 @@ static void codegen_union_decl(ASTNode* node) {
         }
     }
 
-    udef.total_size = max_size;  /* Union size is the maximum member size */
-    add_struct(udef);  /* Use same struct table for unions */
+    udef.total_size = max_size;  // Union size is the maximum member size
+    add_struct(udef);  // Use same struct table for unions
 
     emit("; Union definition: %s (size = %d bytes)\n", udef.name, udef.total_size);
 }
 
-/* Code generation for program */
+// Code generation for program
 void codegen_program(ASTNode* node, FILE* output) {
     init_context(output);
 
     emit("; Generated by DEF88186 C Compiler\n");
     emit("; ZeroPoint Fantasy Console\n\n");
 
-    /* Emit data section for temporary variables */
+    // Emit data section for temporary variables
     emit(".data\n");
     emit("temp: .word 0\n");
     emit("\n.code\n");
 
-    /* First pass: process struct, union, enum, and typedef declarations */
-    for (i = 0; i < node->program.decl_count; i++) {
+    // First pass: process struct, union, enum, and typedef declarations
+    for (int i = 0; i < node->program.decl_count; i++) {
         ASTNode* decl = node->program.decls[i];
         if (decl->type == AST_STRUCT_DECL) {
             codegen_struct_decl(decl);
         } else if (decl->type == AST_UNION_DECL) {
             codegen_union_decl(decl);
         } else if (decl->type == AST_ENUM_DECL) {
-            /* Enum declarations don't generate code, but we could add enum constants as comments */
+            // Enum declarations don't generate code, but we could add enum constants as comments
             emit("\n; Enum: %s\n", decl->enum_decl.enum_name);
-            for (j = 0; j < decl->enum_decl.enumerator_count; j++) {
+            for (int j = 0; j < decl->enum_decl.enumerator_count; j++) {
                 emit(";   %s = %d\n", decl->enum_decl.enumerator_names[j], decl->enum_decl.enumerator_values[j]);
             }
         } else if (decl->type == AST_TYPEDEF) {
-            /* Typedef declarations don't generate code, but we add them as comments for documentation */
+            // Typedef declarations don't generate code, but we add them as comments for documentation
             emit("\n; Typedef: %s = ", decl->typedef_decl.type_name);
             const char* type_str = "";
             switch (decl->typedef_decl.base_type) {
@@ -1776,11 +1772,11 @@ void codegen_program(ASTNode* node, FILE* output) {
                 default: type_str = "unknown"; break;
             }
             emit("%s", type_str);
-            for (j = 0; j < decl->typedef_decl.pointer_level; j++) {
+            for (int j = 0; j < decl->typedef_decl.pointer_level; j++) {
                 emit("*");
             }
             if (decl->typedef_decl.array_dim_count > 0) {
-                for (j = 0; j < decl->typedef_decl.array_dim_count; j++) {
+                for (int j = 0; j < decl->typedef_decl.array_dim_count; j++) {
                     emit("[%d]", decl->typedef_decl.array_sizes[j]);
                 }
             }
@@ -1788,14 +1784,14 @@ void codegen_program(ASTNode* node, FILE* output) {
         }
     }
 
-    /* Second pass: generate code for functions and variables */
-    for (i = 0; i < node->program.decl_count; i++) {
+    // Second pass: generate code for functions and variables
+    for (int i = 0; i < node->program.decl_count; i++) {
         ASTNode* decl = node->program.decls[i];
 
         if (decl->type == AST_FUNC_DECL) {
             codegen_function(decl);
         } else if (decl->type == AST_VAR_DECL) {
-            /* Global variable */
+            // Global variable
             emit("\n; Global variable: %s\n", decl->var_decl.var_name);
             int size = get_type_size(decl->var_decl.var_type, decl->var_decl.pointer_level, decl->var_decl.struct_name);
             if (size == 1) {

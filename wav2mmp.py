@@ -143,19 +143,19 @@ def generate_inc_file(blocks, output_path, sst_address=0x9000, stl_address=0x700
 
     # Generate SST blocks
     for block_idx, block in enumerate(blocks):
-        lines.append(f"    ; Block {block_idx}")
+        block_offset = block_idx * 16
 
-        # Header (4 bytes)
+        lines.append(f"    ; Block {block_idx} (offset ${block_offset:02X})")
         lines.append(f"    ; Header: loops=${block[0]:02X}, Y/L=${block[1]:02X}, V/U=${block[2]:02X}, T/S=${block[3]:02X}")
-        for i in range(0, 4, 2):
-            lines.append(f"    WRH ${block[i]:02X}")
-            lines.append(f"    WRL ${block[i+1]:02X}")
 
-        # Samples (12 bytes)
-        lines.append(f"    ; Samples (12 bytes)")
-        for i in range(4, 16, 2):
-            lines.append(f"    WRH ${block[i]:02X}")
-            lines.append(f"    WRL ${block[i+1]:02X}")
+        # Set DB to block offset
+        lines.append(f"    SDB ${block_offset:02X}")
+        lines.append(f"    SBF 0")
+
+        # Write all 16 bytes using STA
+        for i in range(16):
+            lines.append(f"    SCR X, {block[i]}")
+            lines.append(f"    STA X, ${block_offset + i:02X}")
 
         lines.append("")
 

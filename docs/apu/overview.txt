@@ -9,27 +9,38 @@ the main CPU to handle all audio-related tasks.
 ## Core Specifications
 
 - **Architecture**: 8-bit RISC
-- **Clock Speed**: 4.2 MHz
+- **Clock Speed**: 4 MHz (executes every 16th master clock cycle)
 - **Cycles Per Instruction (CPI)**: 4
-- **Effective Performance**: 1.048576 MIPS (Million Instructions Per Second)
+- **Effective Performance**: 1.0 MIPS (Million Instructions Per Second)
 - **Instruction Size**: 16-bit fixed width
 - **Instruction Format**: 5-bit opcode + 11-bit operands
+
+## System Clock Synchronization
+
+The APU runs at 4 MHz, synchronized to the 64 MHz master clock. It executes only on
+master cycle 15 of each 16-cycle pattern:
+
+- **Master clock**: 64 MHz (PPU pixel clock)
+- **APU clock**: 4 MHz (every 16 master cycles)
+- **Execution pattern**: Master cycles 0-14 (idle), 15 (APU executes)
+
+This deterministic pattern ensures perfect synchronization with other system components.
 
 ## Performance Characteristics
 
 ### Clock Budget
-- Total cycles per second: 4,200,000
-- Instructions per second: 1,050,000 (at 4 CPI average)
-- At 60 Hz audio: ~17,500 instructions per frame
-- At 48 kHz sample rate: ~21.875 instructions per sample
+- Total cycles per second: 4,000,000
+- Instructions per second: 1,000,000 (at 4 CPI average)
+- At 60 Hz audio: ~16,666 instructions per frame
+- At 48 kHz sample rate: ~20.83 instructions per sample
 
 ### Audio Frame Budget (60 Hz)
 ```
 Frame time: 16.67 ms
-Cycles per frame: 70,000
-Instructions per frame: 17,500 (at 4 CPI)
+Cycles per frame: 66,666
+Instructions per frame: 16,666 (at 4 CPI)
 Samples per frame (48 kHz): 800
-Instruction budget per sample: ~21 instructions
+Instruction budget per sample: ~20 instructions
 ```
 
 ## Major Subsystems

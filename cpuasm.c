@@ -242,17 +242,17 @@ void resolve_fixups(void) {
         if (f->mode == AM_PC_RELATIVE_LONG) {
             /* Calculate relative offset */
             int16_t offset = (int16_t)(addr - (f->address + 3));
-            code[f->address] = offset & 0xFF;
-            code[f->address + 1] = (offset >> 8) & 0xFF;
+            code[f->address - org] = offset & 0xFF;
+            code[f->address - org + 1] = (offset >> 8) & 0xFF;
         } else if (f->size == 1) {
-            code[f->address] = addr & 0xFF;
+            code[f->address - org] = addr & 0xFF;
         } else if (f->size == 2) {
-            code[f->address] = addr & 0xFF;
-            code[f->address + 1] = (addr >> 8) & 0xFF;
+            code[f->address - org] = addr & 0xFF;
+            code[f->address - org + 1] = (addr >> 8) & 0xFF;
         } else if (f->size == 3) {
-            code[f->address] = addr & 0xFF;
-            code[f->address + 1] = (addr >> 8) & 0xFF;
-            code[f->address + 2] = (addr >> 16) & 0xFF;
+            code[f->address - org] = addr & 0xFF;
+            code[f->address - org + 1] = (addr >> 8) & 0xFF;
+            code[f->address - org + 2] = (addr >> 16) & 0xFF;
         }
     }
 }
@@ -437,12 +437,12 @@ const Instruction *find_instruction(const char *mnemonic, AddressingMode mode) {
 
 /* Emit a byte */
 void emit_byte(uint8_t byte) {
-    if (pc >= MAX_CODE) {
+    if ((uint16_t)(pc - org) >= MAX_CODE) {
         error("Code too large");
         return;
     }
     if (pass == 2) {
-        code[pc] = byte;
+        code[pc - org] = byte;
     }
     pc++;
 }
@@ -919,6 +919,7 @@ int main(int argc, char* argv[]) {
     /* Pass 2: Generate code */
     pass = 2;
     pc = 0;
+    org = 0;
     num_fixups = 0;
     memset(code, 0, sizeof(code));
     assemble_file(input);
@@ -938,10 +939,10 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    fwrite(code, 1, pc, out);
+    fwrite(code, 1, pc - org, out);
     fclose(out);
 
-    printf("\nSuccess! Wrote %d bytes to %s\n", pc, output);
+    printf("\nSuccess! Wrote %d bytes to %s\n", (int)(pc - org), output);
 
     return 0;
 }

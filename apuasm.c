@@ -182,8 +182,22 @@ void assemble_line(char* line, int line_num) {
         if (token_count >= 3) {
             int reg = parse_register(tokens[1]);
             int addr = parse_number(tokens[2]);
-            uint16_t operand = ((reg & 1) << 9) | (addr & 0xFF);
+            uint16_t operand = ((reg & 1) << 10) | (addr & 0xFF);
             emit_instruction(encode_instruction(0x02, operand));
+        }
+    }
+    else if (strcmp(upper_mnemonic, "JZ") == 0) {
+        if (token_count >= 4) {
+            /* jz X, Y, $ZZ — test reg X, mode Y, jump to $ZZ */
+            int rx   = parse_register(tokens[1]);
+            int mode = parse_number(tokens[2]);
+            int addr = parse_number(tokens[3]);
+            emit_instruction(encode_instruction(0x02, 0x100 | ((rx&1)<<10) | ((mode&1)<<9) | (addr&0xFF)));
+        } else if (token_count >= 3) {
+            /* jz X, $ZZ — mode defaults to RP */
+            int rx   = parse_register(tokens[1]);
+            int addr = parse_number(tokens[2]);
+            emit_instruction(encode_instruction(0x02, 0x100 | ((rx&1)<<10) | 0x200 | (addr&0xFF)));
         }
     }
     else if (strcmp(upper_mnemonic, "SRP") == 0) {
@@ -193,17 +207,31 @@ void assemble_line(char* line, int line_num) {
         }
     }
     else if (strcmp(upper_mnemonic, "SDP") == 0) {
-        if (token_count >= 2) {
+        if (token_count >= 3) {
+            /* sdp b,$XX — set byte b of data pointer, opcode 0x17 */
+            int b = parse_number(tokens[1]);
+            int value = parse_number(tokens[2]);
+            emit_instruction(encode_instruction(0x17, 0x200 | ((b & 1) << 8) | (value & 0xFF)));
+        } else if (token_count >= 2) {
+            /* sdp $XX — legacy: set DP high byte, opcode 0x03 */
             int page = parse_number(tokens[1]);
             emit_instruction(encode_instruction(0x03, 0x400 | (page & 0xFF)));
         }
     }
+    else if (strcmp(upper_mnemonic, "RET")  == 0) { emit_instruction(encode_instruction(0x17, 0x040)); }
+    else if (strcmp(upper_mnemonic, "BSP")  == 0) { emit_instruction(encode_instruction(0x17, 0x000)); }
+    else if (strcmp(upper_mnemonic, "PUDP") == 0) { emit_instruction(encode_instruction(0x17, 0x041)); }
+    else if (strcmp(upper_mnemonic, "PODP") == 0) { emit_instruction(encode_instruction(0x17, 0x042)); }
+    else if (strcmp(upper_mnemonic, "PUX")  == 0) { emit_instruction(encode_instruction(0x17, 0x400)); }
+    else if (strcmp(upper_mnemonic, "PUY")  == 0) { emit_instruction(encode_instruction(0x17, 0x500)); }
+    else if (strcmp(upper_mnemonic, "POX")  == 0) { emit_instruction(encode_instruction(0x17, 0x600)); }
+    else if (strcmp(upper_mnemonic, "POY")  == 0) { emit_instruction(encode_instruction(0x17, 0x700)); }
     else if (strcmp(upper_mnemonic, "NOR") == 0) {
         if (token_count >= 4) {
             int rx = parse_register(tokens[1]);
             int ry = parse_register(tokens[2]);
             int rz = parse_register(tokens[3]);
-            uint16_t operand = ((rx & 1) << 9) | ((ry & 1) << 8) | 0x100 | (rz & 0x7F);
+            uint16_t operand = ((rx & 1) << 10) | ((ry & 1) << 9) | 0x100 | (rz & 0x7F);
             emit_instruction(encode_instruction(0x04, operand));
         }
     }
@@ -212,7 +240,7 @@ void assemble_line(char* line, int line_num) {
             int rx = parse_register(tokens[1]);
             int ry = parse_register(tokens[2]);
             int rz = parse_register(tokens[3]);
-            uint16_t operand = ((rx & 1) << 9) | ((ry & 1) << 8) | 0x100 | (rz & 0x7F);
+            uint16_t operand = ((rx & 1) << 10) | ((ry & 1) << 9) | 0x100 | (rz & 0x7F);
             emit_instruction(encode_instruction(0x05, operand));
         }
     }
@@ -221,7 +249,7 @@ void assemble_line(char* line, int line_num) {
             int rx = parse_register(tokens[1]);
             int ry = parse_register(tokens[2]);
             int rz = parse_register(tokens[3]);
-            uint16_t operand = ((rx & 1) << 9) | ((ry & 1) << 8) | 0x100 | (rz & 0x7F);
+            uint16_t operand = ((rx & 1) << 10) | ((ry & 1) << 9) | 0x100 | (rz & 0x7F);
             emit_instruction(encode_instruction(0x06, operand));
         }
     }
@@ -230,30 +258,73 @@ void assemble_line(char* line, int line_num) {
             int rx = parse_register(tokens[1]);
             int ry = parse_register(tokens[2]);
             int rz = parse_register(tokens[3]);
-            uint16_t operand = ((rx & 1) << 9) | ((ry & 1) << 8) | 0x100 | (rz & 0x7F);
+            uint16_t operand = ((rx & 1) << 10) | ((ry & 1) << 9) | 0x100 | (rz & 0x7F);
             emit_instruction(encode_instruction(0x07, operand));
+        }
+    }
+    else if (strcmp(upper_mnemonic, "LDA") == 0) {
+        if (token_count >= 3) {
+            /* lda X/Y, $YY — load immediate (shorthand for SCR) */
+            int reg = parse_register(tokens[1]);
+            int value = parse_number(tokens[2]);
+            uint16_t operand = ((reg & 1) << 8) | (value & 0xFF);
+            emit_instruction(encode_instruction(0x0A, operand));
+        } else if (token_count >= 2) {
+            /* lda X/Y — load (dp:db) into register */
+            int reg = parse_register(tokens[1]);
+            emit_instruction(encode_instruction(0x09, ((reg & 1) << 10) | 0x000));
         }
     }
     else if (strcmp(upper_mnemonic, "STA") == 0) {
         if (token_count >= 3) {
+            /* sta X, $offset — store to DP+offset, opcode 0x08 */
             int reg = parse_register(tokens[1]);
             int offset = parse_number(tokens[2]);
-            uint16_t operand = ((reg & 1) << 9) | 0x200 | (offset & 0xFF);
+            uint16_t operand = ((reg & 1) << 10) | 0x200 | (offset & 0xFF);
             emit_instruction(encode_instruction(0x08, operand));
+        } else if (token_count >= 2) {
+            char first = tokens[1][0];
+            if (first == 'X' || first == 'x' || first == 'Y' || first == 'y') {
+                /* sta X/Y — store register to (dp:db), opcode 0x09 subop 01 */
+                int reg = parse_register(tokens[1]);
+                emit_instruction(encode_instruction(0x09, ((reg & 1) << 10) | 0x100));
+            } else {
+                /* sta $XX — store immediate to (dp:db), opcode 0x09 subop 10 */
+                int value = parse_number(tokens[1]);
+                emit_instruction(encode_instruction(0x09, 0x200 | (value & 0xFF)));
+            }
         }
     }
     else if (strcmp(upper_mnemonic, "STR") == 0) {
         if (token_count >= 3) {
             int offset = parse_number(tokens[1]);
             int reg = parse_register(tokens[2]);
-            uint16_t operand = ((reg & 1) << 9) | (offset & 0xFF);
+            uint16_t operand = ((reg & 1) << 10) | (offset & 0xFF);
             emit_instruction(encode_instruction(0x08, operand));
         }
     }
-    else if (strcmp(upper_mnemonic, "SBF") == 0) {
+    else if (strcmp(upper_mnemonic, "SFR") == 0) {
         if (token_count >= 2) {
-            int value = parse_number(tokens[1]);
-            emit_instruction(encode_instruction(0x09, value & 1));
+            int val = parse_number(tokens[1]);
+            emit_instruction(encode_instruction(0x0B, 0x100 | ((val & 0xF) << 4)));
+        }
+    }
+    else if (strcmp(upper_mnemonic, "CF") == 0) {
+        if (token_count >= 2) {
+            int val = parse_number(tokens[1]);
+            emit_instruction(encode_instruction(0x0B, 0x200 | ((val & 0xF) << 4)));
+        }
+    }
+    else if (strcmp(upper_mnemonic, "SF") == 0) {
+        if (token_count >= 2) {
+            int val = parse_number(tokens[1]);
+            emit_instruction(encode_instruction(0x0B, 0x300 | ((val & 0xF) << 4)));
+        }
+    }
+    else if (strcmp(upper_mnemonic, "STF") == 0) {
+        if (token_count >= 2) {
+            int reg = parse_register(tokens[1]);
+            emit_instruction(encode_instruction(0x0B, 0x400 | ((reg & 1) << 8)));
         }
     }
     else if (strcmp(upper_mnemonic, "SCR") == 0) {
@@ -272,8 +343,12 @@ void assemble_line(char* line, int line_num) {
     }
     else if (strcmp(upper_mnemonic, "ZOA") == 0) {
         if (token_count >= 2) {
-            int offset = parse_number(tokens[1]);
-            emit_instruction(encode_instruction(0x0C, 0x020 | (offset & 0xFF)));
+            if (strcmp(tokens[1], "DP") == 0 || strcmp(tokens[1], "dp") == 0) {
+                emit_instruction(encode_instruction(0x0C, 0x300));
+            } else {
+                int offset = parse_number(tokens[1]);
+                emit_instruction(encode_instruction(0x0C, 0x200 | (offset & 0xFF)));
+            }
         }
     }
     else if (strcmp(upper_mnemonic, "LST") == 0) {
@@ -291,16 +366,20 @@ void assemble_line(char* line, int line_num) {
             emit_instruction(encode_instruction(0x0D, operand));
         }
     }
-    else if (strcmp(upper_mnemonic, "IBC") == 0) {
-        if (token_count >= 2) {
-            int bank = parse_number(tokens[1]);
-            emit_instruction(encode_instruction(0x10, bank & 0x7FF));
+    else if (strcmp(upper_mnemonic, "ADC") == 0) {
+        if (token_count >= 4) {
+            int rx = parse_register(tokens[1]);
+            int ry = parse_register(tokens[2]);
+            int rz = parse_register(tokens[3]);
+            emit_instruction(encode_instruction(0x10, ((rx&1)<<10)|((ry&1)<<9)|(rz&0x7F)));
         }
     }
-    else if (strcmp(upper_mnemonic, "RBC") == 0) {
-        if (token_count >= 2) {
-            int bank = parse_number(tokens[1]);
-            emit_instruction(encode_instruction(0x11, bank & 0x7FF));
+    else if (strcmp(upper_mnemonic, "SBC") == 0) {
+        if (token_count >= 4) {
+            int rx = parse_register(tokens[1]);
+            int ry = parse_register(tokens[2]);
+            int rz = parse_register(tokens[3]);
+            emit_instruction(encode_instruction(0x11, ((rx&1)<<10)|((ry&1)<<9)|(rz&0x7F)));
         }
     }
     else if (strcmp(upper_mnemonic, "BEQ") == 0) {
@@ -308,7 +387,7 @@ void assemble_line(char* line, int line_num) {
             int rx = parse_register(tokens[1]);
             int ry = parse_register(tokens[2]);
             int offset = parse_number(tokens[3]);
-            uint16_t operand = ((rx & 1) << 9) | ((ry & 1) << 8) | (offset & 0xFF);
+            uint16_t operand = ((rx & 1) << 10) | ((ry & 1) << 9) | (offset & 0xFF);
             emit_instruction(encode_instruction(0x12, operand));
         }
     }
@@ -317,7 +396,7 @@ void assemble_line(char* line, int line_num) {
             int rx = parse_register(tokens[1]);
             int ry = parse_register(tokens[2]);
             int offset = parse_number(tokens[3]);
-            uint16_t operand = ((rx & 1) << 9) | ((ry & 1) << 8) | 0x100 | (offset & 0xFF);
+            uint16_t operand = ((rx & 1) << 10) | ((ry & 1) << 9) | 0x100 | (offset & 0xFF);
             emit_instruction(encode_instruction(0x12, operand));
         }
     }
@@ -326,7 +405,7 @@ void assemble_line(char* line, int line_num) {
             int rx = parse_register(tokens[1]);
             int ry = parse_register(tokens[2]);
             int offset = parse_number(tokens[3]);
-            uint16_t operand = ((rx & 1) << 9) | ((ry & 1) << 8) | (offset & 0xFF);
+            uint16_t operand = ((rx & 1) << 10) | ((ry & 1) << 9) | (offset & 0xFF);
             emit_instruction(encode_instruction(0x13, operand));
         }
     }
@@ -335,7 +414,7 @@ void assemble_line(char* line, int line_num) {
             int rx = parse_register(tokens[1]);
             int ry = parse_register(tokens[2]);
             int offset = parse_number(tokens[3]);
-            uint16_t operand = ((rx & 1) << 9) | ((ry & 1) << 8) | 0x100 | (offset & 0xFF);
+            uint16_t operand = ((rx & 1) << 10) | ((ry & 1) << 9) | 0x100 | (offset & 0xFF);
             emit_instruction(encode_instruction(0x13, operand));
         }
     }
@@ -345,34 +424,74 @@ void assemble_line(char* line, int line_num) {
             emit_instruction(encode_instruction(0x14, value & 0xFF));
         }
     }
-    else if (strcmp(upper_mnemonic, "WRH") == 0) {
+    else if (strcmp(upper_mnemonic, "JMS") == 0) {
         if (token_count >= 2) {
-            int value = parse_number(tokens[1]);
-            emit_instruction(encode_instruction(0x15, value & 0xFF));
+            int addr = parse_number(tokens[1]);
+            emit_instruction(encode_instruction(0x15, addr & 0xFF));
         }
     }
-    else if (strcmp(upper_mnemonic, "WRL") == 0) {
+    else if (strcmp(upper_mnemonic, "JDP") == 0) {
+        emit_instruction(encode_instruction(0x15, 0x400));
+    }
+    else if (strcmp(upper_mnemonic, "JSR") == 0) {
         if (token_count >= 2) {
-            int value = parse_number(tokens[1]);
-            emit_instruction(encode_instruction(0x15, 0x100 | (value & 0xFF)));
+            int addr = parse_number(tokens[1]);
+            emit_instruction(encode_instruction(0x15, 0x200 | (addr & 0xFF)));
         }
     }
-    else if (strcmp(upper_mnemonic, "CFS") == 0) {
+    else if (strcmp(upper_mnemonic, "JDPS") == 0) {
+        emit_instruction(encode_instruction(0x15, 0x600));
+    }
+    else if (strcmp(upper_mnemonic, "INC") == 0 || strcmp(upper_mnemonic, "DEC") == 0) {
         if (token_count >= 2) {
-            int funcId = parse_number(tokens[1]);
-            emit_instruction(encode_instruction(0x16, funcId & 0x7FF));
+            int dec = (strcmp(upper_mnemonic, "DEC") == 0) ? 1 : 0;
+            int target;
+            if (strcmp(tokens[1], "X") == 0 || strcmp(tokens[1], "x") == 0) target = 0;
+            else if (strcmp(tokens[1], "Y") == 0 || strcmp(tokens[1], "y") == 0) target = 1;
+            else if (strcmp(tokens[1], "DP") == 0 || strcmp(tokens[1], "dp") == 0) target = 2;
+            else if (strcmp(tokens[1], "SP") == 0 || strcmp(tokens[1], "sp") == 0) target = 3;
+            else target = parse_number(tokens[1]) & 0x03;
+            emit_instruction(encode_instruction(0x16, (dec << 10) | ((target & 0x03) << 8)));
         }
     }
-    else if (strcmp(upper_mnemonic, "CFE") == 0) {
-        if (token_count >= 2) {
-            int funcId = parse_number(tokens[1]);
-            emit_instruction(encode_instruction(0x17, funcId & 0x7FF));
+    else if (strcmp(upper_mnemonic, "MOV") == 0) {
+        if (token_count >= 3) {
+            int src = parse_register(tokens[1]);
+            int dst = parse_register(tokens[2]);
+            emit_instruction(encode_instruction(0x18, ((src&1)<<10) | ((dst&1)<<9)));
         }
     }
-    else if (strcmp(upper_mnemonic, "CCF") == 0) {
-        if (token_count >= 2) {
-            int funcId = parse_number(tokens[1]);
-            emit_instruction(encode_instruction(0x18, funcId & 0x7FF));
+    else if (strcmp(upper_mnemonic, "EXC") == 0) {
+        emit_instruction(encode_instruction(0x18, 0x100));
+    }
+    else if (strcmp(upper_mnemonic, "XOR") == 0) {
+        if (token_count >= 4) {
+            int rx  = parse_register(tokens[1]);
+            int ry  = parse_register(tokens[2]);
+            char first = tokens[3][0];
+            if (first == '$' || first == '0' || (first >= '1' && first <= '9')) {
+                int offset = parse_number(tokens[3]);
+                emit_instruction(encode_instruction(0x1B, ((rx&1)<<10)|((ry&1)<<9)|0x100|(offset&0xFF)));
+            } else {
+                int rz = parse_register(tokens[3]);
+                emit_instruction(encode_instruction(0x1B, ((rx&1)<<10)|((ry&1)<<9)|((rz&1)<<7)));
+            }
+        }
+    }
+    else if (strcmp(upper_mnemonic, "CRB") == 0) {
+        if (token_count >= 4) {
+            int rx  = parse_register(tokens[1]);  /* input */
+            int ry  = parse_register(tokens[2]);  /* shift amount */
+            char first = tokens[3][0];
+            if (first == '$' || first == '0' || (first >= '1' && first <= '9')) {
+                /* crb X, Y, $ZZ — store to dp:ZZ */
+                int offset = parse_number(tokens[3]);
+                emit_instruction(encode_instruction(0x1A, ((rx&1)<<10)|((ry&1)<<9)|0x100|(offset&0xFF)));
+            } else {
+                /* crb X, Y, Z — output to register */
+                int rz = parse_register(tokens[3]);
+                emit_instruction(encode_instruction(0x1A, ((rx&1)<<10)|((ry&1)<<9)|((rz&1)<<7)));
+            }
         }
     }
     else if (strcmp(upper_mnemonic, "HLT") == 0) {
@@ -459,7 +578,7 @@ int main(int argc, char* argv[]) {
 
     fclose(out);
 
-    printf("Assembled %d instructions (%d bytes) to %s\n",
+    printf("Assembled %ld instructions (%ld bytes) to %s\n",
            instruction_count, instruction_count * 2, output_file);
     printf("Labels defined: %d\n", label_count);
 

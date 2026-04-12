@@ -193,6 +193,12 @@ static int disassemble_instruction(uint8_t* data, size_t offset, size_t max_size
     opcode = data[offset];
     instr = &instructions[opcode];
 
+    /* Unknown opcode: emit as data byte and advance by 1 */
+    if (!instr->mnemonic) {
+        fprintf(out, "%06X:  DB $%02X\n", addr, opcode);
+        return 1;
+    }
+
     /* Show address */
     fprintf(out, "%06X:  ", addr);
 

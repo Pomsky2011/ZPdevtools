@@ -556,11 +556,6 @@ LPEND                     0x14    Implied                1 byte       1 cycle
 
 Decrements hardware loop counter. Branches back to instruction after LOOP if non-zero.
 
-DEFINE CALLABLE (DEFCALL) - Extended
--------------------------------------
-DEFCALL X,Y               0x00    X, Y                   ? bytes      ? cycles
-
-Define callable function: address in RX, ID in RY.LSB
 
 SET DATA BANK (SDB) - Extended
 -------------------------------
