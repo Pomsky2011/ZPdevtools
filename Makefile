@@ -3,76 +3,81 @@
 
 CC = gcc
 # Use C89/ANSI C for MS-DOS compatibility
-CFLAGS = -Wall -O2 -std=c89 -pedantic -Isrc
-LDFLAGS =
+CFLAGS   = -Wall -O2 -std=c89 -pedantic -Isrc
+LDFLAGS  =
 
-SRC = src
+SRC    = src
+BINDIR = executables
 
 # Tools
-ASSEMBLERS   = ppuasm apuasm cpuasm
-ROM_TOOLS    = rombuilder rominspect
-DISASSEMBLERS= cpudisasm ppudisasm apudisasm
-CONVERTERS   = wav2mmp
-UTILITIES    = hexview
-ALL_TOOLS    = $(ASSEMBLERS) $(ROM_TOOLS) $(DISASSEMBLERS) $(CONVERTERS) $(UTILITIES)
+ASSEMBLERS    = ppuasm apuasm cpuasm
+ROM_TOOLS     = rombuilder rominspect
+DISASSEMBLERS = cpudisasm ppudisasm apudisasm
+CONVERTERS    = wav2mmp
+UTILITIES     = hexview
+ALL_TOOLS     = $(ASSEMBLERS) $(ROM_TOOLS) $(DISASSEMBLERS) $(CONVERTERS) $(UTILITIES)
+ALL_BINS      = $(addprefix $(BINDIR)/,$(ALL_TOOLS))
 
-all: $(ALL_TOOLS)
+all: $(BINDIR) $(ALL_BINS)
+
+$(BINDIR):
+	mkdir -p $@
 
 # Assemblers
-ppuasm: $(SRC)/ppuasm.c
+$(BINDIR)/ppuasm: $(SRC)/ppuasm.c | $(BINDIR)
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
-apuasm: $(SRC)/apuasm.c
+$(BINDIR)/apuasm: $(SRC)/apuasm.c | $(BINDIR)
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
-cpuasm: $(SRC)/cpuasm.c
+$(BINDIR)/cpuasm: $(SRC)/cpuasm.c | $(BINDIR)
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
 # ROM Tools
-rombuilder: $(SRC)/rombuilder.c
+$(BINDIR)/rombuilder: $(SRC)/rombuilder.c | $(BINDIR)
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
-rominspect: $(SRC)/rominspect.c
+$(BINDIR)/rominspect: $(SRC)/rominspect.c | $(BINDIR)
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
 # Disassemblers
-cpudisasm: $(SRC)/cpudisasm.c
+$(BINDIR)/cpudisasm: $(SRC)/cpudisasm.c | $(BINDIR)
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
-ppudisasm: $(SRC)/ppudisasm.c
+$(BINDIR)/ppudisasm: $(SRC)/ppudisasm.c | $(BINDIR)
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
-apudisasm: $(SRC)/apudisasm.c
+$(BINDIR)/apudisasm: $(SRC)/apudisasm.c | $(BINDIR)
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
 # Converters
-wav2mmp: $(SRC)/wav2mmp.c
+$(BINDIR)/wav2mmp: $(SRC)/wav2mmp.c | $(BINDIR)
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS) -lm
 
 # Utilities
-hexview: $(SRC)/hexview.c
+$(BINDIR)/hexview: $(SRC)/hexview.c | $(BINDIR)
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
 # Convenience targets
-assemblers: $(ASSEMBLERS)
+assemblers: $(addprefix $(BINDIR)/,$(ASSEMBLERS))
 	@echo "Assemblers built: $(ASSEMBLERS)"
 
-disassemblers: $(DISASSEMBLERS)
+disassemblers: $(addprefix $(BINDIR)/,$(DISASSEMBLERS))
 	@echo "Disassemblers built: $(DISASSEMBLERS)"
 
-rom-tools: $(ROM_TOOLS)
+rom-tools: $(addprefix $(BINDIR)/,$(ROM_TOOLS))
 	@echo "ROM tools built: $(ROM_TOOLS)"
 
-utilities: $(UTILITIES)
+utilities: $(addprefix $(BINDIR)/,$(UTILITIES))
 	@echo "Utilities built: $(UTILITIES)"
 
 # Clean
 clean:
-	rm -f $(ALL_TOOLS) *.o src/*.o examples/*/*.bin
+	rm -f $(ALL_BINS) src/*.o examples/*/*.bin
 
 # Install
-install: $(ALL_TOOLS)
-	install -m 755 $(ALL_TOOLS) /usr/local/bin/
+install: $(ALL_BINS)
+	install -m 755 $(ALL_BINS) /usr/local/bin/
 
 # Help
 help:
@@ -86,6 +91,8 @@ help:
 	@echo "  utilities      - Build utilities (hexview, wav2mmp)"
 	@echo "  clean          - Remove all built files"
 	@echo "  install        - Install tools to /usr/local/bin"
+	@echo ""
+	@echo "Binaries output to: $(BINDIR)/"
 	@echo ""
 	@echo "Individual tools:"
 	@echo "  Assemblers:    ppuasm, apuasm, cpuasm"

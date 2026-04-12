@@ -4,25 +4,21 @@
 # ========================================
 # Compiled Tools (Unix)
 # ========================================
-# Assemblers
+# Binaries land in executables/
+executables/*
+!executables/.gitkeep
+
+# Legacy: tools built in root (old layout)
 ppuasm
 apuasm
 cpuasm
-
-# Disassemblers
 ppudisasm
 apudisasm
 cpudisasm
-
-# ROM Tools
 rombuilder
 rominspect
-
-# Utilities
 hexview
 wav2mmp
-
-# Test programs
 test_assembled
 
 # ========================================

@@ -13,7 +13,7 @@ mkdir -p build
 
 # Step 1: Assemble CPU code
 echo "[1/4] Assembling CPU code..."
-../../cpuasm cpu/main.asm build/cpu.bin
+../../executables/cpuasm cpu/main.asm build/cpu.bin
 if [ $? -ne 0 ]; then
     echo "Error: CPU assembly failed"
     exit 1
@@ -22,7 +22,7 @@ echo "  ✓ CPU assembled"
 
 # Step 2: Assemble PPU code
 echo "[2/4] Assembling PPU code..."
-../../ppuasm ppu/graphics.asm -o build/ppu.bin
+../../executables/ppuasm ppu/graphics.asm -o build/ppu.bin
 if [ $? -ne 0 ]; then
     echo "Error: PPU assembly failed"
     exit 1
@@ -31,7 +31,7 @@ echo "  ✓ PPU assembled"
 
 # Step 3: Assemble APU code
 echo "[3/4] Assembling APU code..."
-../../apuasm apu/audio.asm build/apu.bin
+../../executables/apuasm apu/audio.asm build/apu.bin
 if [ $? -ne 0 ]; then
     echo "Error: APU assembly failed"
     exit 1
@@ -40,7 +40,7 @@ echo "  ✓ APU assembled"
 
 # Step 4: Build ROM
 echo "[4/4] Building ROM..."
-../../rombuilder \
+../../executables/rombuilder \
     -cpu build/cpu.bin \
     -ppu build/ppu.bin \
     -apu build/apu.bin \
