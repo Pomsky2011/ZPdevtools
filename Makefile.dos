@@ -1,0 +1,107 @@
+# Makefile for MS-DOS 4.01+ (Turbo C 2.0 / Microsoft C 6.0)
+# Compatible with 80286, 2 MB RAM, 100 MB HDD minimum
+#
+# Build with:
+#   Turbo C:    make -f Makefile.dos
+#   MS C:       nmake /f Makefile.dos COMPILER=MSC
+#
+# Memory Models:
+#   SMALL:   Default - code+data < 64KB each (sufficient for most tools)
+#   MEDIUM:  Large code, small data (for complex assemblers)
+#   COMPACT: Small code, large data (for tools processing large files)
+#   LARGE:   Large code and data (for C compiler)
+
+# Detect compiler
+!ifndef COMPILER
+COMPILER=TCC
+!endif
+
+# Turbo C 2.0 settings
+!if "$(COMPILER)" == "TCC"
+CC=tcc
+CFLAGS=-mc -O -w -DMSDOS -I.
+LDFLAGS=-mc
+MODEL=compact
+!endif
+
+# Microsoft C 6.0 settings
+!if "$(COMPILER)" == "MSC"
+CC=cl
+CFLAGS=/AC /Ox /W3 /DMSDOS /I.
+LDFLAGS=/AC
+MODEL=compact
+!endif
+
+# Output directory
+OUTDIR=bin
+
+# All tools
+TOOLS=cpuasm.exe apuasm.exe ppuasm.exe rombuilder.exe \
+      cpudisasm.exe apudisasm.exe ppudisasm.exe \
+      hexview.exe rominspect.exe wav2mmp.exe
+
+# C compiler (requires more memory - use large model)
+COMPILER_OBJS=c_compiler\main.obj c_compiler\lexer.obj c_compiler\parser.tab.obj \
+              c_compiler\ast.obj c_compiler\codegen.obj c_compiler\preprocessor.obj
+
+all: $(TOOLS) def88186cc.exe
+
+# Simple assemblers (small/compact model OK)
+cpuasm.exe: cpuasm.c compat.h
+	$(CC) $(CFLAGS) cpuasm.c -o$(OUTDIR)\cpuasm.exe
+
+apuasm.exe: apuasm.c compat.h
+	$(CC) $(CFLAGS) apuasm.c -o$(OUTDIR)\apuasm.exe
+
+ppuasm.exe: ppuasm.c compat.h
+	$(CC) $(CFLAGS) ppuasm.c -o$(OUTDIR)\ppuasm.exe
+
+# ROM builder
+rombuilder.exe: rombuilder.c compat.h
+	$(CC) $(CFLAGS) rombuilder.c -o$(OUTDIR)\rombuilder.exe
+
+# Disassemblers
+cpudisasm.exe: cpudisasm.c compat.h
+	$(CC) $(CFLAGS) cpudisasm.c -o$(OUTDIR)\cpudisasm.exe
+
+apudisasm.exe: apudisasm.c compat.h
+	$(CC) $(CFLAGS) apudisasm.c -o$(OUTDIR)\apudisasm.exe
+
+ppudisasm.exe: ppudisasm.c compat.h
+	$(CC) $(CFLAGS) ppudisasm.c -o$(OUTDIR)\ppudisasm.exe
+
+# Utilities
+hexview.exe: hexview.c compat.h
+	$(CC) $(CFLAGS) hexview.c -o$(OUTDIR)\hexview.exe
+
+rominspect.exe: rominspect.c compat.h
+	$(CC) $(CFLAGS) rominspect.c -o$(OUTDIR)\rominspect.exe
+
+wav2mmp.exe: wav2mmp.c compat.h
+	$(CC) $(CFLAGS) wav2mmp.c -o$(OUTDIR)\wav2mmp.exe
+
+# C Compiler (requires large model for complex programs)
+def88186cc.exe: $(COMPILER_OBJS)
+!if "$(COMPILER)" == "TCC"
+	$(CC) -ml $(COMPILER_OBJS) -o$(OUTDIR)\def88186cc.exe
+!else
+	$(CC) /AL $(COMPILER_OBJS) /Fe$(OUTDIR)\def88186cc.exe
+!endif
+
+# Flex/Bison generated files (pre-build on modern system)
+c_compiler\lexer.c: c_compiler\lexer.l
+	@echo WARNING: Flex not available on MS-DOS - use pre-generated lexer.c
+
+c_compiler\parser.tab.c: c_compiler\parser.y
+	@echo WARNING: Bison not available on MS-DOS - use pre-generated parser.tab.c
+
+clean:
+	del $(OUTDIR)\*.exe
+	del $(OUTDIR)\*.obj
+	del c_compiler\*.obj
+
+# Memory usage notes for 2 MB system:
+# - DOS uses ~600 KB
+# - Leaves ~1.4 MB for programs
+# - Each tool should use < 512 KB to leave room for file buffers
+# - C compiler may need up to 1 MB for large source files

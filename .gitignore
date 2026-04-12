@@ -88,17 +88,17 @@ c_compiler/parser.output
 # Binary output from assemblers
 *.bin
 !examples/**/*.bin
-!sine_*.bin
-!play_sine*.bin
-!gradient_demo.bin
 
 # ROM files
 *.rom
 *.ROM
 
-# Assembled listings (exclude source .asm files)
-# examples/**/*.bin are generated, but keep source .asm
-examples/**/*.bin
+# Root-level scratch/dev .asm files
+play_sine*.asm
+sine_*.asm
+
+# Scratch/include files
+*.inc
 
 # ========================================
 # Build Artifacts
@@ -194,12 +194,30 @@ temp/
 -o
 
 # ========================================
-# Audio/WAV files (test files)
+# Audio/WAV files
 # ========================================
-# Keep specific test files but ignore others
-!sine_short.wav
-!sine_short-48k.wav
 *.wav
+
+# ========================================
+# Build logs / status files
+# ========================================
+BUILD_SUCCESS.txt
+DOS_COMPATIBILITY_STATUS.txt
+check_c89.sh
+
+# Debug build variants
+cpudisasm_asan
+cpudisasm_dbg
+cpudisasm_debug
+
+# IDE extensions bundled here
+vscode-extensions/
+
+# Apple Numbers / macOS files
+*.numbers
+
+# c_compiler build artifacts
+c_compiler/ast.h.pch
 
 # ========================================
 # Python

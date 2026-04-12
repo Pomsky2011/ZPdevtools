@@ -1,0 +1,318 @@
+================================================================================
+C89 Porting Guide for ZeroPoint Development Tools
+================================================================================
+
+TARGET: MS-DOS 4.01+ with Turbo C 2.0 / Microsoft C 6.0 / Watcom C
+GOAL: Make all dev tools compile with strict C89/ANSI C compliance
+
+CURRENT STATUS
+================================================================================
+
+Tools with C99 extensions that need fixing:
+  - apuasm.c      (17 warnings)
+  - apudisasm.c   (7 warnings)
+  - cpuasm.c      (32 warnings)
+  - cpudisasm.c   (13 warnings)
+  - hexview.c     (16 warnings)
+  - ppuasm.c      (5 warnings)
+  - ppudisasm.c   (7 warnings)
+  - rombuilder.c  (8 warnings)
+  - rominspect.c  (11 warnings)
+  - wav2mmp.c     (22 warnings)
+
+COMMON C99 EXTENSIONS TO FIX
+================================================================================
+
+1. MIXED DECLARATIONS AND CODE
+   Problem: Variables declared after statements in same block
+
+   C99 (WRONG for DOS):
+     int x = 5;
+     printf("%d\n", x);
+     int y = 10;  // ERROR: mixed declaration
+
+   C89 (CORRECT):
+     int x = 5;
+     int y;
+     printf("%d\n", x);
+     y = 10;
+
+2. FOR LOOP VARIABLE DECLARATIONS
+   Problem: Variable declared in for loop initializer
+
+   C99 (WRONG for DOS):
+     for (int i = 0; i < 10; i++) {
+         ...
+     }
+
+   C89 (CORRECT):
+     int i;
+     for (i = 0; i < 10; i++) {
+         ...
+     }
+
+3. C++ STYLE COMMENTS
+   Problem: // comments not supported in C89
+
+   C99 (WRONG for DOS):
+     int x = 5;  // this is a comment
+
+   C89 (CORRECT):
+     int x = 5;  /* this is a comment */
+
+4. STDINT.H TYPES
+   Problem: uint8_t, uint16_t, etc. not available in C89
+
+   Solution: Use compat.h header (already provided)
+
+   Include at top of file:
+     #include "compat.h"
+
+5. VARIABLE LENGTH ARRAYS (VLAs)
+   Problem: Array size not known at compile time
+
+   C99 (WRONG for DOS):
+     void func(int n) {
+         int arr[n];  // VLA
+     }
+
+   C89 (CORRECT):
+     void func(int n) {
+         int *arr = malloc(n * sizeof(int));
+         /* ... use arr ... */
+         free(arr);
+     }
+
+6. DESIGNATED INITIALIZERS
+   Problem: Named struct/array member initialization
+
+   C99 (WRONG for DOS):
+     struct point p = { .x = 5, .y = 10 };
+
+   C89 (CORRECT):
+     struct point p;
+     p.x = 5;
+     p.y = 10;
+
+   Or (for constants):
+     struct point p = { 5, 10 };  /* order matters */
+
+7. INLINE FUNCTIONS
+   Problem: inline keyword not in C89
+
+   Solution: compat.h defines inline as empty macro
+
+   C99:
+     inline int add(int a, int b) { return a + b; }
+
+   C89:
+     int add(int a, int b) { return a + b; }
+
+   Or use macro:
+     #define ADD(a, b) ((a) + (b))
+
+PORTING CHECKLIST
+================================================================================
+
+For each .c file:
+
+[ ] Replace #include <stdint.h> with #include "compat.h"
+[ ] Move all variable declarations to start of block
+[ ] Convert for-loop variable declarations
+[ ] Replace // comments with /* */
+[ ] Check for VLAs and convert to malloc/free
+[ ] Check for designated initializers
+[ ] Remove inline keywords (let compat.h handle it)
+[ ] Test compile with: gcc -std=c89 -pedantic -I. file.c
+[ ] Test on DOS system (if available)
+
+EXAMPLE CONVERSION
+================================================================================
+
+BEFORE (C99):
+```c
+#include <stdint.h>
+
+void process_data(const char *filename) {
+    FILE *f = fopen(filename, "rb");
+    if (!f) return;
+
+    // Read file size
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+
+    for (int i = 0; i < size; i++) {
+        uint8_t byte;
+        fread(&byte, 1, 1, f);
+        printf("%02X ", byte);
+    }
+
+    fclose(f);
+}
+```
+
+AFTER (C89):
+```c
+#include "compat.h"
+
+void process_data(const char *filename) {
+    FILE *f;
+    long size;
+    int i;
+    uint8_t byte;
+
+    f = fopen(filename, "rb");
+    if (!f) return;
+
+    /* Read file size */
+    fseek(f, 0, SEEK_END);
+    size = ftell(f);
+
+    for (i = 0; i < size; i++) {
+        fread(&byte, 1, 1, f);
+        printf("%02X ", byte);
+    }
+
+    fclose(f);
+}
+```
+
+AUTOMATED CHECKING
+================================================================================
+
+Use check_c89.sh script to find issues:
+
+  ./check_c89.sh
+
+This will report warnings for each file that needs fixing.
+
+TESTING ON DOS
+================================================================================
+
+To verify DOS compatibility:
+
+1. Transfer files to DOS system
+2. Build with Turbo C:
+   make -f Makefile.dos
+3. Test each tool:
+   cpuasm test.asm test.bin
+   apuasm test.asm test.bin
+   ppuasm test.asm test.bin
+4. Check memory usage:
+   mem /c
+5. Test with large files (if available)
+
+DOS-SPECIFIC ISSUES
+================================================================================
+
+1. Path separators:
+   Use PATH_SEPARATOR from compat.h
+
+   WRONG:
+     char path[] = "dir/file.txt";
+
+   CORRECT:
+     char path[] = "dir" PATH_SEPARATOR_STR "file.txt";
+
+2. Text vs binary mode:
+   Always open files in binary mode on DOS
+
+   CORRECT:
+     fopen("file.bin", "rb")   /* read binary */
+     fopen("file.bin", "wb")   /* write binary */
+
+3. Memory limits:
+   Check allocation sizes
+
+   WRONG:
+     char *buf = malloc(10000000);  /* 10 MB - too large! */
+
+   CORRECT:
+     #define BUF_SIZE 32768  /* 32 KB - safe */
+     char *buf = malloc(BUF_SIZE);
+
+   Or use SAFE_MALLOC from compat.h:
+     char *buf = SAFE_MALLOC(size);
+     if (!buf) { /* handle error */ }
+
+4. Line endings:
+   DOS uses \r\n, Unix uses \n
+   Binary mode handles this automatically
+
+5. File name length:
+   8.3 format only on DOS
+
+   WRONG:
+     "main_program_v2.asm"  /* too long */
+
+   CORRECT:
+     "MAINPROG.ASM"  /* 8.3 format */
+
+MEMORY MODEL NOTES
+================================================================================
+
+Turbo C memory models:
+
+TINY (-mt):
+  Code + Data + Stack < 64 KB total
+  Use for very small utilities only
+
+SMALL (-ms):
+  Code < 64 KB, Data < 64 KB
+  Default for simple tools
+  Fastest execution
+
+MEDIUM (-mm):
+  Code > 64 KB, Data < 64 KB
+  Use for tools with many functions
+
+COMPACT (-mc):
+  Code < 64 KB, Data > 64 KB
+  Use for tools that process large files
+  **RECOMMENDED FOR MOST TOOLS**
+
+LARGE (-ml):
+  Code > 64 KB, Data > 64 KB
+  Use for C compiler
+  Slower but most flexible
+
+HUGE (-mh):
+  Like large but pointers can span segments
+  Use only if necessary (slowest)
+
+Choose model in Makefile.dos based on tool requirements.
+
+PRIORITY FOR PORTING
+================================================================================
+
+High priority (most commonly used):
+  1. cpuasm    - CPU assembler (most critical)
+  2. ppuasm    - PPU assembler
+  3. apuasm    - APU assembler
+  4. rombuilder - ROM builder
+
+Medium priority:
+  5. cpudisasm  - CPU disassembler
+  6. ppudisasm  - PPU disassembler
+  7. apudisasm  - APU disassembler
+  8. hexview    - Hex viewer utility
+
+Low priority:
+  9. rominspect - ROM inspector
+ 10. wav2mmp    - Audio converter (needs math lib)
+
+C Compiler:
+  11. def88186cc - C compiler (complex, low priority)
+
+NOTES
+================================================================================
+
+- compat.h header provides stdint.h types for C89
+- Makefile.dos handles DOS-specific builds
+- README_DOS.txt contains user documentation
+- All tools should work on 80286 with 2 MB RAM
+- File sizes limited to 64 KB per file initially
+- Test thoroughly on DOS if possible
+
+END OF GUIDE
+================================================================================

@@ -1,0 +1,17 @@
+Offset Range (within banks),Banks $00-$1F,Banks $20-$3F,Banks $40-$5F,Banks $60-$7F,Banks $80-$9F,Banks $A0-$BF,Banks $C0-$DF,Banks $E0-$FF
+$0000-$0FFF,ROM,ROM,ROM,ROM,Expansion Space,WRAM (B0-BF model-specific),Security Keys,Boot ROM
+$1000-$1FFF,ROM,ROM,ROM,ROM,Expansion Space,WRAM (model-specific),AROM,Reserved
+$2000-$2FFF,ROM,ROM,ROM,ROM,Expansion Space,PPUMEM (B0-BF model-specific),AROM,Reserved
+$3000-$3FFF,ROM,ROM,ROM,ROM,Expansion Space,SRAM,AROM,Reserved
+$4000-$4FFF,ROM,ROM,ROM,ROM,Expansion Space,SRAM,AROM,Reserved
+$5000-$5FFF,ROM,ROM,ROM,ROM,Expansion Space,SRAM,AMEM Clone,Reserved
+$6000-$6FFF,ROM,ROM,ROM,ROM,Expansion Space,SRAM,Coprocessor Registers,Reserved
+$7000-$7FFF,ROM,ROM,ROM,ROM,Expansion Space,WRAM Clone (B0-BF model-specific),Initial PPUMEM (D0-DF),Reserved
+$8000-$8FFF,ROM,ROM,ROM,ROM,Expansion Space,WRAM Clone (model-specific),Reserved,Reserved
+$9000-$9FFF,ROM,ROM,ROM,ROM,Expansion Space,WRAM Clone (B0-BF model-specific),Reserved,Reserved
+$A000-$AFFF,ROM,ROM,ROM,ROM,Expansion Space,WRAM Clone (model-specific),Reserved,Reserved
+$B000-$BFFF,ROM,ROM,ROM,ROM,Expansion Space,WRAM Clone (B0-BF model-specific),Reserved,Reserved
+$C000-$CFFF,ROM,ROM,ROM,ROM,Expansion Space,WRAM Clone (model-specific),Reserved,Reserved
+$D000-$DFFF,ROM,ROM,ROM,ROM,Expansion Space,WRAM Clone (B0-BF model-specific),Reserved,Reserved
+$E000-$EFFF,ROM,ROM,ROM,ROM,Expansion Space,WRAM Clone (model-specific),Reserved,Interrupt Space
+$F000-$FFFF,ROM,ROM,ROM,ROM,Expansion Space,AMEM (B0-BF unused),Reserved,Final Boot Data
