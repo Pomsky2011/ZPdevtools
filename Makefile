@@ -2,65 +2,56 @@
 # Compatible with MS-DOS 4.01+ (use Makefile.dos for DOS builds)
 
 CC = gcc
-CXX = g++
 # Use C89/ANSI C for MS-DOS compatibility
-CFLAGS = -Wall -O2 -std=c89 -pedantic -I.
-CXXFLAGS = -Wall -O2 -std=c++17
+CFLAGS = -Wall -O2 -std=c89 -pedantic -Isrc
 LDFLAGS =
 
-# Path to ZeroPoint source
-ZEROPOINT_DIR = ../ZeroPoint
-ZEROPOINT_INCLUDE = $(ZEROPOINT_DIR)/include
-ZEROPOINT_LIB = $(ZEROPOINT_DIR)/build_qt/libzeropoint_core.a
+SRC = src
 
 # Tools
-ASSEMBLERS = ppuasm apuasm cpuasm
-ROM_TOOLS = rombuilder rominspect
-DISASSEMBLERS = cpudisasm ppudisasm apudisasm
-CONVERTERS = wav2mmp
-UTILITIES = hexview
-ALL_TOOLS = $(ASSEMBLERS) $(ROM_TOOLS) $(DISASSEMBLERS) $(CONVERTERS) $(UTILITIES)
+ASSEMBLERS   = ppuasm apuasm cpuasm
+ROM_TOOLS    = rombuilder rominspect
+DISASSEMBLERS= cpudisasm ppudisasm apudisasm
+CONVERTERS   = wav2mmp
+UTILITIES    = hexview
+ALL_TOOLS    = $(ASSEMBLERS) $(ROM_TOOLS) $(DISASSEMBLERS) $(CONVERTERS) $(UTILITIES)
 
 all: $(ALL_TOOLS)
 
 # Assemblers
-ppuasm: ppuasm.c
-	$(CC) $(CFLAGS) -o ppuasm ppuasm.c $(LDFLAGS)
+ppuasm: $(SRC)/ppuasm.c
+	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
-apuasm: apuasm.c
-	$(CC) $(CFLAGS) -o apuasm apuasm.c $(LDFLAGS)
+apuasm: $(SRC)/apuasm.c
+	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
-cpuasm: cpuasm.c
-	$(CC) $(CFLAGS) -o cpuasm cpuasm.c $(LDFLAGS)
+cpuasm: $(SRC)/cpuasm.c
+	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
 # ROM Tools
-rombuilder: rombuilder.c
-	$(CC) $(CFLAGS) -o rombuilder rombuilder.c $(LDFLAGS)
+rombuilder: $(SRC)/rombuilder.c
+	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
-rominspect: rominspect.c
-	$(CC) $(CFLAGS) -o rominspect rominspect.c $(LDFLAGS)
+rominspect: $(SRC)/rominspect.c
+	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
 # Disassemblers
-cpudisasm: cpudisasm.c
-	$(CC) $(CFLAGS) -o cpudisasm cpudisasm.c $(LDFLAGS)
+cpudisasm: $(SRC)/cpudisasm.c
+	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
-ppudisasm: ppudisasm.c
-	$(CC) $(CFLAGS) -o ppudisasm ppudisasm.c $(LDFLAGS)
+ppudisasm: $(SRC)/ppudisasm.c
+	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
-apudisasm: apudisasm.c
-	$(CC) $(CFLAGS) -o apudisasm apudisasm.c $(LDFLAGS)
+apudisasm: $(SRC)/apudisasm.c
+	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
 # Converters
-wav2mmp: wav2mmp.c
-	$(CC) $(CFLAGS) -o wav2mmp wav2mmp.c $(LDFLAGS) -lm
+wav2mmp: $(SRC)/wav2mmp.c
+	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS) -lm
 
 # Utilities
-hexview: hexview.c
-	$(CC) $(CFLAGS) -o hexview hexview.c $(LDFLAGS)
-
-# Test program
-test_assembled: test_assembled.cpp $(ZEROPOINT_LIB)
-	$(CXX) $(CXXFLAGS) -I$(ZEROPOINT_INCLUDE) -o test_assembled test_assembled.cpp $(ZEROPOINT_LIB)
+hexview: $(SRC)/hexview.c
+	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
 # Convenience targets
 assemblers: $(ASSEMBLERS)
@@ -77,7 +68,7 @@ utilities: $(UTILITIES)
 
 # Clean
 clean:
-	rm -f $(ALL_TOOLS) test_assembled *.o examples/*/*.bin examples/*.bin
+	rm -f $(ALL_TOOLS) *.o src/*.o examples/*/*.bin
 
 # Install
 install: $(ALL_TOOLS)
@@ -97,10 +88,10 @@ help:
 	@echo "  install        - Install tools to /usr/local/bin"
 	@echo ""
 	@echo "Individual tools:"
-	@echo "  Assemblers:     ppuasm, apuasm, cpuasm"
-	@echo "  Disassemblers:  cpudisasm, ppudisasm, apudisasm"
-	@echo "  ROM Tools:      rombuilder, rominspect"
-	@echo "  Converters:     wav2mmp"
-	@echo "  Utilities:      hexview"
+	@echo "  Assemblers:    ppuasm, apuasm, cpuasm"
+	@echo "  Disassemblers: cpudisasm, ppudisasm, apudisasm"
+	@echo "  ROM Tools:     rombuilder, rominspect"
+	@echo "  Converters:    wav2mmp"
+	@echo "  Utilities:     hexview"
 
 .PHONY: all assemblers disassemblers rom-tools utilities clean install help
