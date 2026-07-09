@@ -30,6 +30,8 @@ typedef struct {
 static const Keyword keywords[] = {
     {"int", INT},
     {"char", CHAR},
+    {"bool", BOOL},
+    {"_Bool", BOOL},
     {"void", VOID},
     {"short", SHORT},
     {"long", LONG},
@@ -196,6 +198,16 @@ static int read_identifier(void) {
     }
 
     token_buf[token_len] = '\0';
+
+    /* Boolean literals: true/false lex as integer constants 1/0 */
+    if (strcmp(token_buf, "true") == 0) {
+        yylval.number = 1;
+        return NUMBER;
+    }
+    if (strcmp(token_buf, "false") == 0) {
+        yylval.number = 0;
+        return NUMBER;
+    }
 
     /* Check if it's a keyword */
     c = lookup_keyword(token_buf);

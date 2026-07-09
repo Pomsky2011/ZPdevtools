@@ -70,6 +70,7 @@ typedef enum {
     TYPE_VOID,
     TYPE_INT,
     TYPE_CHAR,
+    TYPE_BOOL,
     TYPE_SHORT,
     TYPE_LONG,
     TYPE_POINTER,

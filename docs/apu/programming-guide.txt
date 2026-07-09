@@ -239,40 +239,35 @@ sweep_done:
 
 ```
 ; ──────────────────────────────────────────────────────────────
-; Pan from full left to full right over ~256 steps
-; Channel 0 = left ear, channel 16 = right ear
+; Pan channel 0 from full left (pan=0) to full right (pan=255)
+; over ~256 steps using the MMP pan register
 ; ──────────────────────────────────────────────────────────────
 pan_sound:
   PUDP
   SDP $00
 
-  ; Start left channel (0) and right channel (16)
+  ; Start channel 0 (STL = $7000)
   SBF 1
-  LDA X, $70
-  STA X, $54      ; ch0 STL high = $70
-  STA X, $D4      ; ch16 STL high = $70
+  SCR X, $70
+  STA X, $50      ; ch0 STL high = $70
   SBF 0
-  LDA X, $00
-  STA X, $54      ; ch0 STL low = $00
-  STA X, $D4      ; ch16 STL low = $00
+  ZOR X
+  STA X, $50      ; ch0 STL low = $00
 
-  ; Pan: left starts at 255, right at 0
-  LDA X, $FF      ; left volume
-  LDA Y, $00      ; right volume
+  ; Pan sweep: 0 (full left) → 255 (full right)
+  ZOR X           ; X = pan position
 
 pan_loop:
-  SBF 0
-  STA X, $20      ; ch0 volume = X
-  STA Y, $A0      ; ch16 volume = Y (using Y as second op)
-  DEC X           ; left fades out
-  INC Y           ; right fades in
-  NOP $10         ; small delay
-  JNZ X, 1, pan_loop   ; M=1 = RP-relative
+  STA X, $30      ; write pan to channel 0
+  INC X
+  NOP $10         ; delay between steps
+  CME X, Y       ; Y = 0, check for wrap
+  BNE X, Y, pan_loop
 
-  ; Stop both channels
-  LDA X, $00
-  STA X, $54
-  STA X, $D4
+  ; Stop channel 0
+  ZOR X
+  STA X, $50      ; ch0 STL low = $00
+  STA X, $50      ; ch0 STL high = $00
 
   PODP
   RET

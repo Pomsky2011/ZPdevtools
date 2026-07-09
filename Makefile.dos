@@ -37,6 +37,7 @@ OUTDIR=bin
 
 # All tools
 TOOLS=cpuasm.exe apuasm.exe ppuasm.exe rombuilder.exe \
+      zplink.exe zpbuild.exe \
       cpudisasm.exe apudisasm.exe ppudisasm.exe \
       hexview.exe rominspect.exe wav2mmp.exe
 
@@ -60,6 +61,14 @@ ppuasm.exe: ppuasm.c compat.h
 rombuilder.exe: rombuilder.c compat.h
 	$(CC) $(CFLAGS) rombuilder.c -o$(OUTDIR)\rombuilder.exe
 
+# Locating linker (emits ELF; no signing key)
+zplink.exe: zplink.c compat.h
+	$(CC) $(CFLAGS) zplink.c -o$(OUTDIR)\zplink.exe
+
+# ROM signer (ELF -> signed .zpb). RSA math uses only 32-bit intermediates.
+zpbuild.exe: zpbuild.c compat.h zpsha256.h zprsa.h zpkey.h
+	$(CC) $(CFLAGS) zpbuild.c -o$(OUTDIR)\zpbuild.exe
+
 # Disassemblers
 cpudisasm.exe: cpudisasm.c compat.h
 	$(CC) $(CFLAGS) cpudisasm.c -o$(OUTDIR)\cpudisasm.exe
@@ -74,7 +83,7 @@ ppudisasm.exe: ppudisasm.c compat.h
 hexview.exe: hexview.c compat.h
 	$(CC) $(CFLAGS) hexview.c -o$(OUTDIR)\hexview.exe
 
-rominspect.exe: rominspect.c compat.h
+rominspect.exe: rominspect.c compat.h zpsha256.h
 	$(CC) $(CFLAGS) rominspect.c -o$(OUTDIR)\rominspect.exe
 
 wav2mmp.exe: wav2mmp.c compat.h

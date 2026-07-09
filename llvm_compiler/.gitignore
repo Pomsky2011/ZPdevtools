@@ -1,0 +1,8 @@
+# Compiled executable
+zpcc
+
+# Intermediate / output artifacts
+*.o
+*.ll
+*.asm
+*.bin

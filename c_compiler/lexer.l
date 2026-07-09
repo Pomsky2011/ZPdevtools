@@ -28,6 +28,10 @@ int col_num = 1;
 
 "int"               { col_num += yyleng; return INT; }
 "char"              { col_num += yyleng; return CHAR; }
+"bool"              { col_num += yyleng; return BOOL; }
+"_Bool"             { col_num += yyleng; return BOOL; }
+"true"              { col_num += yyleng; yylval.number = 1; return NUMBER; }
+"false"             { col_num += yyleng; yylval.number = 0; return NUMBER; }
 "void"              { col_num += yyleng; return VOID; }
 "short"             { col_num += yyleng; return SHORT; }
 "long"              { col_num += yyleng; return LONG; }
@@ -58,8 +62,8 @@ int col_num = 1;
 "asm"               { col_num += yyleng; return ASM; }
 
 [a-zA-Z_][a-zA-Z0-9_]* { col_num += yyleng; yylval.string = strdup(yytext); return IDENTIFIER; }
-[0-9]+              { col_num += yyleng; yylval.number = atoi(yytext); return NUMBER; }
-"0x"[0-9a-fA-F]+    { col_num += yyleng; yylval.number = strtol(yytext, NULL, 16); return NUMBER; }
+[0-9]+[uUlL]*              { col_num += yyleng; yylval.number = (int)strtoul(yytext, NULL, 10); return NUMBER; }
+"0x"[0-9a-fA-F]+[uUlL]*    { col_num += yyleng; yylval.number = (int)strtoul(yytext, NULL, 16); return NUMBER; }
 \"([^"\\]|\\.)*\"   { col_num += yyleng; yylval.string = strdup(yytext); return STRING_LITERAL; }
 '.'                 { col_num += yyleng; yylval.number = yytext[1]; return CHAR_LITERAL; }
 '\\n'               { col_num += yyleng; yylval.number = '\n'; return CHAR_LITERAL; }

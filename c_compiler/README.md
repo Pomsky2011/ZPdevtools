@@ -194,6 +194,9 @@ sequenceDiagram
 ### Data Types
 - `int` - 16-bit signed integer
 - `char` - 8-bit signed character
+- **`bool`** / `_Bool` - 8-bit boolean; the literals `true` and `false` lex as
+  `1` and `0`. Casting to `bool` normalizes any non-zero value to `1`. (A
+  compiler extension in the spirit of early-1990s C, ahead of the C99 standard.)
 - `void` - no return value
 - **`short`** - 16-bit integer (same as int)
 - **`long`** - 16-bit integer (32-bit support planned)

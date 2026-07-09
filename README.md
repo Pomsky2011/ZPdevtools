@@ -5,7 +5,8 @@ Complete development toolchain for the ZeroPoint fantasy console.
 ## Tools Overview
 
 ### Compilers & Assemblers
-- **C Compiler** (def88186cc) - Full C89/ANSI C compiler with preprocessor and inline assembly
+- **C Compiler** (def88186cc) - Self-contained, DOS-portable C compiler with preprocessor and inline assembly. Accepts `bool`/`true`/`false` and `//` comments (early-1990s C style) in addition to C89.
+- **LLVM C Compiler** (zpcc, `llvm_compiler/`) - clang/LLVM-based compiler for fast, standards-accurate compilation on modern hosts. Uses clang as the front end and lowers LLVM IR to DEF88186 assembly. See `llvm_compiler/README.md`.
 - **CPU Assembler** (cpuasm) - DEF88186 assembly with `.include` support
 - **PPU Assembler** (ppuasm) - PPU microcode with shorthand macros
 - **APU Assembler** (apuasm) - APU/DSP programs with MMP/SST support
@@ -16,7 +17,9 @@ Complete development toolchain for the ZeroPoint fantasy console.
 - **APU Disassembler** (apudisasm) - Disassemble APU programs
 
 ### ROM Tools
-- **ROM Builder** (rombuilder) - Combine CPU/PPU/APU binaries into ZPB ROM files
+- **Linker** (zplink) - Locate flat CPU/PPU/APU segments and emit an ELF32 executable (dev-side; no signing key)
+- **ROM Signer** (zpbuild) - Sign a zplink ELF into a `.zpb` ROM (the HQ/mastering step; holds the key)
+- **ROM Builder** (rombuilder) - Combine CPU/PPU/APU binaries into ZPB ROM files (classic path)
 - **ROM Inspector** (rominspect) - Analyze, verify, and extract ROM components
 
 ### Utilities

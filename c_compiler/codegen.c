@@ -104,6 +104,8 @@ static int get_type_size(DataType type, int pointer_level, const char* struct_na
             return 2;
         case TYPE_CHAR:
             return 1;
+        case TYPE_BOOL:
+            return 1;
         case TYPE_STRUCT:
             if (struct_name) {
                 StructDef* sdef = find_struct(struct_name);
@@ -318,6 +320,21 @@ static void codegen_cast(ASTNode* node) {
             emit("    AND #$00FF    ; Cast to char (truncate to 8 bits)\n");
             break;
 
+        case TYPE_BOOL: {
+            // Casting to bool - normalize to 0/1 (A = (A != 0) ? 1 : 0).
+            // No BNE in the ISA: branch on zero instead.
+            int bool_zero = new_label();
+            int bool_done = new_label();
+            emit("    CMP #$0000    ; Cast to bool (normalize to 0/1)\n");
+            emit("    BEQ .L%d\n", bool_zero);
+            emit("    LDA #$0001\n");
+            emit("    BRA .L%d\n", bool_done);
+            emit(".L%d:\n", bool_zero);
+            emit("    LDA #$0000\n");
+            emit(".L%d:\n", bool_done);
+            break;
+        }
+
         case TYPE_VOID:
             // Casting to void - no-op (discard value semantics)
             break;
@@ -436,27 +453,28 @@ static void codegen_binop(ASTNode* node) {
             emit("    EOR temp\n");
             break;
         case OP_SHL:
-            // Shift A left by X times
-            emit("    CPX #$00\n");
+            // Shift A left by X times. Use an INX/DEX down-counter: the ISA has
+            // neither BNE nor a working CPX immediate, and DEX sets Z at zero.
             int shl_loop = new_label();
             int shl_done = new_label();
-            emit("    BEQ .L%d\n", shl_done);
+            emit("    INX\n");
             emit(".L%d:\n", shl_loop);
-            emit("    ASL A\n");
             emit("    DEX\n");
-            emit("    BNE .L%d\n", shl_loop);
+            emit("    BEQ .L%d\n", shl_done);
+            emit("    ASL A\n");
+            emit("    BRA .L%d\n", shl_loop);
             emit(".L%d:\n", shl_done);
             break;
         case OP_SHR:
-            // Shift A right by X times
-            emit("    CPX #$00\n");
+            // Shift A right by X times (INX/DEX down-counter; see OP_SHL).
             int shr_loop = new_label();
             int shr_done = new_label();
-            emit("    BEQ .L%d\n", shr_done);
+            emit("    INX\n");
             emit(".L%d:\n", shr_loop);
-            emit("    LSR A\n");
             emit("    DEX\n");
-            emit("    BNE .L%d\n", shr_loop);
+            emit("    BEQ .L%d\n", shr_done);
+            emit("    LSR A\n");
+            emit("    BRA .L%d\n", shr_loop);
             emit(".L%d:\n", shr_done);
             break;
         case OP_EQ:
@@ -476,9 +494,14 @@ static void codegen_binop(ASTNode* node) {
                 case OP_EQ:
                     emit("    BEQ .L%d\n", true_label);
                     break;
-                case OP_NE:
-                    emit("    BNE .L%d\n", true_label);
+                case OP_NE: {
+                    // No BNE in the ISA: branch to true unless equal.
+                    int ne_skip = new_label();
+                    emit("    BEQ .L%d\n", ne_skip);
+                    emit("    BRA .L%d\n", true_label);
+                    emit(".L%d:\n", ne_skip);
                     break;
+                }
                 case OP_LT:
                     emit("    BMI .L%d\n", true_label);
                     break;
@@ -494,9 +517,8 @@ static void codegen_binop(ASTNode* node) {
                     emit("    BMI .L%d\n", true_label);
                     break;
                 case OP_GE:
-                    // A >= X: not less (equal or greater)
-                    emit("    BEQ .L%d\n", true_label);
-                    emit("    BPL .L%d\n", true_label);
+                    // A >= X: signed greater-or-equal (no BPL in the ISA).
+                    emit("    BGE .L%d\n", true_label);
                     break;
                 default:
                     break;
@@ -515,29 +537,29 @@ static void codegen_binop(ASTNode* node) {
             // Logical operators: treat non-zero as true
             // Already have left in A, right in X
 
-            // Convert A to boolean (0 or 1)
+            // Convert A to boolean (0 or 1). No BNE: branch on zero instead.
             emit("    CMP #$0000\n");
-            int a_true = new_label();
+            int a_zero = new_label();
             int a_done = new_label();
-            emit("    BNE .L%d\n", a_true);
-            emit("    LDA #$0000\n");
-            emit("    BRA .L%d\n", a_done);
-            emit(".L%d:\n", a_true);
+            emit("    BEQ .L%d\n", a_zero);
             emit("    LDA #$0001\n");
+            emit("    BRA .L%d\n", a_done);
+            emit(".L%d:\n", a_zero);
+            emit("    LDA #$0000\n");
             emit(".L%d:\n", a_done);
 
             emit("    PHA\n");  // Save boolean A
 
-            // Convert X to boolean
+            // Convert X to boolean. No BNE: branch on zero instead.
             emit("    TXA\n");
             emit("    CMP #$0000\n");
-            int x_true = new_label();
+            int x_zero = new_label();
             int x_done = new_label();
-            emit("    BNE .L%d\n", x_true);
-            emit("    LDA #$0000\n");
-            emit("    BRA .L%d\n", x_done);
-            emit(".L%d:\n", x_true);
+            emit("    BEQ .L%d\n", x_zero);
             emit("    LDA #$0001\n");
+            emit("    BRA .L%d\n", x_done);
+            emit(".L%d:\n", x_zero);
+            emit("    LDA #$0000\n");
             emit(".L%d:\n", x_done);
 
             emit("    TAX\n");  // X = boolean right
@@ -1768,6 +1790,7 @@ void codegen_program(ASTNode* node, FILE* output) {
             switch (decl->typedef_decl.base_type) {
                 case TYPE_INT: type_str = "int"; break;
                 case TYPE_CHAR: type_str = "char"; break;
+                case TYPE_BOOL: type_str = "bool"; break;
                 case TYPE_VOID: type_str = "void"; break;
                 default: type_str = "unknown"; break;
             }

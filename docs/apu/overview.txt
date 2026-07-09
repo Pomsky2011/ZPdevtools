@@ -53,12 +53,11 @@ Instruction budget per sample: ~20 instructions
 - Support for loops, functions, and conditional branching
 
 ### 2. MMP (Music Mixing Processor)
-- Hardware mixing for 16 stereo channels (32 total)
-- Per-channel pitch control (resampling)
-- Per-channel volume control with 8-bit precision
-- Built-in reverb and echo effects
-- Gaussian interpolation support
-- Independent left/right ear outputs
+- Hardware mixing for 16 channels with stereo panning
+- Per-channel pitch control (resampling, fixed-point 12-bit fraction)
+- Per-channel volume control (0=silent, 255=max)
+- Per-channel pan (0=full L, 128=center, 255=full R)
+- Linear interpolation for pitch-shifted playback
 
 ### 3. SST (Sample Storage/Streaming)
 - Sample block format with loop support
@@ -124,21 +123,16 @@ Total ROM capacity: 448 KiB (Audio ROM) + 64 KiB (SST) = 512 KiB
                              |
                              v
                         [MMP Mixer]
+                        16 channels
+                     (pitch, vol, pan)
                              |
                     +--------+--------+
                     |                 |
-              [Left Ear]         [Right Ear]
+               [Left Mix]       [Right Mix]
+            pan-weighted       pan-weighted
                     |                 |
                     v                 v
-              [16 Channels]      [16 Channels]
-                    |                 |
-                    +--------+--------+
-                             |
-                             v
-                    [Reverb/Echo FX]
-                             |
-                             v
-                       [Audio Output]
+                [Left Out]       [Right Out]
 ```
 
 ## Typical Use Cases
@@ -146,9 +140,8 @@ Total ROM capacity: 448 KiB (Audio ROM) + 64 KiB (SST) = 512 KiB
 ### 1. Music Playback
 - Load sample data into SST region
 - Configure MMP channels with STL pointers
-- Set pitch, volume, and loop points
-- Enable reverb/echo as needed
-- APU handles mixing automatically
+- Set pitch, volume, pan, and loop points
+- APU handles mixing and stereo panning automatically
 
 ### 2. Sound Effects
 - Use short one-shot samples

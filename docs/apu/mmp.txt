@@ -3,16 +3,15 @@
 ## Overview
 
 The MMP (Music Mixing Processor) is a hardware audio mixer integrated into the
-ZeroPoint APU. It provides real-time mixing of 16 stereo channels (32 mono channels)
-with built-in pitch control, volume control, reverb, echo, and interpolation.
+ZeroPoint APU. It provides real-time mixing of 16 channels with per-channel
+pitch control, volume control, and stereo panning.
 
 ## Architecture
 
-**Channels:** 16 stereo channels (Left Ear + Right Ear = 32 total)
-**Sample Format:** 8-bit PCM from SST
+**Channels:** 16 (mono channels with pan — not separate L/R channel pairs)
+**Sample Format:** 8-bit signed PCM from SST
 **Output Format:** 16-bit stereo PCM
-**Effects:** Reverb, Echo (per-channel enable)
-**Interpolation:** Gaussian (optional) or nearest-neighbor
+**Panning:** Per-channel 8-bit pan position (0=full L, 128=center, 255=full R)
 
 ## Memory-Mapped Registers
 
@@ -23,29 +22,22 @@ The MMP is controlled via 256 bytes of memory-mapped registers at $0000-$00FF.
 ```
 Address Range    Size      Description
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-LEFT EAR (Channels 0-15):
-$0000 - $001F    32 B     Channel Pitch (16 × 2 bytes)
-$0020 - $002F    16 B     Channel Volume (16 × 1 byte)
-$0030 - $0031     2 B     Reverb Flags (1 bit per channel)
-$0032 - $0033     2 B     Echo Flags (1 bit per channel)
-$0034 - $0053    32 B     Echo Delay (16 × 2 bytes)
-$0054 - $0073    32 B     Sample STL Address (16 × 2 bytes)
-$0074 - $0075     2 B     Gaussian Interpolation Toggle
-$0076 - $007F    10 B     Reserved
-
-RIGHT EAR (Channels 16-31):
-$0080 - $00FF   128 B     Same layout as left ear
+$0000 - $001F    32 B     Channel Pitch    (ch0-15, 2 bytes each)
+$0020 - $002F    16 B     Channel Volume   (ch0-15, 1 byte each)
+$0030 - $003F    16 B     Channel Pan      (ch0-15, 1 byte each)
+$0040 - $004F    16 B     Reserved0        (ch0-15, per-channel)
+$0050 - $006F    32 B     STL Address      (ch0-15, 2 bytes each)
+$0070 - $007F    16 B     Reserved1        (global flags, future use)
+$0080 - $00FF   128 B     Reserved2        (future use)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
 ## Register Details
 
-### Channel Pitch ($0000-$001F, $0080-$009F)
+### Channel Pitch ($0000-$001F)
 
-**Size:** 2 bytes per channel (16-bit)
-**Format:** Fixed-point resampling rate
+**Size:** 2 bytes per channel (16-bit, little-endian)
 
-**Left Ear:**
 ```
 Channel 0:  $0000-$0001
 Channel 1:  $0002-$0003
@@ -54,16 +46,8 @@ Channel 2:  $0004-$0005
 Channel 15: $001E-$001F
 ```
 
-**Right Ear:**
-```
-Channel 16: $0080-$0081
-Channel 17: $0082-$0083
-...
-Channel 31: $009E-$009F
-```
-
 **Pitch Values:**
-- 16-bit unsigned fixed-point
+- 16-bit unsigned fixed-point (12 fractional bits)
 - Higher value = faster playback = higher pitch
 - Lower value = slower playback = lower pitch
 
@@ -101,246 +85,119 @@ Examples (base = $1000):
   -12 semitones: $0800 (octave down)
 ```
 
-### Channel Volume ($0020-$002F, $00A0-$00AF)
+### Channel Volume ($0020-$002F)
 
 **Size:** 1 byte per channel (8-bit)
-**Format:** Dynamic range / clamping control
 
-**Left Ear:**
 ```
 Channel 0:  $0020
 Channel 1:  $0021
-Channel 2:  $0022
 ...
 Channel 15: $002F
 ```
 
-**Right Ear:**
-```
-Channel 16: $00A0
-Channel 17: $00A1
-...
-Channel 31: $00AF
-```
-
 **Volume Values:**
-- 8-bit unsigned (0-255)
-- Controls output PCM value expansion
+- 0 = silent
+- 255 = maximum output
+- Linear scale: Output = Input × (Volume / 255)
 
-**Interpretation:**
+**Examples:**
 ```
-Volume = 0:
-  Output range: -128 to +127 (standard 8-bit PCM)
+Volume =   0: silent
+Volume =  64: 25% gain
+Volume = 128: ~50% gain
+Volume = 192: 75% gain
+Volume = 255: 100% gain (maximum)
+```
 
-Volume = 255:
-  Output range: -32768 to +32767 (16-bit equivalent)
+### Channel Pan ($0030-$003F)
 
-Volume = V:
-  Output PCM = Input PCM × (1 + V/255)
-  Effective multiplier: 1.0× to 2.0×
+**Size:** 1 byte per channel (8-bit)
+
+```
+Channel 0:  $0030
+Channel 1:  $0031
+...
+Channel 15: $003F
+```
+
+**Pan Values:**
+- 0   = full left (no right output)
+- 128 = center (equal left/right — note: center is slightly L-biased due to integer math)
+- 255 = full right (no left output)
+
+**Pan Algorithm:**
+```
+Left contribution  = Sample × Volume × (255 - Pan) / 255 / 255
+Right contribution = Sample × Volume × Pan         / 255 / 255
 ```
 
 **Examples:**
 ```
-Volume = 0:   1.0× gain (8-bit input → 8-bit output)
-Volume = 64:  1.25× gain
-Volume = 128: 1.5× gain
-Volume = 192: 1.75× gain
-Volume = 255: 2.0× gain (maximum)
+Pan =   0: 100% left,  0% right
+Pan =  64: 75% left,  25% right
+Pan = 128: ~50% left, ~50% right (center)
+Pan = 192: 25% left,  75% right
+Pan = 255:  0% left, 100% right
 ```
 
-**Use Cases:**
-- 0-127: Standard playback with moderate gain
-- 128-255: Boosted/loud playback
-- 0: Muted (or very quiet)
+**Default:** Channels reset to pan=128 (center).
 
-Note: This is NOT traditional volume (0=silent, 255=max). It's a dynamic
-range expander. To mute a channel, set its STL address to 0 or disable it.
+### Reserved0 ($0040-$004F)
 
-### Reverb Flags ($0030-$0031, $00B0-$00B1)
+**Size:** 1 byte per channel (8-bit)
 
-**Size:** 2 bytes (16 bits, 1 bit per channel)
+Reserved for future per-channel flags. Writes are accepted and stored but have
+no effect in the current implementation.
 
-**Left Ear:** $0030-$0031 (channels 0-15)
-**Right Ear:** $00B0-$00B1 (channels 16-31)
+### Sample STL Address ($0050-$006F)
 
-**Format:**
+**Size:** 2 bytes per channel (16-bit, little-endian)
+
 ```
-Bit 0:  Channel 0 reverb enable
-Bit 1:  Channel 1 reverb enable
+Channel 0:  $0050-$0051
+Channel 1:  $0052-$0053
 ...
-Bit 15: Channel 15 reverb enable
-```
-
-**Values:**
-- 0 = Reverb disabled for this channel
-- 1 = Reverb enabled for this channel
-
-**Example:**
-```
-Left Ear Reverb Flags = $0003 (binary: 0000000000000011)
-  Channel 0: Reverb ON
-  Channel 1: Reverb ON
-  Channel 2-15: Reverb OFF
-
-Right Ear Reverb Flags = $FFFF (binary: 1111111111111111)
-  All channels 16-31: Reverb ON
-```
-
-**Reverb Algorithm:**
-Implementation-specific. Typical reverb parameters:
-- Room size: Fixed or configurable via ExIO
-- Decay time: Fixed or configurable
-- Pre-delay: Fixed or configurable
-- Mix level: Fixed or configurable
-
-### Echo Flags ($0032-$0033, $00B2-$00B3)
-
-**Size:** 2 bytes (16 bits, 1 bit per channel)
-
-**Left Ear:** $0032-$0033 (channels 0-15)
-**Right Ear:** $00B2-$00B3 (channels 16-31)
-
-**Format:** Same as reverb flags (1 bit per channel)
-
-**Values:**
-- 0 = Echo disabled for this channel
-- 1 = Echo enabled for this channel
-
-**Example:**
-```
-Left Ear Echo Flags = $0001 (binary: 0000000000000001)
-  Channel 0: Echo ON
-  Channels 1-15: Echo OFF
-```
-
-### Echo Delay ($0034-$0053, $00B4-$00D3)
-
-**Size:** 2 bytes per channel (16-bit)
-
-**Left Ear:**
-```
-Channel 0:  $0034-$0035
-Channel 1:  $0036-$0037
-...
-Channel 15: $0052-$0053
-```
-
-**Right Ear:**
-```
-Channel 16: $00B4-$00B5
-Channel 17: $00B6-$00B7
-...
-Channel 31: $00D2-$00D3
-```
-
-**Format:** Delay in samples before echo is heard
-
-**Examples:**
-```
-At 48 kHz:
-  Delay = 4800  → 100 ms echo
-  Delay = 24000 → 500 ms echo
-  Delay = 48000 → 1 second echo
-
-At 22 kHz:
-  Delay = 2200  → 100 ms echo
-  Delay = 11000 → 500 ms echo
-```
-
-**Echo Algorithm:**
-```
-Output[t] = Input[t] + (Input[t - Delay] × Feedback)
-
-Where:
-  Delay = value from echo delay register
-  Feedback = implementation-specific (typically 0.3-0.7)
-```
-
-**Maximum Delay:**
-Limited by echo buffer size (implementation-specific).
-Typical maximum: 65535 samples (~1.36 seconds at 48 kHz)
-
-### Sample STL Address ($0054-$0073, $00D4-$00F3)
-
-**Size:** 2 bytes per channel (16-bit)
-
-**Left Ear:**
-```
-Channel 0:  $0054-$0055
-Channel 1:  $0056-$0057
-...
-Channel 15: $0072-$0073
-```
-
-**Right Ear:**
-```
-Channel 16: $00D4-$00D5
-Channel 17: $00D6-$00D7
-...
-Channel 31: $00F2-$00F3
+Channel 15: $006E-$006F
 ```
 
 **Format:** 16-bit pointer to STL region ($7000-$7FFF)
 
 **Values:**
 - $0000: Channel disabled / no sample
-- $7000-$7FFF: Address of STL entry for this channel
-
-**Example:**
-```
-Write $7000 to channel 0 STL address:
-  SDP $00       ; MMP registers
-  SDB $54       ; Channel 0 STL address offset
-  WRH $70       ; High byte
-  WRL $00       ; Low byte
-
-Now channel 0 plays the sample pointed to by STL entry at $7000
-```
+- $7000-$7FFF: Address of STL entry for this channel's sample
 
 **Playback Control:**
-- Write STL address to start playback
+- Write STL address to start playback (resets sample position)
 - Write $0000 to stop playback
-- Change STL address mid-playback to switch samples
-
-### Gaussian Interpolation Toggle ($0074-$0075, $00F4-$00F5)
-
-**Size:** 2 bytes (16-bit)
-
-**Left Ear:** $0074-$0075
-**Right Ear:** $00F4-$00F5
-
-**Values:**
-- $0000: Nearest-neighbor interpolation (low quality, fast)
-- $0001: Gaussian interpolation (high quality, slower)
-
-**Effect:**
-When pitch != 1.0×, samples are resampled. Interpolation affects quality:
-
-**Nearest-Neighbor:**
-- Fast, simple
-- Causes aliasing at high pitch shifts
-- "Crunchy" sound for extreme pitch changes
-
-**Gaussian:**
-- Smooth, high quality
-- Reduces aliasing
-- Better for musical applications
-- Slightly higher CPU cost
+- Writing the same STL address again does NOT reset position (no-op)
+- Change STL address to switch samples mid-playback
 
 **Example:**
 ```
-; Enable Gaussian interpolation for left ear
+; Start channel 0 at STL entry $7000
 SDP $00
-SDB $74
-WRH $00
-WRL $01
-
-; Disable for right ear (use nearest-neighbor)
-SDB $F4
-WRH $00
-WRL $00
+SBF 1
+SCR X, $70
+STA X, $50      ; ch0 STL high byte = $70
+SBF 0
+ZOR X
+STA X, $50      ; ch0 STL low byte = $00
 ```
+
+### Reserved1 ($0070-$007F)
+
+**Size:** 16 bytes (global)
+
+Reserved for future global MMP flags. Writes are accepted and stored but have
+no effect in the current implementation.
+
+### Reserved2 ($0080-$00FF)
+
+**Size:** 128 bytes
+
+Reserved for future expansion. Writes are accepted and stored but have no
+effect in the current implementation.
 
 ## MMP Operation
 
@@ -348,326 +205,307 @@ WRL $00
 
 ```
 1. Clear all MMP registers to zero
-2. Set Gaussian interpolation mode (optional)
-3. Configure reverb/echo flags (if needed)
-4. Set echo delay values (if echo enabled)
-5. For each channel:
+2. For each channel:
    a. Set pitch to $1000 (1.0× speed)
-   b. Set volume to 128 (moderate gain)
-   c. Set STL address to 0 (disabled)
+   b. Set volume to $FF (255, maximum)
+   c. Set pan to $80 (128, center)
+   d. Set STL address to $0000 (disabled)
 ```
 
 **Example Code:**
 ```
-; Initialize MMP (left ear only shown)
-SDP $00       ; MMP register region
+; Initialize all 16 MMP channels
+init_mmp:
+  PUDP
+  SDP $00
 
-; Zero out all pitch registers
-SDB $00
-LST 0, 16     ; Loop 16 times (16 channels)
-  WRH $00
-  WRL $00
-  ADD DB, 2, DB  ; Next pitch register
-LFN 0
+  ; Zero out pitch ($0000-$001F)
+  ZOR X
+  SDB $00
+  LST 0, 32     ; 16 channels × 2 bytes
+    STA X       ; write 0 via dp:db
+    INC DB
+  LFN 0
 
-; Set all volumes to 128
-SDB $20
-LST 1, 16
-  WRH $00
-  WRL $80     ; Volume = 128
-  ADD DB, 1, DB
-LFN 1
+  ; Set all volumes to 255 ($0020-$002F)
+  SCR X, $FF
+  SDB $20
+  LST 1, 16
+    STA X
+    INC DB
+  LFN 1
 
-; Disable reverb and echo
-SDB $30
-WRH $00
-WRL $00       ; Reverb flags = 0
-SDB $32
-WRH $00
-WRL $00       ; Echo flags = 0
+  ; Set all pans to 128 / center ($0030-$003F)
+  SCR X, $80
+  SDB $30
+  LST 2, 16
+    STA X
+    INC DB
+  LFN 2
 
-; Enable Gaussian interpolation
-SDB $74
-WRH $00
-WRL $01
+  ; Zero STL addresses ($0050-$006F)
+  ZOR X
+  SDB $50
+  LST 3, 32     ; 16 channels × 2 bytes
+    STA X
+    INC DB
+  LFN 3
+
+  PODP
+  RET
 ```
 
 ### Starting Playback
 
 ```
 1. Ensure sample is loaded in SST
-2. Ensure STL entry points to sample
+2. Ensure STL entry points to the sample
 3. Set channel pitch (e.g., $1000 for original pitch)
-4. Set channel volume (e.g., 128)
-5. Write STL address to channel STL register
+4. Set channel volume (e.g., $FF for full volume)
+5. Set channel pan (e.g., $80 for center)
+6. Write STL address to channel STL register
 
-Channel starts playing immediately when STL address is written.
+Channel starts playing immediately when STL address is written (non-zero).
 ```
 
 **Example:**
 ```
-; Play sample from STL entry $7000 on channel 0 (left ear)
-
-; Set pitch to 1.0×
+; Play sample from STL $7000 on channel 0, center pan
 SDP $00
-SDB $00
-WRH $10
-WRL $00       ; Pitch = $1000
 
-; Set volume to 128
-SDB $20
-WRH $00
-WRL $80       ; Volume = 128
+; Set pitch = 1.0×
+SBF 1
+SCR X, $10
+STA X, $00      ; ch0 pitch high = $10
+SBF 0
+ZOR X
+STA X, $00      ; ch0 pitch low = $00
 
-; Set STL address (starts playback)
-SDB $54
-WRH $70
-WRL $00       ; STL address = $7000
+; Set volume = 255
+SCR X, $FF
+STA X, $20      ; ch0 volume
 
-; Channel 0 now playing!
+; Set pan = center
+SCR X, $80
+STA X, $30      ; ch0 pan
+
+; Write STL address (starts playback)
+SBF 1
+SCR X, $70
+STA X, $50      ; ch0 STL high = $70
+SBF 0
+ZOR X
+STA X, $50      ; ch0 STL low = $00
 ```
 
 ### Stopping Playback
 
-```
-Write $0000 to channel's STL address register.
-```
+Write $0000 to the channel's STL address register.
 
-**Example:**
 ```
 ; Stop channel 0
 SDP $00
-SDB $54
-WRH $00
-WRL $00       ; STL address = $0000
+ZOR X
+SBF 0
+STA X, $50      ; ch0 STL low = $00
+SBF 1
+STA X, $50      ; ch0 STL high = $00
 ```
 
 ### Changing Pitch in Real-Time
 
 ```
-; Bend pitch up on channel 0
+; Bend channel 0 pitch up to $1200 (1.125×)
 SDP $00
-SDB $00       ; Channel 0 pitch
-
-; Start at $1000 (1.0×)
-WRH $10
-WRL $00
-
-; Wait some time...
-NOP 1000
-
-; Bend up to $1200 (1.125×)
-WRH $12
-WRL $00
-
-; Continues playing at new pitch immediately
+SBF 1
+SCR X, $12
+STA X, $00      ; ch0 pitch high = $12
+SBF 0
+ZOR X
+STA X, $00      ; ch0 pitch low = $00
 ```
 
-### Enabling Reverb
+### Stereo Panning
+
+Write a pan value to the channel's pan register:
 
 ```
-; Enable reverb on channels 0, 1, and 2 (left ear)
+; Pan channel 0 hard left
 SDP $00
-SDB $30       ; Reverb flags
+ZOR X
+STA X, $30      ; ch0 pan = 0 (full left)
 
-; Set bits 0, 1, 2 = 0x0007
-WRH $00
-WRL $07       ; Channels 0-2 have reverb
+; Pan channel 1 hard right
+SCR X, $FF
+STA X, $31      ; ch1 pan = 255 (full right)
+
+; Pan channel 2 center
+SCR X, $80
+STA X, $32      ; ch2 pan = 128 (center)
 ```
 
-### Enabling Echo with Delay
+### Smooth Pan Sweep
 
 ```
-; Enable echo on channel 0 with 100ms delay (at 48kHz)
+; Sweep channel 0 from full left to full right over ~256 steps
+pan_sweep:
+  PUDP
+  SDP $00
 
-SDP $00
+  ZOR X         ; X = pan position, start at 0 (full left)
+pan_loop:
+  STA X, $30    ; write pan to channel 0
+  INC X
+  NOP $10       ; delay
+  CME X, Y      ; check if X wrapped (== 0 again)
+  BNE X, Y, pan_loop
 
-; Set echo flag for channel 0
-SDB $32       ; Echo flags
-WRH $00
-WRL $01       ; Bit 0 set = channel 0 echo ON
-
-; Set echo delay = 4800 samples (100ms at 48kHz)
-SDB $34       ; Channel 0 echo delay
-WRH $12       ; 4800 = $12C0
-WRL $C0
+  PODP
+  RET
 ```
 
 ## Advanced Techniques
 
-### Stereo Panning
+### Multiple Channels, Same Sample (Layering)
 
-Since left and right ears are independent, implement panning by:
-1. Play same sample on left channel N and right channel (N+16)
-2. Adjust relative volumes to pan left/right
-
-**Example:**
 ```
-; Pan sound 75% left, 25% right
-
-; Left ear channel 0: Volume = 192 (loud)
-SDP $00
-SDB $20
-WRL $C0
-
-; Right ear channel 16: Volume = 64 (quiet)
-SDB $A0
-WRL $40
-
-; Both channels play same sample at same pitch
-SDB $54
-WRH $70
-WRL $00       ; Left ear channel 0 STL = $7000
-
-SDB $D4
-WRH $70
-WRL $00       ; Right ear channel 16 STL = $7000
-```
-
-### Multi-Sample Instruments
-
-Use multiple channels to layer samples:
-```
-Channel 0: Base note
-Channel 1: Harmonic overtone (+12 semitones, lower volume)
-Channel 2: Sub-bass (-12 semitones, low volume)
-```
-
-### Doppler Effect
-
-Smoothly vary pitch over time to simulate motion:
-```
-loop:
-  ; Decrease pitch gradually (moving away)
-  SUB Pitch_Low, 1, Pitch_Low
-  SDP $00
-  SDB $00
-  SBF 0
-  STA Pitch_Low, $00
-  SBF 1
-  STA Pitch_High, $00
-
-  NOP 100
-  JMP loop
-```
-
-### Arpeggios
-
-Rapidly switch between pitches:
-```
-; Play C-E-G arpeggio on channel 0
-loop:
-  ; C (base pitch $1000)
-  WRH $10
-  WRL $00
-  NOP 1000
-
-  ; E (+4 semitones, $1260)
-  WRH $12
-  WRL $60
-  NOP 1000
-
-  ; G (+7 semitones, $1782)
-  WRH $17
-  WRL $82
-  NOP 1000
-
-  JMP loop
+Channel 0: Base note    (pan = 128, pitch = $1000)
+Channel 1: Overtone     (pan = 128, pitch = $2000, volume = 64)
+Channel 2: Sub-bass     (pan = 128, pitch = $0800, volume = 80)
+All three point to the same STL entry.
 ```
 
 ### Dynamic Channel Allocation
 
-Manage channels as a pool:
 ```
-; Track which channels are in use
-; Allocate free channel when sound effect requested
-; Free channel when playback complete (STL loop count done)
+; Find a free channel (STL = $0000) and play a sample
+; Returns channel number in X, or $FF if no free channel
+alloc_channel:
+  PUDP
+  SDP $00
+  SDB $50       ; STL address base
 
-play_sound:
-  ; Find free channel (STL address = $0000)
-  ; Set pitch, volume, STL address
-  ; Mark as in-use
+  LST 0, 16
+    LDA X       ; read STL low byte
+    CME X, Y    ; compare to 0 (Y pre-zeroed)
+    BEQ X, Y, found_free
+    ADD DB, 2   ; skip to next channel STL
+  LFN 0
+
+  SCR X, $FF    ; no free channel
+  PODP
   RET
+
+found_free:
+  ; channel index = (DB - $50) / 2
+  ; ... set pitch, volume, pan, STL ...
+  PODP
+  RET
+```
+
+### Doppler Effect
+
+```
+; Decrease pitch gradually (object moving away)
+doppler_loop:
+  SUB PitchHi, 0       ; ... decrement 16-bit pitch in memory ...
+  SDP $00
+  SBF 1
+  LDA X, PitchHi
+  STA X, $00
+  SBF 0
+  LDA X, PitchLo
+  STA X, $00
+  NOP 100
+  JMP doppler_loop
+```
+
+### Arpeggios
+
+```
+; C-E-G arpeggio on channel 0
+arpeggio_loop:
+  SDP $00
+  SBF 1
+
+  ; C ($1000)
+  SCR X, $10
+  STA X, $00
+  NOP 1000
+
+  ; E (+4 semitones, ~$1260)
+  SCR X, $12
+  STA X, $00
+  NOP 1000
+
+  ; G (+7 semitones, ~$1782)
+  SCR X, $17
+  STA X, $00
+  NOP 1000
+
+  JMP arpeggio_loop
 ```
 
 ## Performance Considerations
 
 ### CPU Cost
 
-MMP is hardware-accelerated, but register access has cost:
-- Read from MMP registers: ~4 cycles + memory access time
-- Write to MMP registers: ~4 cycles + memory access time
-- Register changes take effect immediately (no buffering)
+MMP register writes take effect immediately (no buffering):
+- Read/write: ~4 cycles + memory access time
 
-### Channel Limits
+### Channel Budget
 
-16 stereo channels = 32 mono channels total.
-For complex music:
-- Reserve 4-8 channels for music
-- Reserve 4-8 channels for sound effects
-- Keep 0-8 channels for dynamic allocation
+With 16 channels, a suggested allocation:
+- 4-8 channels for music tracks
+- 4-8 channels for sound effects
+- Remaining for dynamic allocation
 
-### Mixing Quality
+### Clipping
 
-All channels mixed at 16-bit output resolution.
-Clipping may occur if too many loud channels play simultaneously.
-
-**Mitigation:**
-- Lower channel volumes (0-64 range instead of 128-255)
-- Use fewer simultaneous channels
-- Implement software limiting/compression
+If many loud channels play simultaneously, the mixed output may clip.
+Mitigations:
+- Lower per-channel volume (e.g., 128 for busy mixes)
+- Use fewer simultaneous active channels
+- Implement software compression in APU code
 
 ## Debugging
 
-### Check Channel Status
+### Read Back MMP Registers
 
-Read back MMP registers to verify configuration:
 ```
+; Read channel 0 STL address
 SDP $00
-SDB $54
+SDB $50
 SBF 0
-STR $54, R0   ; R0 = STL address low byte
+LDA X           ; X = STL low byte
 SBF 1
-STR $54, R1   ; R1 = STL address high byte
+LDA Y           ; Y = STL high byte
 
-JNZ R0, channel_playing
-JNZ R1, channel_playing
-
-; Channel 0 is not playing (STL address = $0000)
+; If X==0 and Y==0, channel is stopped
 ```
 
-### Monitor Playback Position
+### Silence One Channel for Isolation
 
-Implementation may provide playback position in ExIO region ($2000-$2FFF).
-Consult hardware docs.
-
-### Test Individual Channels
-
-Isolate channels by disabling others:
 ```
-; Play only channel 0, silence all others
+; Silence channel 3 by zeroing its STL address
 SDP $00
-SDB $54
-WRH $70
-WRL $00       ; Channel 0 playing
-
-SDB $56
-WRH $00
-WRL $00       ; Channel 1 off
-
-; ... repeat for channels 2-15
+ZOR X
+SBF 0
+STA X, $56      ; ch3 STL low = 0
+SBF 1
+STA X, $56      ; ch3 STL high = 0
 ```
 
 ## Limitations
 
-1. **No Master Volume:** No global volume control (set all channels individually)
-2. **No Panning Control:** Must use left/right ear volumes for panning
-3. **Fixed Effects:** Reverb/echo parameters may be fixed (implementation-specific)
-4. **No Per-Sample Effects:** Effects apply to entire channel, not per-sample
-5. **No Crossfading:** Switching samples causes hard cutoff (implement in software)
+1. **No Master Volume:** No global volume control — set channels individually
+2. **No Crossfading:** Switching STL address causes a hard cut (implement in software)
+3. **Center pan bias:** Pan=128 gives left gain 127/255 ≈ 49.8%, right 128/255 ≈ 50.2%
+4. **No per-sample effects:** All per-channel settings apply uniformly across the sample
+5. **No built-in reverb/echo:** Effects must be implemented in APU software using ARAM
 
 ## See Also
 
-- sst.txt - Sample format and STL entries
-- memory-map.txt - MMP register memory region details
-- programming-guide.txt - Complete playback examples
+- sst.txt — Sample format and STL entries
+- memory-map.txt — MMP register memory region details
+- programming-guide.txt — Complete playback examples

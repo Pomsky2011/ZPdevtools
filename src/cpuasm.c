@@ -38,6 +38,7 @@ typedef enum {
     AM_ABSOLUTE_Y,          /* LDA $1234,Y */
     AM_ABSOLUTE_LONG,       /* LDA $123456 */
     AM_ABSOLUTE_LONG_X,     /* LDA $123456,X */
+    AM_ABSOLUTE_LONG_Y,     /* DIV $123456,Y */
     AM_DIRECT_PAGE,         /* LDA $12 */
     AM_DP_X,                /* LDA $12,X */
     AM_DP_Y,                /* LDX $12,Y */
@@ -370,8 +371,10 @@ AddressingMode detect_addressing_mode(const char *operand, const char *mnemonic)
         if (parse_number(temp, &val)) {
             if (val <= 0xFF) {
                 return AM_DP_Y;
-            } else {
+            } else if (val <= 0xFFFF) {
                 return AM_ABSOLUTE_Y;
+            } else {
+                return AM_ABSOLUTE_LONG_Y;
             }
         }
         return AM_ABSOLUTE_Y;
@@ -634,10 +637,25 @@ void init_instructions(void) {
     INST("CPX", AM_ABSOLUTE, 0x79, 3, 3);
     INST("CPY", AM_ABSOLUTE, 0x7A, 3, 3);
 
-    /* Hardware extensions (8086-inspired) */
-    INST("MUL", AM_IMMEDIATE, 0xEF, 2, 8);
-    INST("MUL", AM_ABSOLUTE, 0xF0, 3, 9);
-    INST("DIV", AM_SPECIAL, 0x92, 1, 8);  /* DIV X - special handling */
+    /* Hardware extensions (8086-inspired) - MUL: A * operand -> A:X            */
+    /* (opcodes per docs/cpu/DEF88186.csv)                                      */
+    INST("MUL", AM_IMMEDIATE,          0xEF, 2, 8);
+    INST("MUL", AM_ABSOLUTE,           0xF0, 3, 9);
+    INST("MUL", AM_ABSOLUTE_X,         0xF1, 3, 9);
+    INST("MUL", AM_ABSOLUTE_Y,         0xF2, 3, 9);
+    INST("MUL", AM_DIRECT_PAGE,        0xF3, 2, 9);
+    INST("MUL", AM_DP_X,               0xF4, 2, 10);
+    INST("MUL", AM_ABSOLUTE_LONG,      0xF5, 4, 11);
+    INST("MUL", AM_ABSOLUTE_LONG_X,    0xF6, 4, 11);
+    INST("MUL", AM_STACK_RELATIVE,     0xF7, 2, 10);
+    INST("MUL", AM_DP_INDIRECT_X,      0xEA, 2, 12);
+    INST("MUL", AM_DP_INDIRECT_Y,      0xEB, 2, 11);
+    INST("MUL", AM_DP_INDIRECT_LONG,   0xED, 2, 12);
+    INST("MUL", AM_DP_INDIRECT_LONG_Y, 0xEE, 2, 12);
+    INST("MUL", AM_SR_INDIRECT_Y,      0xEC, 2, 13);
+    /* DIV X,Y is handled as a special operand form below; long forms here.     */
+    INST("DIV", AM_ABSOLUTE_LONG_X,    0x93, 4, 8);
+    INST("DIV", AM_ABSOLUTE_LONG_Y,    0x94, 4, 8);
     INST("LOOP", AM_IMMEDIATE, 0x13, 3, 2);
     INST("LPEND", AM_IMPLIED, 0x14, 1, 1);
     INST("SDB", AM_IMMEDIATE, 0x1B, 2, 2);
@@ -780,20 +798,33 @@ int assemble_line(char *line) {
     }
 
 
-    /* Special case: DIV X or DIV Y */
-    if (strcmp(token, "DIV") == 0 && (strcmp(operand, "X") == 0 || strcmp(operand, "x") == 0)) {
-        emit_byte(0x92);  /* DIV X,Y opcode */
-        return 0;
+    /* DIV has a register form (DIV X,Y -> 0x92) plus long,X / long,Y forms that
+     * divide the accumulator by a memory operand.  A bare address with ,X / ,Y
+     * is always a 24-bit long-indexed operand for DIV, so force that mode
+     * (labels would otherwise default to 16-bit absolute). */
+    if (strcmp(token, "DIV") == 0) {
+        char norm[MAX_LINE];
+        int k = 0;
+        for (i = 0; operand[i] && k < MAX_LINE - 1; i++) {
+            char ch = (char)toupper((unsigned char)operand[i]);
+            if (ch != ' ' && ch != '\t') norm[k++] = ch;
+        }
+        norm[k] = '\0';
+        if (strcmp(norm, "X,Y") == 0 || strcmp(norm, "X") == 0) {
+            emit_byte(0x92);  /* DIV X,Y */
+            return 0;
+        } else if (k >= 2 && norm[k - 2] == ',' && norm[k - 1] == 'X') {
+            mode = AM_ABSOLUTE_LONG_X;   /* DIV long,X -> 0x93 */
+        } else if (k >= 2 && norm[k - 2] == ',' && norm[k - 1] == 'Y') {
+            mode = AM_ABSOLUTE_LONG_Y;   /* DIV long,Y -> 0x94 */
+        } else {
+            error("DIV expects 'X,Y', 'long,X' or 'long,Y'");
+            return -1;
+        }
+    } else {
+        /* Detect addressing mode */
+        mode = detect_addressing_mode(operand, token);
     }
-
-    /* Special case: MUL X or MUL Y */
-    if (strcmp(token, "MUL") == 0 && (strcmp(operand, "X") == 0 || strcmp(operand, "x") == 0)) {
-        emit_byte(0xF0);  /* MUL X opcode - check CSV for correct opcode */
-        return 0;
-    }
-
-    /* Detect addressing mode */
-    mode = detect_addressing_mode(operand, token);
 
     /* Find instruction */
     inst = find_instruction(token, mode);

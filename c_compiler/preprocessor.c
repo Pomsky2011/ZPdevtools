@@ -115,7 +115,8 @@ void preprocessor_undef(PreprocessorContext* ctx, const char* name) {
 }
 
 // Expand macros in a line
-char* preprocessor_expand_macros(PreprocessorContext* ctx, const char* line) {
+/* One expansion pass over a line (object- and function-like macros). */
+static char* expand_macros_once(PreprocessorContext* ctx, const char* line) {
     char* result = malloc(MAX_LINE_LENGTH);
     char* out = result;
     const char* p = line;
@@ -224,6 +225,46 @@ char* preprocessor_expand_macros(PreprocessorContext* ctx, const char* line) {
     return result;
 }
 
+// Expand macros in a line to a fixpoint so that macros appearing inside other
+// macros' replacement text are themselves expanded (standard C rescanning),
+// e.g. ZP_LO8(v) -> ((zpu8)((v)&0xFF)) -> ((unsigned char)((v)&0xFF)).  Capped
+// at a fixed number of passes to defend against self-referential macros.
+char* preprocessor_expand_macros(PreprocessorContext* ctx, const char* line) {
+    char* cur = expand_macros_once(ctx, line);
+    int pass;
+    for (pass = 0; pass < 16; pass++) {
+        char* next = expand_macros_once(ctx, cur);
+        if (strcmp(next, cur) == 0) { free(next); break; }
+        free(cur);
+        cur = next;
+    }
+    return cur;
+}
+
+// Strip C comments and trailing whitespace from a macro replacement string,
+// in place.  Comments are whitespace per the C standard, so an object-like
+// macro such as "#define FOO   /* note */" must expand to nothing, not to the
+// comment text.  Handles both block and line comments.
+static void strip_macro_comment(char* s) {
+    char* r = s;   // read
+    char* w = s;   // write
+    while (*r) {
+        if (r[0] == '/' && r[1] == '*') {
+            r += 2;
+            while (*r && !(r[0] == '*' && r[1] == '/')) r++;
+            if (*r) r += 2;             // skip closing */
+            *w++ = ' ';                 // comment becomes a single space
+        } else if (r[0] == '/' && r[1] == '/') {
+            break;                      // line comment: drop the rest
+        } else {
+            *w++ = *r++;
+        }
+    }
+    *w = '\0';
+    // Trim trailing whitespace.
+    while (w > s && isspace((unsigned char)w[-1])) *--w = '\0';
+}
+
 // Process #include directive
 static int process_include(PreprocessorContext* ctx, const char* line) {
     // Parse #include "file" or #include <file>
@@ -248,10 +289,15 @@ static int process_include(PreprocessorContext* ctx, const char* line) {
     // Try to open the file
     FILE* inc_file = NULL;
     char full_path[512];
+    char resolved[512];      // path that actually opened (for dir derivation)
 
     if (delim == '"') {
         // Try current directory first
         inc_file = fopen(filename, "r");
+        if (inc_file) {
+            strncpy(resolved, filename, sizeof(resolved) - 1);
+            resolved[sizeof(resolved) - 1] = '\0';
+        }
     }
 
     if (!inc_file) {
@@ -259,7 +305,11 @@ static int process_include(PreprocessorContext* ctx, const char* line) {
         for (int i = 0; i < ctx->include_path_count; i++) {
             snprintf(full_path, sizeof(full_path), "%s/%s", ctx->include_paths[i], filename);
             inc_file = fopen(full_path, "r");
-            if (inc_file) break;
+            if (inc_file) {
+                strncpy(resolved, full_path, sizeof(resolved) - 1);
+                resolved[sizeof(resolved) - 1] = '\0';
+                break;
+            }
         }
     }
 
@@ -267,6 +317,27 @@ static int process_include(PreprocessorContext* ctx, const char* line) {
         fprintf(stderr, "Preprocessor error at line %d: Cannot open include file '%s'\n",
                 ctx->line_num, filename);
         return 0;
+    }
+
+    // Add the directory of the file we just opened to the search paths so that
+    // quoted includes nested inside it resolve relative to it (standard C
+    // behaviour, needed for umbrella headers like <zeropoint/zeropoint.h>).
+    {
+        char dir[512];
+        char* slash;
+        strncpy(dir, resolved, sizeof(dir) - 1);
+        dir[sizeof(dir) - 1] = '\0';
+        slash = strrchr(dir, '/');
+        if (slash) {
+            int j, present = 0;
+            *slash = '\0';
+            for (j = 0; j < ctx->include_path_count; j++) {
+                if (strcmp(ctx->include_paths[j], dir) == 0) { present = 1; break; }
+            }
+            if (!present && ctx->include_path_count < 16) {
+                preprocessor_add_include_path(ctx, dir);
+            }
+        }
     }
 
     // Process the included file recursively
@@ -277,7 +348,15 @@ static int process_include(PreprocessorContext* ctx, const char* line) {
 
     int result = preprocessor_run(inc_ctx);
 
-    // Don't free macros (shared with parent)
+    // Propagate macros defined by the included file back to the parent.  The
+    // macro list is a singly linked list whose HEAD changes as new macros are
+    // prepended; without writing the new head back, every #define inside an
+    // included header (typedvef-style widths, feature macros, guards) would be
+    // lost the moment the include returned - breaking multi-file headers.
+    ctx->macros = inc_ctx->macros;
+    ctx->include_path_count = inc_ctx->include_path_count;
+
+    // Don't free macros/paths (shared with parent, now owned by parent).
     inc_ctx->macros = NULL;
     inc_ctx->include_paths = NULL;
     fclose(inc_file);
@@ -331,8 +410,9 @@ static void process_define(PreprocessorContext* ctx, const char* line) {
         if (*p == ')') p++;
         while (*p && isspace(*p)) p++;
 
-        // Rest is replacement text
+        // Rest is replacement text (comments are whitespace, strip them)
         char* replacement = strdup(p);
+        strip_macro_comment(replacement);
         preprocessor_define_function(ctx, name, params, param_count, replacement);
 
         free(replacement);
@@ -341,9 +421,10 @@ static void process_define(PreprocessorContext* ctx, const char* line) {
         }
         free(params);
     } else {
-        // Simple macro
+        // Simple macro (comments are whitespace, strip them)
         while (*p && isspace(*p)) p++;
         char* replacement = strdup(p);
+        strip_macro_comment(replacement);
         preprocessor_define(ctx, name, replacement);
         free(replacement);
     }

@@ -40,7 +40,7 @@ static int enum_count_temp;
 
 %token <number> NUMBER CHAR_LITERAL
 %token <string> IDENTIFIER STRING_LITERAL
-%token INT CHAR VOID SHORT LONG SIGNED UNSIGNED STRUCT UNION ENUM TYPEDEF
+%token INT CHAR BOOL VOID SHORT LONG SIGNED UNSIGNED STRUCT UNION ENUM TYPEDEF
 %token CONST VOLATILE STATIC EXTERN
 %token IF ELSE WHILE DO FOR RETURN BREAK CONTINUE
 %token SWITCH CASE DEFAULT GOTO SIZEOF ASM
@@ -148,6 +148,7 @@ type_modifier_list:
 base_type_specifier:
     INT { $$ = TYPE_INT; current_decl_struct_name = NULL; }
     | CHAR { $$ = TYPE_CHAR; current_decl_struct_name = NULL; }
+    | BOOL { $$ = TYPE_BOOL; current_decl_struct_name = NULL; }
     | VOID { $$ = TYPE_VOID; current_decl_struct_name = NULL; }
     | SHORT { $$ = TYPE_SHORT; current_decl_struct_name = NULL; }
     | LONG { $$ = TYPE_LONG; current_decl_struct_name = NULL; }

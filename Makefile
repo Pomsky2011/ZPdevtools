@@ -12,10 +12,12 @@ BINDIR = executables
 # Tools
 ASSEMBLERS    = ppuasm apuasm cpuasm
 ROM_TOOLS     = rombuilder rominspect
+LINKERS       = zplink
+SIGNERS       = zpbuild
 DISASSEMBLERS = cpudisasm ppudisasm apudisasm
 CONVERTERS    = wav2mmp
 UTILITIES     = hexview
-ALL_TOOLS     = $(ASSEMBLERS) $(ROM_TOOLS) $(DISASSEMBLERS) $(CONVERTERS) $(UTILITIES)
+ALL_TOOLS     = $(ASSEMBLERS) $(ROM_TOOLS) $(LINKERS) $(SIGNERS) $(DISASSEMBLERS) $(CONVERTERS) $(UTILITIES)
 ALL_BINS      = $(addprefix $(BINDIR)/,$(ALL_TOOLS))
 
 all: $(BINDIR) $(ALL_BINS)
@@ -37,8 +39,17 @@ $(BINDIR)/cpuasm: $(SRC)/cpuasm.c | $(BINDIR)
 $(BINDIR)/rombuilder: $(SRC)/rombuilder.c | $(BINDIR)
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
-$(BINDIR)/rominspect: $(SRC)/rominspect.c | $(BINDIR)
+$(BINDIR)/rominspect: $(SRC)/rominspect.c $(SRC)/zpsha256.h | $(BINDIR)
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
+
+# Linker (depends on the SHA-256 / RSA / key headers in src/)
+# zplink: developer-side linker, no signing key -> only needs the ELF writer.
+$(BINDIR)/zplink: $(SRC)/zplink.c | $(BINDIR)
+	$(CC) $(CFLAGS) -o $@ $(SRC)/zplink.c $(LDFLAGS)
+
+# zpbuild: HQ mastering/signing step -> pulls in the SHA-256 + RSA key material.
+$(BINDIR)/zpbuild: $(SRC)/zpbuild.c $(SRC)/zpsha256.h $(SRC)/zprsa.h $(SRC)/zpkey.h | $(BINDIR)
+	$(CC) $(CFLAGS) -o $@ $(SRC)/zpbuild.c $(LDFLAGS)
 
 # Disassemblers
 $(BINDIR)/cpudisasm: $(SRC)/cpudisasm.c | $(BINDIR)
@@ -67,6 +78,9 @@ disassemblers: $(addprefix $(BINDIR)/,$(DISASSEMBLERS))
 
 rom-tools: $(addprefix $(BINDIR)/,$(ROM_TOOLS))
 	@echo "ROM tools built: $(ROM_TOOLS)"
+
+linkers: $(addprefix $(BINDIR)/,$(LINKERS))
+	@echo "Linkers built: $(LINKERS)"
 
 utilities: $(addprefix $(BINDIR)/,$(UTILITIES))
 	@echo "Utilities built: $(UTILITIES)"
