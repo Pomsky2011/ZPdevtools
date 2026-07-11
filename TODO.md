@@ -2,50 +2,15 @@
 
 ## Critical Bugs
 
-### 🔴 Loop Counters Get Stuck (2025-10-19)
-**Status**: CRITICAL - Suspected assembler bug
-**Description**: Programs assembled with zpasm have broken loops - counters increment to 1 and get stuck
+**NONE** — the loop-counter bug below was fixed in `32cd754` ("Fix critical
+PPU loop bug - Correct Preset E instruction encoding", 2025-10-23).
 
-**Test Case**:
-```asm
-R10 = COUNTER
-start:
-    CLR COUNTER
-loop:
-    INC COUNTER
-    TARREG 2, LSB, R15
-    SETBYTE 2, 5
-    CMP COUNTER, R15
-    JNG loop
-    HLT
-```
-
-**Expected Behavior**: Counter should increment 0→1→2→3→4→5→halt
-**Actual Behavior**: Counter increments to 1 and enters infinite loop
-
-**Disassembly** (loop_test.bin):
-```
-00000000  30 0a 80 0a e0 8f e4 85  42 8f e0 3e e0 7e e4 02  |0.......B..>.~..|
-00000010  e4 40 78 00 e0 3e e0 7e  e4 14 e4 40 f7 00        |.@x..>.~...@..|
-```
-
-**Possible Causes**:
-1. Label `loop:` might be resolved to wrong address
-2. `JNG loop` expansion might be encoding wrong PC value
-3. Jump shorthand macro might have off-by-one error
-4. Label might be placed at `start:` instead of at `INC COUNTER`
-
-**Files Affected**:
-- All demos using loops (color_bars, gradients, etc.)
-- Any program using INC + CMP + JNG pattern
-
-**Impact**: BLOCKING - No loop-based programs can execute correctly
-
-**Next Steps**:
-1. Add verbose mode to zpasm to show label addresses
-2. Disassemble working vs non-working programs
-3. Test if manual PC loading works (without JNG shorthand)
-4. Check label resolution logic in zpasm.c
+### ✅ RESOLVED: Loop Counters Get Stuck (2025-10-19, fixed 2025-10-23)
+**Root cause**: TARREG/SETBYTE/BUILD (Preset E) had wrong bit shifts in the
+assembler — target-register field landed in the wrong bits of the suboperand,
+so labels/jumps resolved to garbage addresses.
+**Fix**: TARREG target_reg `<<6`→`<<8`, byte_sel `<<5`→`<<7`; SETBYTE target_reg
+`<<6`→`<<8`; BUILD t1 `<<6`→`<<8`, t2 `<<4`→`<<6`.
 
 ## Recent Changes
 
@@ -150,17 +115,16 @@ The C compiler now supports a **comprehensive subset of C** suitable for game de
 
 1. **HLT is not HALT**: HLT expands to 6-instruction loop, not a real CPU halt
 2. **Target Register Corruption**: Shorthands overwrite target registers 0 and 1
-3. **No Immediate Values**: Cannot do `MOV R0, 42` - must build values step-by-step
+3. **No Immediate `MOV`**: Cannot do `MOV R0, #42` - PPU's real `MOV` opcode is
+   hardware-defined as DP-addressed memory move only (no immediate encoding
+   exists in the ISA); `SETBYTE` is the intended way to place an immediate
+   into a register, and now supports full expressions (see CONST below) -
+   not implemented as "MOV #imm" since that would require inventing an opcode
+   the hardware doesn't have
 4. **No Macro System**: No way to define reusable code blocks (Note: C compiler now has preprocessor macros)
 5. ~~**No Include Files**: Cannot split code across multiple files~~ - ✅ FIXED: Added .include directive for assembly, #include for C
 
 ## Testing Needed
-
-### Urgent (Loop Bug Investigation)
-- [ ] Add --verbose flag to show label resolution
-- [ ] Test manual PC loading vs JNG shorthand
-- [ ] Verify label placement in assembled binaries
-- [ ] Create minimal failing test case
 
 ### General
 - [ ] Test all shorthands with edge cases
@@ -283,16 +247,19 @@ Now a **complete professional development environment**:
 ## Future Enhancements
 
 ### High Priority
-- [ ] **Fix loop bug** (CRITICAL)
+- [x] ~~Fix loop bug~~ (CRITICAL) - ✅ DONE: fixed in 32cd754
 - [ ] Add verbose/debug mode to assemblers
 - [ ] Better error messages with line numbers
 
 ### Medium Priority
 - [x] ~~Macro system~~ - ✅ DONE: C preprocessor has full macro support
 - [x] ~~Include file support~~ - ✅ DONE: .include for assembly, #include for C
-- [ ] Immediate value syntax (`MOV R0, #42`)
-- [ ] Constant definitions (`CONST SCREEN_WIDTH 256`)
-- [ ] Expression evaluation (`SETBYTE 2, SCREEN_WIDTH/2`)
+- [x] ~~Immediate value syntax (`MOV R0, #42`)~~ - not applicable: `MOV`'s
+  hardware encoding has no immediate form; `SETBYTE` already covers this and
+  now takes full expressions
+- [x] ~~Constant definitions (`CONST SCREEN_WIDTH 256`)~~ - ✅ DONE in ppuasm
+- [x] ~~Expression evaluation (`SETBYTE 2, SCREEN_WIDTH/2`)~~ - ✅ DONE in
+  ppuasm: `+ - * /`, parentheses, unary minus, CONST names, and labels
 
 ### Low Priority
 - [ ] Optimization passes
@@ -334,20 +301,24 @@ Now a **complete professional development environment**:
 - [ ] Loop debugging guide
 - [ ] Best practices document
 - [ ] Performance optimization guide
-- [ ] Example programs (working ones, once bug is fixed)
+- [ ] Example programs
 
 ## Examples Status
 
-### Working (No Loops)
+> Note: the loop-based examples below were blocked by the Preset E encoding
+> bug, fixed in 32cd754 (2025-10-23). They should be re-verified against the
+> current assembler rather than assumed broken.
+
+### Working
 - ✅ Simple programs without loops
 - ✅ HLT detection
 
-### Broken (Loops)
-- ❌ color_bars.asm
-- ❌ color_bars_clean.asm
-- ❌ gradient_demo_simple.asm
-- ❌ gradient_test.asm
-- ❌ All loop-based demos
+### Needs Re-verification (were blocked by the now-fixed loop bug)
+- ⚠️ color_bars.asm
+- ⚠️ color_bars_clean.asm
+- ⚠️ gradient_demo_simple.asm
+- ⚠️ gradient_test.asm
+- ⚠️ All loop-based demos
 
 ### Not Tested
 - ⚠️ Interrupt handler examples
