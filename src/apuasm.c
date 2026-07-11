@@ -267,7 +267,7 @@ void assemble_line(char* line, int line_num) {
             /* lda X/Y, $YY — load immediate (shorthand for SCR) */
             int reg = parse_register(tokens[1]);
             int value = parse_number(tokens[2]);
-            uint16_t operand = ((reg & 1) << 8) | (value & 0xFF);
+            uint16_t operand = ((reg & 1) << 10) | (value & 0xFF);
             emit_instruction(encode_instruction(0x0A, operand));
         } else if (token_count >= 2) {
             /* lda X/Y — load (dp:db) into register */
@@ -331,7 +331,7 @@ void assemble_line(char* line, int line_num) {
         if (token_count >= 3) {
             int reg = parse_register(tokens[1]);
             int value = parse_number(tokens[2]);
-            uint16_t operand = ((reg & 1) << 8) | (value & 0xFF);
+            uint16_t operand = ((reg & 1) << 10) | (value & 0xFF);
             emit_instruction(encode_instruction(0x0A, operand));
         }
     }
@@ -495,8 +495,12 @@ void assemble_line(char* line, int line_num) {
         }
     }
     else if (strcmp(upper_mnemonic, "HLT") == 0) {
-        /* Infinite loop: JMP 0 (jump to current address) */
-        emit_instruction(encode_instruction(0x01, 0));
+        /* Opcodes 0x1C-0x1F are reserved; the interpreter's default case
+           treats any of them as an unknown opcode and halts. JMP 0 does NOT
+           halt here: JMP is a *relative* jump and pc is already past this
+           instruction by the time it executes (fetch does pc+=2 first), so
+           offset 0 just falls through to the next instruction. */
+        emit_instruction(encode_instruction(0x1C, 0));
     }
     else {
         char msg[128];
