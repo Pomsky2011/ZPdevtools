@@ -315,8 +315,19 @@ AddressingMode detect_addressing_mode(const char *operand, const char *mnemonic)
 
                 /* Check for ,X inside parens */
                 if (strchr(temp, ',')) {
-                    /* ($12,X) or ($1234,X) */
-                    return AM_DP_INDIRECT_X;  /* Assume DP for now */
+                    /* ($12,X) / ($1234,X) / (label,X) - determine DP vs
+                     * absolute the same way the non-indirect ,X case does:
+                     * a small numeric base is DP, a large one or a label
+                     * (parse_number fails) is absolute (JMP/JSR (addr,X)). */
+                    char base[MAX_LINE];
+                    char *paren_comma = strchr(temp, ',');
+                    int blen = (int)(paren_comma - temp);
+                    strncpy(base, temp, blen);
+                    base[blen] = '\0';
+                    if (parse_number(base, &val) && val <= 0xFF) {
+                        return AM_DP_INDIRECT_X;
+                    }
+                    return AM_ABSOLUTE_INDEXED_INDIRECT;
                 }
 
                 if (parse_number(temp, &val)) {
@@ -586,7 +597,9 @@ void init_instructions(void) {
     /* Jumps */
     INST("JMP", AM_ABSOLUTE, 0x0F, 3, 4);
     INST("JMP", AM_ABSOLUTE_LONG, 0x10, 4, 4);
+    INST("JMP", AM_ABSOLUTE_INDEXED_INDIRECT, 0x0C, 3, 4);
     INST("JSR", AM_ABSOLUTE, 0x12, 3, 4);
+    INST("JSR", AM_ABSOLUTE_INDEXED_INDIRECT, 0x11, 3, 4);
     INST("BRL", AM_PC_RELATIVE_LONG, 0x08, 3, 4);
 
     /* Branches */
@@ -780,9 +793,14 @@ int assemble_line(char *line) {
 
     if (strcmp(token, ".WORD") == 0) {
         p = skip_whitespace(p);
-        p = parse_token(p, token);
-        if (parse_number(token, &val)) {
-            emit_word(val & 0xFFFF);
+        while (*p) {
+            p = parse_token(p, token);
+            if (!*token) break;
+            if (parse_number(token, &val)) {
+                emit_word(val & 0xFFFF);
+            }
+            p = skip_whitespace(p);
+            if (*p == ',') p++;
         }
         return 0;
     }

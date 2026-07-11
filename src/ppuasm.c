@@ -13,6 +13,7 @@
 #define MAX_INSTRUCTIONS 4096
 #define MAX_LABEL_LENGTH 64
 #define MAX_ALIASES 128
+#define MAX_CONSTANTS 128
 #define MAX_EXPANDED_LINES 1024
 
 /* Instruction structure */
@@ -37,6 +38,12 @@ typedef struct {
     char to[MAX_LABEL_LENGTH];
 } Alias;
 
+/* Constant structure (CONST NAME VALUE - resolved within expressions) */
+typedef struct {
+    char name[MAX_LABEL_LENGTH];
+    int value;
+} Constant;
+
 /* Global tables - using pointers for malloc */
 static Instruction* instructions = NULL;
 static int instruction_count = 0;
@@ -46,6 +53,9 @@ static int label_count = 0;
 
 static Alias* aliases = NULL;
 static int alias_count = 0;
+
+static Constant* constants = NULL;
+static int constant_count = 0;
 
 static char** expanded_lines = NULL;
 static int expanded_line_count = 0;
@@ -117,6 +127,7 @@ static const struct {
 /* Forward declarations */
 static int parse_immediate(const char *str, int line_num);
 static int parse_register(const char *str, int line_num);
+static int eval_expr(const char *str, int line_num);
 
 /* Error reporting */
 static void error(int line_num, const char *message) {
@@ -223,15 +234,9 @@ static int parse_byte_selector(const char *str, int line_num) {
     return 0;
 }
 
-/* Parse immediate value */
+/* Parse immediate value (supports CONST names and +,-,*,/ expressions) */
 static int parse_immediate(const char *str, int line_num) {
-    int value;
-
-    if (sscanf(str, "%i", &value) != 1) {
-        error(line_num, "Invalid immediate value");
-    }
-
-    return value;
+    return eval_expr(str, line_num);
 }
 
 /* Find label address */
@@ -247,13 +252,162 @@ static int find_label(const char *name, int line_num) {
     return 0;
 }
 
-/* Check if string is a label reference */
-static int is_label(const char *str) {
-    /* Labels start with letter, underscore, or @ (for auto-generated labels) */
-    if (isalpha(str[0]) || str[0] == '_' || str[0] == '@') {
-        return 1;
+/* Look up a CONST by exact name; returns 1 and sets *out if found */
+static int find_constant(const char *name, int *out) {
+    int i;
+    for (i = 0; i < constant_count; i++) {
+        if (strcmp(constants[i].name, name) == 0) {
+            *out = constants[i].value;
+            return 1;
+        }
     }
     return 0;
+}
+
+/* Extract the leading identifier of str (up to the first operator/paren) */
+static void leading_identifier(const char *str, char *out, size_t out_size) {
+    size_t i = 0;
+    while (str[i] && (isalnum((unsigned char)str[i]) || str[i] == '_' || str[i] == '@')
+           && i < out_size - 1) {
+        out[i] = str[i];
+        i++;
+    }
+    out[i] = 0;
+}
+
+/* Check if string is a label reference (a CONST of the same name is not a
+ * label - constants are always plain values, never code addresses). */
+static int is_label(const char *str) {
+    char ident[MAX_LABEL_LENGTH];
+    int dummy;
+
+    if (!(isalpha((unsigned char)str[0]) || str[0] == '_' || str[0] == '@')) {
+        return 0;
+    }
+    leading_identifier(str, ident, sizeof(ident));
+    if (find_constant(ident, &dummy)) {
+        return 0;
+    }
+    return 1;
+}
+
+/* ---- Expression evaluator: +,-,*,/ with CONST names, labels, and 0x/$/decimal
+ * numeric literals. Constants must be defined earlier in the file (CONST
+ * lines are resolved in file order during shorthand expansion); labels are
+ * resolved using whatever labels[] state exists at call time (empty during
+ * CONST evaluation itself, fully populated by the time instructions are
+ * assembled). */
+static const char *expr_str;
+static int expr_pos;
+static int expr_line;
+
+static void expr_skip_ws(void) {
+    while (expr_str[expr_pos] == ' ' || expr_str[expr_pos] == '\t') expr_pos++;
+}
+
+static int expr_add(void);
+
+static int expr_atom(void) {
+    char tok[MAX_LABEL_LENGTH];
+    int i = 0, value, negate = 0;
+
+    expr_skip_ws();
+    if (expr_str[expr_pos] == '-') {
+        negate = 1;
+        expr_pos++;
+        expr_skip_ws();
+    }
+
+    if (expr_str[expr_pos] == '(') {
+        expr_pos++;
+        value = expr_add();
+        expr_skip_ws();
+        if (expr_str[expr_pos] == ')') {
+            expr_pos++;
+        } else {
+            error(expr_line, "Expected ')' in expression");
+        }
+        return negate ? -value : value;
+    }
+
+    if (expr_str[expr_pos] == '$') {
+        tok[i++] = '0';
+        tok[i++] = 'x';
+        expr_pos++;
+    }
+    while ((isalnum((unsigned char)expr_str[expr_pos]) || expr_str[expr_pos] == '_')
+           && i < (int)sizeof(tok) - 1) {
+        tok[i++] = expr_str[expr_pos];
+        expr_pos++;
+    }
+    tok[i] = 0;
+
+    if (tok[0] == 0) {
+        error(expr_line, "Expected value in expression");
+        return 0;
+    }
+
+    if (isdigit((unsigned char)tok[0]) || (tok[0] == '0' && tok[1] == 'x')) {
+        if (sscanf(tok, "%i", &value) != 1) {
+            error(expr_line, "Invalid numeric literal in expression");
+        }
+    } else if (find_constant(tok, &value)) {
+        /* resolved via constants table */
+    } else {
+        value = find_label(tok, expr_line);  /* exits with error if undefined */
+    }
+
+    return negate ? -value : value;
+}
+
+static int expr_mul(void) {
+    int value = expr_atom();
+    for (;;) {
+        expr_skip_ws();
+        if (expr_str[expr_pos] == '*') {
+            expr_pos++;
+            value *= expr_atom();
+        } else if (expr_str[expr_pos] == '/') {
+            int rhs;
+            expr_pos++;
+            rhs = expr_atom();
+            if (rhs == 0) error(expr_line, "Division by zero in expression");
+            value /= rhs;
+        } else {
+            break;
+        }
+    }
+    return value;
+}
+
+static int expr_add(void) {
+    int value = expr_mul();
+    for (;;) {
+        expr_skip_ws();
+        if (expr_str[expr_pos] == '+') {
+            expr_pos++;
+            value += expr_mul();
+        } else if (expr_str[expr_pos] == '-') {
+            expr_pos++;
+            value -= expr_mul();
+        } else {
+            break;
+        }
+    }
+    return value;
+}
+
+static int eval_expr(const char *str, int line_num) {
+    int value;
+    expr_str = str;
+    expr_pos = 0;
+    expr_line = line_num;
+    value = expr_add();
+    expr_skip_ws();
+    if (expr_str[expr_pos] != 0) {
+        error(line_num, "Unexpected trailing characters in expression");
+    }
+    return value;
 }
 
 /* Get operand value (label or immediate) */
@@ -543,6 +697,23 @@ static void expand_shorthands(FILE *fp) {
             }
         }
 
+        /* CONST NAME VALUE - define a named constant usable in expressions
+         * (SETBYTE 2, NAME, SETBYTE 2, NAME/2, etc). Must be defined before
+         * use; VALUE may itself reference earlier constants. */
+        if (strcmp(mnemonic, "CONST") == 0) {
+            if (!*op1 || !*op2) {
+                error(line_num, "CONST requires a name and a value");
+            }
+            if (constant_count >= MAX_CONSTANTS) {
+                error(line_num, "Too many CONST definitions");
+            }
+            strcpy(constants[constant_count].name, op1);
+            constants[constant_count].value = eval_expr(op2, line_num);
+            constant_count++;
+            strcpy(expanded_lines[expanded_line_count++], "");
+            continue;
+        }
+
         /* Expand HLT shorthand */
         if (strcmp(mnemonic, "HLT") == 0) {
             char label[64];
@@ -727,10 +898,11 @@ int main(int argc, char *argv[]) {
     instructions = (Instruction*)malloc(MAX_INSTRUCTIONS * sizeof(Instruction));
     labels = (Label*)malloc(MAX_LABELS * sizeof(Label));
     aliases = (Alias*)malloc(MAX_ALIASES * sizeof(Alias));
+    constants = (Constant*)malloc(MAX_CONSTANTS * sizeof(Constant));
     output_buffer = (unsigned char*)malloc(65536);
     expanded_lines = (char**)malloc(MAX_EXPANDED_LINES * sizeof(char*));
 
-    if (!instructions || !labels || !aliases || !output_buffer || !expanded_lines) {
+    if (!instructions || !labels || !aliases || !constants || !output_buffer || !expanded_lines) {
         fprintf(stderr, "Error: Out of memory\n");
         return 1;
     }

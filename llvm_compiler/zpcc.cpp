@@ -510,12 +510,30 @@ struct FnLower {
 
   void lowerCall(CallInst *CI) {
     Function *callee = CI->getCalledFunction();
-    if (!callee) {
-      backendError("indirect calls are not supported in " + fnName);
-      return;
-    }
     unsigned n = CI->arg_size();
     unsigned nStack = n > 3 ? n - 3 : 0;
+
+    // Indirect calls: the only hardware indirect-call opcode is
+    // JSR (addr,X), which reads its 2-byte target from addr+X. X is also
+    // this ABI's arg1 register, so an indirect call can only safely carry
+    // arg0 (A) - a nonzero arg1 in X at the JSR would corrupt the target
+    // address lookup (it isn't restored afterward; the callee ends up with
+    // X=0 as arg1 too, and the jump itself goes to the wrong place).
+    if (!callee && n > 1) {
+      backendError("indirect call in " + fnName + " takes " +
+                   std::to_string(n) +
+                   " arguments; only 0 or 1 is supported through a function "
+                   "pointer (X is both the arg1 register and the "
+                   "JSR (addr,X) index register)");
+      return;
+    }
+
+    if (!callee) {
+      // Materialize the callee address into the shared icall_target slot
+      // before touching A for arg0 below.
+      loadToA(CI->getCalledOperand());
+      emit("    STA icall_target\n");
+    }
 
     // Push stack args (indices >= 3) right-to-left.  spDelta tracks the
     // shifting stack pointer so off,S operands stay correct.
@@ -530,7 +548,12 @@ struct FnLower {
     if (n >= 2) { loadToA(CI->getArgOperand(1)); emit("    TAX\n"); }
     if (n >= 1) { loadToA(CI->getArgOperand(0)); }
 
-    emit("    JSR %s\n", callee->getName().str().c_str());
+    if (callee) {
+      emit("    JSR %s\n", callee->getName().str().c_str());
+    } else {
+      emit("    LDX #$0000\n");
+      emit("    JSR (icall_target,X)\n");
+    }
 
     if (nStack) {
       emit("    TSC\n");
@@ -696,6 +719,7 @@ static void emitModule(Module &M) {
   emit(".data\n");
   emit("t0: .word 0\n");
   emit("t1: .word 0\n");
+  emit("icall_target: .word 0\n");
   for (GlobalVariable &GV : M.globals())
     emitGlobal(GV, DL);
   emit("\n.code\n");
