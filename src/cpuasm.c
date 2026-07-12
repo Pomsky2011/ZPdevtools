@@ -70,6 +70,7 @@ typedef struct {
 typedef struct {
     char name[64];
     uint16_t address;
+    uint8_t bank;    /* output bank in effect when the label was defined (see .BANK) */
     int defined;
 } Label;
 
@@ -93,6 +94,14 @@ static uint16_t pc = 0;
 static uint16_t org = 0;
 static int pass = 1;
 static int errors = 0;
+/* Output bank for label resolution (see .BANK). cpuasm's pc/org are 16-bit
+ * offsets only - it has no idea what bank the assembled bytes will end up
+ * mapped at (that's decided later, e.g. System maps a Boot ROM to bank $E0).
+ * A label's long-address form (BEQ/BCS/BMI/JMP long/LDA long,X etc.) used to
+ * always encode bank $00 for that reason, silently mis-jumping whenever the
+ * code actually runs in a different bank. .BANK lets a program tell cpuasm
+ * which bank it's being assembled for, so those forms encode the real bank. */
+static uint8_t current_bank = 0;
 
 /* Function prototypes */
 void init_instructions(void);
@@ -194,6 +203,7 @@ void add_label(const char *name, uint16_t addr) {
             return;
         }
         labels[idx].address = addr;
+        labels[idx].bank = current_bank;
         labels[idx].defined = 1;
     } else {
         if (num_labels >= MAX_LABELS) {
@@ -202,6 +212,7 @@ void add_label(const char *name, uint16_t addr) {
         }
         strcpy(labels[num_labels].name, name);
         labels[num_labels].address = addr;
+        labels[num_labels].bank = current_bank;
         labels[num_labels].defined = 1;
         num_labels++;
     }
@@ -226,7 +237,7 @@ void resolve_fixups(void) {
     for (i = 0; i < num_fixups; i++) {
         Fixup *f;
         int idx;
-        uint16_t addr;
+        uint32_t addr;
         char msg[128];
 
         f = &fixups[i];
@@ -238,11 +249,14 @@ void resolve_fixups(void) {
             continue;
         }
 
-        addr = labels[idx].address;
+        /* Fold in the label's bank for the 24-bit (long) form (f->size==3
+         * below); PC-relative and the 8/16-bit forms only ever use the low
+         * 8/16 bits so this is a no-op for them. */
+        addr = ((uint32_t)labels[idx].bank << 16) | labels[idx].address;
 
         if (f->mode == AM_PC_RELATIVE_LONG) {
-            /* Calculate relative offset */
-            int16_t offset = (int16_t)(addr - (f->address + 3));
+            /* Calculate relative offset (bank-agnostic - BRL is same-bank) */
+            int16_t offset = (int16_t)(labels[idx].address - (f->address + 3));
             code[f->address - org] = offset & 0xFF;
             code[f->address - org + 1] = (offset >> 8) & 0xFF;
         } else if (f->size == 1) {
@@ -604,8 +618,12 @@ void init_instructions(void) {
 
     /* Branches */
     INST("BMI", AM_ABSOLUTE_LONG, 0x06, 4, 2);
-    INST("BRA", AM_ABSOLUTE_LONG, 0x07, 2, 3);
-    INST("BVS", AM_ABSOLUTE_LONG, 0x09, 2, 2);
+    /* BRA/BVS use opBRA()/opBVS() in the interpreter, both fetch16() (a
+     * 16-bit same-bank absolute address) - so the encoded instruction is
+     * 3 bytes (opcode + 2-byte operand), not 2. The old "2" here truncated
+     * a label's resolved address to its low byte (see cpuasm docs). */
+    INST("BRA", AM_ABSOLUTE_LONG, 0x07, 3, 3);
+    INST("BVS", AM_ABSOLUTE_LONG, 0x09, 3, 2);
     INST("BCS", AM_ABSOLUTE_LONG, 0x0A, 4, 2);
     INST("BCC", AM_ABSOLUTE_LONG, 0x0A, 4, 2);
     INST("BGE", AM_ABSOLUTE_LONG, 0x0A, 4, 2);  /* Alias for BCS */
@@ -771,8 +789,22 @@ int assemble_line(char *line) {
         p = skip_whitespace(p);
         p = parse_token(p, token);
         if (parse_number(token, &addr)) {
-            pc = addr;
-            org = addr;
+            pc = addr & 0xFFFF;
+            org = addr & 0xFFFF;
+        }
+        return 0;
+    }
+
+    /* .BANK $xx - declare which bank this file's code will be mapped at, so
+     * label operands resolved to a long (24-bit) address - BEQ/BCS/BMI/
+     * JMP long/LDA long,X and friends - encode that bank instead of the
+     * default $00. Takes effect for labels defined after it; does not
+     * affect pc/org (still 16-bit offsets). */
+    if (strcmp(token, ".BANK") == 0) {
+        p = skip_whitespace(p);
+        p = parse_token(p, token);
+        if (parse_number(token, &addr)) {
+            current_bank = (uint8_t)(addr & 0xFF);
         }
         return 0;
     }
@@ -884,7 +916,10 @@ int assemble_line(char *line) {
                 /* Look up label */
                 int idx = find_label(clean_val);
                 if (idx >= 0 && labels[idx].defined) {
-                    value = labels[idx].address;
+                    /* Fold in the label's bank for the 24-bit (long) operand
+                     * forms; bytes==2/3 emission below only ever keeps the
+                     * low 8/16 bits, so this is a no-op for those. */
+                    value = ((uint32_t)labels[idx].bank << 16) | labels[idx].address;
                 } else {
                     /* Add fixup */
                     add_fixup(pc, clean_val, mode, inst->bytes - 1);
