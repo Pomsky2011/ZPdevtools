@@ -171,11 +171,20 @@ int parse_number(const char *str, uint32_t *value) {
     if (!str || !*str) return 0;
 
     if (str[0] == '$') {
-        /* Hexadecimal */
-        return sscanf(str + 1, "%x", value) == 1;
+        /* Hexadecimal. %n reports how many characters sscanf consumed so
+         * trailing garbage - e.g. accidental operand arithmetic like
+         * "$1B00+2,X", which this assembler doesn't support - is a parse
+         * failure instead of silently resolving to "$1B00" with the "+2"
+         * dropped (sscanf's return value alone only reports whether a
+         * conversion happened, not whether the whole string matched). */
+        int consumed = 0;
+        int ok = sscanf(str + 1, "%x%n", value, &consumed);
+        return ok == 1 && str[1 + consumed] == '\0';
     } else if (str[0] == '0' && str[1] == 'x') {
         /* 0x hexadecimal */
-        return sscanf(str + 2, "%x", value) == 1;
+        int consumed = 0;
+        int ok = sscanf(str + 2, "%x%n", value, &consumed);
+        return ok == 1 && str[2 + consumed] == '\0';
     } else if (str[0] == '0' && str[1] == 'b') {
         /* Binary */
         const char *p;
@@ -702,6 +711,10 @@ void init_instructions(void) {
     INST("ORA", AM_ABSOLUTE, 0xD4, 3, 3);
     INST("XOR", AM_IMMEDIATE, 0xF9, 3, 2);
     INST("EOR", AM_IMMEDIATE, 0xF9, 3, 2);  /* Alias */
+    /* XOR addr: real opcode (cpu_inst_0x95, commented "EOR addr" there but
+     * calls the same opXOR()), documented in instruction-set.txt, but never
+     * registered here - only the immediate form was. */
+    INST("XOR", AM_ABSOLUTE, 0x95, 3, 3);
 
     /* Shifts */
     INST("ASL", AM_ACCUMULATOR, 0x98, 1, 2);
