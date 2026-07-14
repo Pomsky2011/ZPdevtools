@@ -82,9 +82,22 @@ typedef struct {
     int size;  /* 1, 2, or 3 bytes */
 } Fixup;
 
+/* .EQU entry: a named compile-time constant (not an address - no bank, no
+ * fixups). Resolved immediately, so a .EQU must appear before its first use
+ * in the file (true separately in each pass; that's fine for straight-line
+ * top-down sources). Documented since the assembler's original header
+ * comment but never actually implemented until now. */
+typedef struct {
+    char name[64];
+    uint32_t value;
+    int defined;
+} Equate;
+
 /* Global data */
 static Instruction instructions[512];
 static int num_instructions = 0;
+static Equate equates[MAX_LABELS];
+static int num_equates = 0;
 static Label labels[MAX_LABELS];
 static int num_labels = 0;
 static Fixup fixups[MAX_FIXUPS];
@@ -110,6 +123,9 @@ void warning(const char *msg);
 char *skip_whitespace(char *p);
 char *parse_token(char *p, char *token);
 int parse_number(const char *str, uint32_t *value);
+int find_equate(const char *name);
+void add_equate(const char *name, uint32_t value);
+void substitute_equates(char *operand);
 int find_label(const char *name);
 void add_label(const char *name, uint16_t addr);
 void add_fixup(uint16_t addr, const char *label, AddressingMode mode, int size);
@@ -181,6 +197,79 @@ int parse_number(const char *str, uint32_t *value) {
         *value = strtoul(str, &endptr, 10);
         return *endptr == '\0';
     }
+}
+
+/* Find a .EQU constant by name; returns its index or -1 */
+int find_equate(const char *name) {
+    int i;
+    for (i = 0; i < num_equates; i++) {
+        if (strcmp(equates[i].name, name) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+/* Define (or redefine) a .EQU constant */
+void add_equate(const char *name, uint32_t value) {
+    int idx = find_equate(name);
+    if (idx >= 0) {
+        equates[idx].value = value;
+        equates[idx].defined = 1;
+        return;
+    }
+    if (num_equates >= MAX_LABELS) {
+        error("Too many .EQU constants");
+        return;
+    }
+    strcpy(equates[num_equates].name, name);
+    equates[num_equates].value = value;
+    equates[num_equates].defined = 1;
+    num_equates++;
+}
+
+/* Substitute any .EQU name appearing in operand with its literal hex value
+ * (e.g. "ADD32_A_LO,X" -> "$800000,X"). Addressing-mode detection and the
+ * later operand-value resolution both decide 16-bit-vs-24-bit purely from
+ * the literal numeric TEXT (digit count / value range) - an opaque equate
+ * name gives them nothing to go on, so a bare 24-bit-valued equate used to
+ * silently get assembled as a 16-bit absolute operand (discarding its high
+ * byte). Runs once, early, over the whole operand text, before either of
+ * those. Real labels and bare register letters (X/Y/S/A in ",X"/",Y"/",S"/A)
+ * fall through unchanged since they aren't found in the equate table. */
+void substitute_equates(char *operand) {
+    char result[MAX_LINE];
+    int ri = 0;
+    int i = 0;
+    int n = (int)strlen(operand);
+    while (i < n) {
+        if (isalpha((unsigned char)operand[i]) || operand[i] == '_') {
+            char ident[64];
+            int ilen = 0;
+            int idx;
+            while (i < n && (isalnum((unsigned char)operand[i]) || operand[i] == '_')) {
+                if (ilen < 63) ident[ilen++] = operand[i];
+                i++;
+            }
+            ident[ilen] = '\0';
+            idx = find_equate(ident);
+            if (idx >= 0) {
+                char hex[16];
+                int hl, k;
+                sprintf(hex, "$%lX", (unsigned long)equates[idx].value);
+                hl = (int)strlen(hex);
+                for (k = 0; k < hl && ri < MAX_LINE - 1; k++) result[ri++] = hex[k];
+            } else {
+                int k;
+                for (k = 0; k < ilen && ri < MAX_LINE - 1; k++) result[ri++] = ident[k];
+            }
+        } else {
+            if (ri < MAX_LINE - 1) result[ri++] = operand[i];
+            i++;
+        }
+    }
+    result[ri] = '\0';
+    strcpy(operand, result);
 }
 
 /* Find label by name */
@@ -504,13 +593,27 @@ void init_instructions(void) {
 
     /* Control */
     INST("NOP", AM_IMPLIED, 0x00, 1, 2);
+    /* HLT/STP/KIL (0xFF, all the same real opcode - cpu_instructions.cpp
+     * cpu_inst_0xFF) documented in instruction-set.txt but never
+     * registered here. */
+    INST("HLT", AM_IMPLIED, 0xFF, 1, 0);
+    INST("STP", AM_IMPLIED, 0xFF, 1, 0);
+    INST("KIL", AM_IMPLIED, 0xFF, 1, 0);
     INST("BRK", AM_IMMEDIATE, 0x62, 2, 7);
     INST("RTI", AM_IMPLIED, 0x17, 1, 6);
     INST("RTS", AM_IMPLIED, 0x19, 1, 6);
     INST("RTL", AM_IMPLIED, 0x18, 1, 6);
 
+    /* #const immediate forms (LDA/LDX/LDY/ADC/SBC/AND/ORA/XOR/EOR/CMP/MUL)
+     * are always a fixed 3 bytes (opcode + 16-bit operand) regardless of
+     * the M/X flags - see CPU::addrImmediate()'s comment in src/cpu.cpp for
+     * why (a real fetch/interpret width mismatch between LDX/LDY's M-keyed
+     * fetch and X-keyed interpretation). In 8-bit mode the CPU just reads
+     * the low byte and ignores the high one, so emitting both bytes here
+     * unconditionally always matches what gets fetched. */
+
     /* Loads - LDA */
-    INST("LDA", AM_IMMEDIATE, 0x37, 2, 2);
+    INST("LDA", AM_IMMEDIATE, 0x37, 3, 2);
     INST("LDA", AM_ABSOLUTE, 0x38, 3, 3);
     INST("LDA", AM_ABSOLUTE_X, 0x39, 3, 3);
     INST("LDA", AM_ABSOLUTE_Y, 0x3A, 3, 3);
@@ -524,14 +627,14 @@ void init_instructions(void) {
     INST("LDA", AM_DP_INDIRECT_LONG_Y, 0x36, 2, 6);
 
     /* Loads - LDX */
-    INST("LDX", AM_IMMEDIATE, 0x40, 2, 2);
+    INST("LDX", AM_IMMEDIATE, 0x40, 3, 2);
     INST("LDX", AM_ABSOLUTE, 0x41, 3, 3);
     INST("LDX", AM_ABSOLUTE_Y, 0x42, 3, 3);
     INST("LDX", AM_DIRECT_PAGE, 0x43, 2, 3);
     INST("LDX", AM_DP_Y, 0x44, 2, 4);
 
     /* Loads - LDY */
-    INST("LDY", AM_IMMEDIATE, 0x45, 2, 2);
+    INST("LDY", AM_IMMEDIATE, 0x45, 3, 2);
     INST("LDY", AM_ABSOLUTE, 0x46, 3, 3);
     INST("LDY", AM_ABSOLUTE_X, 0x47, 3, 3);
     INST("LDY", AM_DIRECT_PAGE, 0x48, 2, 3);
@@ -567,7 +670,7 @@ void init_instructions(void) {
     INST("STZ", AM_DP_X, 0x61, 2, 4);
 
     /* Arithmetic - ADC */
-    INST("ADC", AM_IMMEDIATE, 0xB6, 2, 2);
+    INST("ADC", AM_IMMEDIATE, 0xB6, 3, 2);
     INST("ADC", AM_ABSOLUTE, 0xB7, 3, 3);
     INST("ADC", AM_ABSOLUTE_X, 0xB8, 3, 3);
     INST("ADC", AM_ABSOLUTE_Y, 0xB9, 3, 3);
@@ -575,7 +678,7 @@ void init_instructions(void) {
     INST("ADC", AM_DP_X, 0xBA, 2, 4);
 
     /* Arithmetic - SBC */
-    INST("SBC", AM_IMMEDIATE, 0xE1, 2, 2);
+    INST("SBC", AM_IMMEDIATE, 0xE1, 3, 2);
     INST("SBC", AM_ABSOLUTE, 0xE2, 3, 3);
     INST("SBC", AM_DIRECT_PAGE, 0xE5, 2, 3);
 
@@ -593,20 +696,36 @@ void init_instructions(void) {
     INST("DEY", AM_IMPLIED, 0x78, 1, 2);
 
     /* Logic */
-    INST("AND", AM_IMMEDIATE, 0xC4, 2, 2);
+    INST("AND", AM_IMMEDIATE, 0xC4, 3, 2);
     INST("AND", AM_ABSOLUTE, 0xC5, 3, 3);
-    INST("ORA", AM_IMMEDIATE, 0xD3, 2, 2);
+    INST("ORA", AM_IMMEDIATE, 0xD3, 3, 2);
     INST("ORA", AM_ABSOLUTE, 0xD4, 3, 3);
-    INST("XOR", AM_IMMEDIATE, 0xF9, 2, 2);
-    INST("EOR", AM_IMMEDIATE, 0xF9, 2, 2);  /* Alias */
+    INST("XOR", AM_IMMEDIATE, 0xF9, 3, 2);
+    INST("EOR", AM_IMMEDIATE, 0xF9, 3, 2);  /* Alias */
 
     /* Shifts */
     INST("ASL", AM_ACCUMULATOR, 0x98, 1, 2);
     INST("ASL", AM_ABSOLUTE, 0x99, 3, 3);
+    /* ASL/LSR addr,X,dp,dp,X and ROL/ROR addr,X,dp: real opcodes
+     * (cpu_instructions.cpp 0x8F-0x91, 0x81-0x83, 0x85-0x87, 0x9A-0x9C),
+     * documented in instruction-set.txt, but never registered here - only
+     * the accumulator/plain-absolute forms were. */
+    INST("ASL", AM_ABSOLUTE_X, 0x9A, 3, 3);
+    INST("ASL", AM_DIRECT_PAGE, 0x9B, 2, 5);
+    INST("ASL", AM_DP_X, 0x9C, 2, 6);
     INST("LSR", AM_ACCUMULATOR, 0x8D, 1, 2);
     INST("LSR", AM_ABSOLUTE, 0x8E, 3, 3);
+    INST("LSR", AM_ABSOLUTE_X, 0x8F, 3, 3);
+    INST("LSR", AM_DIRECT_PAGE, 0x90, 2, 5);
+    INST("LSR", AM_DP_X, 0x91, 2, 6);
     INST("ROL", AM_ACCUMULATOR, 0x80, 1, 2);
+    INST("ROL", AM_ABSOLUTE, 0x81, 3, 3);
+    INST("ROL", AM_ABSOLUTE_X, 0x82, 3, 3);
+    INST("ROL", AM_DIRECT_PAGE, 0x83, 2, 5);
     INST("ROR", AM_ACCUMULATOR, 0x84, 1, 2);
+    INST("ROR", AM_ABSOLUTE, 0x85, 3, 3);
+    INST("ROR", AM_ABSOLUTE_X, 0x86, 3, 3);
+    INST("ROR", AM_DIRECT_PAGE, 0x87, 2, 5);
 
     /* Jumps */
     INST("JMP", AM_ABSOLUTE, 0x0F, 3, 4);
@@ -665,14 +784,14 @@ void init_instructions(void) {
     INST("TYX", AM_IMPLIED, 0x26, 1, 2);
 
     /* Compare */
-    INST("CMP", AM_IMMEDIATE, 0xA6, 2, 2);
+    INST("CMP", AM_IMMEDIATE, 0xA6, 3, 2);
     INST("CMP", AM_ABSOLUTE, 0xA7, 3, 3);
     INST("CPX", AM_ABSOLUTE, 0x79, 3, 3);
     INST("CPY", AM_ABSOLUTE, 0x7A, 3, 3);
 
     /* Hardware extensions (8086-inspired) - MUL: A * operand -> A:X            */
     /* (opcodes per docs/cpu/DEF88186.csv)                                      */
-    INST("MUL", AM_IMMEDIATE,          0xEF, 2, 8);
+    INST("MUL", AM_IMMEDIATE,          0xEF, 3, 8);
     INST("MUL", AM_ABSOLUTE,           0xF0, 3, 9);
     INST("MUL", AM_ABSOLUTE_X,         0xF1, 3, 9);
     INST("MUL", AM_ABSOLUTE_Y,         0xF2, 3, 9);
@@ -850,6 +969,26 @@ int assemble_line(char *line) {
         return 0;
     }
 
+    /* .EQU NAME value - named compile-time constant. Documented in this
+     * file's header comment since the beginning but never actually wired
+     * up (parse_number would just fail on the name and every use of it
+     * silently fell through to "unknown instruction"). Substitutes
+     * anywhere a numeric operand is expected, resolved immediately - a
+     * .EQU must appear before its first use. */
+    if (strcmp(token, ".EQU") == 0) {
+        char name[64];
+        p = skip_whitespace(p);
+        p = parse_token(p, name);
+        p = skip_whitespace(p);
+        p = parse_token(p, token);
+        if (*name && parse_number(token, &val)) {
+            add_equate(name, val);
+        } else {
+            error(".EQU expects: .EQU NAME value");
+        }
+        return 0;
+    }
+
     if (strcmp(token, ".BYTE") == 0) {
         p = skip_whitespace(p);
         while (*p) {
@@ -887,6 +1026,7 @@ int assemble_line(char *line) {
         end = operand + strlen(operand) - 1;
         while (end > operand && isspace(*end)) *end-- = '\0';
     }
+    substitute_equates(operand);
 
 
     /* DIV has a register form (DIV X,Y -> 0x92) plus long,X / long,Y forms that
@@ -950,7 +1090,13 @@ int assemble_line(char *line) {
         }
         clean_val[j] = '\0';
 
-        if (!parse_number(clean_val, &value)) {
+        if (parse_number(clean_val, &value)) {
+            /* Plain numeric literal - value already set above. */
+        } else if (find_equate(clean_val) >= 0) {
+            /* .EQU constant - a plain numeric literal, not an address, so
+             * no bank-folding or fixup involved. */
+            value = equates[find_equate(clean_val)].value;
+        } else {
             /* It's a label */
             is_label = 1;
             if (pass == 2) {
