@@ -10,11 +10,11 @@
 
 #define MAX_LINE_LENGTH 256
 #define MAX_LABELS 512
-#define MAX_INSTRUCTIONS 4096
+#define MAX_INSTRUCTIONS 65536
 #define MAX_LABEL_LENGTH 64
 #define MAX_ALIASES 128
 #define MAX_CONSTANTS 128
-#define MAX_EXPANDED_LINES 1024
+#define MAX_EXPANDED_LINES 65536
 
 /* Instruction structure */
 typedef struct {
