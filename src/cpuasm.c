@@ -715,6 +715,7 @@ void init_instructions(void) {
      * calls the same opXOR()), documented in instruction-set.txt, but never
      * registered here - only the immediate form was. */
     INST("XOR", AM_ABSOLUTE, 0x95, 3, 3);
+    INST("EOR", AM_ABSOLUTE, 0x95, 3, 3);  /* Alias */
 
     /* Shifts */
     INST("ASL", AM_ACCUMULATOR, 0x98, 1, 2);
