@@ -625,9 +625,11 @@ void init_instructions(void) {
     INST("BRA", AM_ABSOLUTE_LONG, 0x07, 3, 3);
     INST("BVS", AM_ABSOLUTE_LONG, 0x09, 3, 2);
     INST("BCS", AM_ABSOLUTE_LONG, 0x0A, 4, 2);
-    INST("BCC", AM_ABSOLUTE_LONG, 0x0A, 4, 2);
     INST("BGE", AM_ABSOLUTE_LONG, 0x0A, 4, 2);  /* Alias for BCS */
     INST("BEQ", AM_ABSOLUTE_LONG, 0x0B, 4, 2);
+    /* JML is documented (instruction-set.txt) as an alias for JMP long, but
+     * was never actually registered here. */
+    INST("JML", AM_ABSOLUTE_LONG, 0x10, 4, 4);
 
     /* Stack */
     INST("PHA", AM_IMPLIED, 0x2B, 1, 3);
@@ -755,6 +757,45 @@ int assemble_line(char *line) {
 
     /* Convert to uppercase */
     for (t = token; *t; t++) *t = toupper(*t);
+
+    /* BNE/BPL/BVC/BCC have no real DEF88186 opcode - all 256 dispatch-table
+     * entries in cpu_instructions.cpp are already assigned, so unlike a
+     * documentation gap this can't be filled with a new hardware opcode.
+     * These mnemonics are used throughout ZPdevtools/docs/cpu (see the .txt
+     * files there) and existing .def sources anyway, so synthesize them from the real
+     * complementary branch plus an unconditional BRA:
+     *   <complementary branch> skip   ; taken iff the real condition is false
+     *   BRA target
+     * skip:
+     * (BCC used to be wrongly aliased straight to BCS's opcode - carry SET,
+     * not clear - which silently inverted the branch; that alias is gone.) */
+    if (strcmp(token, "BNE") == 0 || strcmp(token, "BPL") == 0 ||
+        strcmp(token, "BVC") == 0 || strcmp(token, "BCC") == 0) {
+        uint8_t cond_opcode;
+        int cond_bytes;
+        uint32_t skip_addr;
+        char synth[MAX_LINE];
+
+        if (strcmp(token, "BNE") == 0)      { cond_opcode = 0x0B; cond_bytes = 4; } /* BEQ */
+        else if (strcmp(token, "BPL") == 0) { cond_opcode = 0x06; cond_bytes = 4; } /* BMI */
+        else if (strcmp(token, "BVC") == 0) { cond_opcode = 0x09; cond_bytes = 3; } /* BVS */
+        else                                { cond_opcode = 0x0A; cond_bytes = 4; } /* BCS */
+
+        p = skip_whitespace(p);
+
+        /* skip: lands right after the BRA that follows the complementary
+         * branch - both have fixed lengths regardless of the operand. */
+        skip_addr = ((uint32_t)current_bank << 16) |
+                    (uint32_t)(pc + cond_bytes + 3);
+
+        emit_byte(cond_opcode);
+        if (cond_bytes == 4) emit_long(skip_addr & 0xFFFFFFUL);
+        else emit_word((uint16_t)(skip_addr & 0xFFFF));
+
+        sprintf(synth, "BRA %s", p);
+        assemble_line(synth);
+        return 0;
+    }
 
     /* Check for directives */
     if (strcmp(token, ".DATA") == 0) {
