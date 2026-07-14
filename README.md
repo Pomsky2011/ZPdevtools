@@ -510,3 +510,9 @@ See `examples/apu/` for more examples.
   - `programming-guide.txt` - Examples and patterns
 - `README.md` - This file
 - `TODO.md` - Development tracking
+
+## License
+
+Licensed under the Mozilla Public License v2.0 (MPL-2.0) — see [LICENSE](LICENSE).
+
+MPL-2.0 is file-level copyleft: modifications to these tools' own source files must stay under MPL and have their source made available if distributed. Programs, ROMs, or games you build *with* these tools (via `cpuasm`, `ppuasm`, `apuasm`, `def88186cc`, `rombuilder`, etc.) are not Covered Software and are not subject to this license — you may license your own output however you like.
