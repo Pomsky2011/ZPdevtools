@@ -689,6 +689,7 @@ void init_instructions(void) {
     /* Arithmetic - SBC */
     INST("SBC", AM_IMMEDIATE, 0xE1, 3, 2);
     INST("SBC", AM_ABSOLUTE, 0xE2, 3, 3);
+    INST("SBC", AM_ABSOLUTE_Y, 0xE4, 3, 3);
     INST("SBC", AM_DIRECT_PAGE, 0xE5, 2, 3);
 
     /* Arithmetic - INC/DEC */
@@ -800,6 +801,7 @@ void init_instructions(void) {
     /* Compare */
     INST("CMP", AM_IMMEDIATE, 0xA6, 3, 2);
     INST("CMP", AM_ABSOLUTE, 0xA7, 3, 3);
+    INST("CMP", AM_ABSOLUTE_Y, 0xA9, 3, 3);
     INST("CPX", AM_ABSOLUTE, 0x79, 3, 3);
     INST("CPY", AM_ABSOLUTE, 0x7A, 3, 3);
 
