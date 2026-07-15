@@ -801,6 +801,7 @@ void init_instructions(void) {
     /* Compare */
     INST("CMP", AM_IMMEDIATE, 0xA6, 3, 2);
     INST("CMP", AM_ABSOLUTE, 0xA7, 3, 3);
+    INST("CMP", AM_ABSOLUTE_X, 0xA8, 3, 3);
     INST("CMP", AM_ABSOLUTE_Y, 0xA9, 3, 3);
     INST("CPX", AM_ABSOLUTE, 0x79, 3, 3);
     INST("CPY", AM_ABSOLUTE, 0x7A, 3, 3);
