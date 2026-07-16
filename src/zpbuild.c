@@ -232,10 +232,9 @@ int main(int argc, char **argv)
         fprintf(stderr,"zpbuild: --codesize %lu exceeds payload size %lu\n",code_size,img_size);
         free(img); return 1;
     }
-    /* No 64KB codeSize limit here: sha256_hash_code_multibank
-     * (ZPbootROM/def88186/rsa.def) DMA-stages the code region the same
-     * way blake2s_hash_multibank stages the data region, so codeSize can
-     * be anything up to img_size. */
+    /* No 64KB codeSize limit here: blake2s_hash_multibank
+     * (ZPbootROM/def88186/rsa.def, blake2s.def) DMA-stages both the code
+     * and data regions, so codeSize can be anything up to img_size. */
 
     /* ZPB header (identical layout to the old zplink rom mode). */
     memset(hdr,0,sizeof(hdr));
@@ -249,16 +248,17 @@ int main(int argc, char **argv)
     memcpy(hdr+48, dev, 16);
 
     if (have_codesize) {
-        /* Code/data split: code_digest = SHA256(header||code), data_digest
-           = BLAKE2s(data), and what actually gets RSA-signed is the
+        /* Code/data split: code_digest = BLAKE2s(code), data_digest =
+           BLAKE2s(data), and what actually gets RSA-signed is the
            composite SHA256(header||code_digest||data_digest) - matching
            rsa_verify_composite in ZPbootROM/def88186/rsa.def exactly (that
-           file's comment is the authoritative spec; keep both in sync). */
+           file's comment is the authoritative spec; keep both in sync).
+           Both halves are BLAKE2s now (code used to be SHA-256||header,
+           see rsa_verify_composite's comment for why that changed) -
+           neither half includes the header; only the outer SHA-256 does,
+           same as before. */
         unsigned char code_digest[32], data_digest[32];
-        zp_sha256_init(&sh);
-        zp_sha256_update(&sh, hdr, ZPB_HDR_SIZE);
-        zp_sha256_update(&sh, img, code_size);
-        zp_sha256_final(&sh, code_digest);
+        zp_blake2s_buf(img, code_size, code_digest);
 
         zp_blake2s_buf(img + code_size, img_size - code_size, data_digest);
 
