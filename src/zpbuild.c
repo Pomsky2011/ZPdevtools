@@ -20,16 +20,30 @@
  * The payload and header are byte-for-byte identical to what zplink's old
  * built-in "rom" mode produced, so existing .zpb ROMs are unaffected.
  *
- * --codesize N opts into code/data-split signing (v2 trailer): the first N
- * bytes of the payload are treated as "code" (hashed with SHA-256, same as
- * the whole-payload path below) and the remaining bytes as "data" (hashed
- * with BLAKE2s, much cheaper per byte on the boot ROM's 16-bit CPU - see
- * ZPbootROM/def88186/blake2s.def). The two digests are folded into one
- * composite SHA-256 that's what actually gets RSA-signed
- * (SHA256(header||code_digest||data_digest)) - BLAKE2s(data) being fast is
- * only useful if the boot ROM's signature genuinely depends on it, not if
- * it's computed and compared unsigned (see rsa.def's rsa_verify_composite
- * comment for why that would give zero tamper resistance).
+ * --codesize N opts into code + chunked-data-manifest signing (v3 trailer):
+ * the first N bytes of the payload are "code" (BLAKE2s'd as one region and
+ * verified synchronously by the boot ROM before it will run any of it) and
+ * the remaining bytes are "data", split into fixed CHUNK_SIZE (16384-byte)
+ * chunks, each BLAKE2s'd independently into a manifest. What actually gets
+ * RSA-signed is SHA256(header || code_digest || manifest_digest), where
+ * manifest_digest = BLAKE2s(the concatenated per-chunk hashes) - so the
+ * boot ROM only ever has to hash the (small) manifest at boot time, not the
+ * whole data region. Verifying that any one 16 KiB chunk hasn't been
+ * tampered with is deferred to whenever cartridge code is actually about to
+ * load that chunk: it re-hashes just those 16384 bytes with BLAKE2s and
+ * compares against manifest[i], which is safe (not just corruption-
+ * detection) because the checker code lives inside the RSA-verified code
+ * region and the manifest itself is only trusted once the signed
+ * manifest_digest has verified - see docs/zpb-format.md for the full
+ * rationale and the on-disk layout, and ZPbootROM/def88186/rsa.def's
+ * rsa_verify_composite_manifest for the boot-time half of this.
+ *
+ * This exists because hashing an entire large cartridge with anything
+ * cryptographically real, synchronously at boot, is physically too slow on
+ * the boot ROM's 16-bit CPU (minutes, not seconds, for a full 8 MB cartridge
+ * - see the boot-time discussion in ZPbootROM's rsa.def) - splitting bulk
+ * data into a signed manifest of small independently-checkable chunks is
+ * what actually closes that gap, not a faster hash.
  *
  * zpbuild does not try to auto-detect the code/data boundary from ELF
  * PT_LOAD segment flags: zplink's CPU/PPU/APU/DATA roles can be placed at
@@ -54,6 +68,9 @@
 #define MAX_IMAGE    (16UL*1024UL*1024UL)
 #define EM_ZP        0x5A50      /* private machine id: 'ZP' */
 #define PT_LOAD      1
+#define CHUNK_SIZE   16384UL     /* v3 manifest chunk size - must match
+                                  * ZPbootROM/def88186/rsa.def's
+                                  * rsa_verify_composite_manifest exactly */
 
 /* ---- little-endian helpers ------------------------------------------- */
 static unsigned int get16(const unsigned char *p)
@@ -184,9 +201,11 @@ static void usage(const char *p)
     fprintf(stderr, "Reads a zplink ELF, reconstructs the ROM payload, and writes a\n");
     fprintf(stderr, "signed .zpb ROM (ZPB header + payload + RSA-2048/SHA-256 trailer).\n");
     fprintf(stderr, "Entry defaults to the ELF entry point; override with --entry.\n");
-    fprintf(stderr, "--codesize N opts into code/data-split signing: the first N payload\n");
-    fprintf(stderr, "bytes are SHA-256-signed as code, the rest BLAKE2s-hashed as data,\n");
-    fprintf(stderr, "both folded into one signed composite digest. Omit for the original\n");
+    fprintf(stderr, "--codesize N opts into code + chunked-data-manifest signing: the\n");
+    fprintf(stderr, "first N payload bytes are BLAKE2s-hashed as code (verified\n");
+    fprintf(stderr, "synchronously at boot), the rest is split into 16384-byte chunks\n");
+    fprintf(stderr, "each BLAKE2s-hashed into a signed manifest (checked lazily, per\n");
+    fprintf(stderr, "chunk, when cartridge code loads it). Omit for the original\n");
     fprintf(stderr, "single-region SHA-256-over-the-whole-payload path.\n");
 }
 
@@ -199,6 +218,8 @@ int main(int argc, char **argv)
     int have_entry = 0, have_codesize = 0, verbose = 0, i;
     unsigned char *elf, *img;
     unsigned char hdr[ZPB_HDR_SIZE], digest[32], sig[ZP_RSA_BYTES];
+    unsigned char *manifest = NULL;
+    unsigned long chunk_count = 0;
     zp_sha256 sh;
     FILE *f;
 
@@ -248,24 +269,43 @@ int main(int argc, char **argv)
     memcpy(hdr+48, dev, 16);
 
     if (have_codesize) {
-        /* Code/data split: code_digest = BLAKE2s(code), data_digest =
-           BLAKE2s(data), and what actually gets RSA-signed is the
-           composite SHA256(header||code_digest||data_digest) - matching
-           rsa_verify_composite in ZPbootROM/def88186/rsa.def exactly (that
-           file's comment is the authoritative spec; keep both in sync).
-           Both halves are BLAKE2s now (code used to be SHA-256||header,
-           see rsa_verify_composite's comment for why that changed) -
-           neither half includes the header; only the outer SHA-256 does,
-           same as before. */
-        unsigned char code_digest[32], data_digest[32];
+        /* Code + chunked-data-manifest split (v3 trailer): code_digest =
+           BLAKE2s(code); the data region is split into CHUNK_SIZE-byte
+           chunks (last one short), each BLAKE2s'd independently into
+           `manifest`; manifest_digest = BLAKE2s(manifest). What actually
+           gets RSA-signed is SHA256(header||code_digest||manifest_digest) -
+           matching rsa_verify_composite_manifest in
+           ZPbootROM/def88186/rsa.def exactly (that file's comment is the
+           authoritative spec; keep both in sync). chunk_count is NOT stored
+           in the trailer - the verifier derives it the same way this code
+           does, from code_size and the header's image size, so it can
+           never itself be tampered independently of the digest it feeds. */
+        unsigned char code_digest[32], manifest_digest[32];
+        unsigned long data_size = img_size - code_size;
+        unsigned long ci;
+
+        chunk_count = (data_size + CHUNK_SIZE - 1) / CHUNK_SIZE;
         zp_blake2s_buf(img, code_size, code_digest);
 
-        zp_blake2s_buf(img + code_size, img_size - code_size, data_digest);
+        if (chunk_count > 0) {
+            manifest = (unsigned char*)malloc(chunk_count * 32);
+            if (!manifest) {
+                fprintf(stderr,"zpbuild: out of memory (manifest)\n");
+                free(img); return 1;
+            }
+            for (ci = 0; ci < chunk_count; ci++) {
+                unsigned long off = ci * CHUNK_SIZE;
+                unsigned long len = data_size - off;
+                if (len > CHUNK_SIZE) len = CHUNK_SIZE;
+                zp_blake2s_buf(img + code_size + off, len, manifest + ci*32);
+            }
+        }
+        zp_blake2s_buf(manifest, chunk_count * 32, manifest_digest);
 
         zp_sha256_init(&sh);
         zp_sha256_update(&sh, hdr, ZPB_HDR_SIZE);
         zp_sha256_update(&sh, code_digest, 32);
-        zp_sha256_update(&sh, data_digest, 32);
+        zp_sha256_update(&sh, manifest_digest, 32);
         zp_sha256_final(&sh, digest);
     } else {
         /* Hash covers header + payload so entry/title/size are authenticated. */
@@ -284,7 +324,7 @@ int main(int argc, char **argv)
         unsigned char tr[8+32];
         memset(tr,0,sizeof(tr));
         tr[0]='Z'; tr[1]='P'; tr[2]='S'; tr[3]='G';
-        tr[4]=(unsigned char)(have_codesize?2:1);/* trailer version */
+        tr[4]=(unsigned char)(have_codesize?3:1);/* trailer version */
         tr[5]=(unsigned char)(ZP_RSA_BITS/64);   /* 2048/64 = 32 */
         put16(tr+6, ZP_RSA_BYTES);
         memcpy(tr+8, digest, 32);
@@ -294,18 +334,22 @@ int main(int argc, char **argv)
             unsigned char cs[4];
             put32(cs, code_size);
             fwrite(cs,1,4,f);
+            if (chunk_count > 0) fwrite(manifest,1,chunk_count*32,f);
         }
     }
-    total=ZPB_HDR_SIZE+img_size+8+32+ZP_RSA_BYTES+(have_codesize?4:0);
+    total=ZPB_HDR_SIZE+img_size+8+32+ZP_RSA_BYTES
+          +(have_codesize?4+chunk_count*32:0);
     fclose(f);
     free(img);
+    free(manifest);
 
     printf("ROM written: %s\n", out);
     printf("  header    : 64 bytes (ZPB v2, signed)\n");
     printf("  payload   : %lu bytes  (entry 0x%06lX)\n", img_size, entry);
     if (have_codesize) {
-        printf("  split     : %lu code bytes (SHA-256) + %lu data bytes (BLAKE2s)\n",
-               code_size, img_size-code_size);
+        printf("  split     : %lu code bytes (BLAKE2s) + %lu data bytes in"
+               " %lu chunk(s) (BLAKE2s manifest)\n",
+               code_size, img_size-code_size, chunk_count);
     }
     printf("  signature : RSA-2048 PKCS#1 v1.5 / SHA-256 (256 bytes)\n");
     printf("  total     : %lu bytes\n", total);
