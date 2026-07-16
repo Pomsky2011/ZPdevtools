@@ -15,10 +15,31 @@
  *
  * Usage:
  *   zpbuild IN.elf -o OUT.zpb [--title NAME] [--dev AUTHOR] [--entry ADDR]
- *           [--selftest] [-v]
+ *           [--codesize N] [--selftest] [-v]
  *
  * The payload and header are byte-for-byte identical to what zplink's old
  * built-in "rom" mode produced, so existing .zpb ROMs are unaffected.
+ *
+ * --codesize N opts into code/data-split signing (v2 trailer): the first N
+ * bytes of the payload are treated as "code" (hashed with SHA-256, same as
+ * the whole-payload path below) and the remaining bytes as "data" (hashed
+ * with BLAKE2s, much cheaper per byte on the boot ROM's 16-bit CPU - see
+ * ZPbootROM/def88186/blake2s.def). The two digests are folded into one
+ * composite SHA-256 that's what actually gets RSA-signed
+ * (SHA256(header||code_digest||data_digest)) - BLAKE2s(data) being fast is
+ * only useful if the boot ROM's signature genuinely depends on it, not if
+ * it's computed and compared unsigned (see rsa.def's rsa_verify_composite
+ * comment for why that would give zero tamper resistance).
+ *
+ * zpbuild does not try to auto-detect the code/data boundary from ELF
+ * PT_LOAD segment flags: zplink's CPU/PPU/APU/DATA roles can be placed at
+ * addresses that interleave in the flattened image (see zplink.c's
+ * DEFAULT_*_BASE constants), so "highest PF_X segment's end" is not
+ * reliably the same as "end of the code prefix" the way it would be for a
+ * plain single-segment ELF. The caller (build script) is expected to know
+ * its own memory layout and pass an explicit --codesize; omit the flag
+ * entirely for the original single-region SHA-256 path (v1 trailer,
+ * unchanged, fully backward compatible).
  */
 
 #include <stdio.h>
@@ -26,6 +47,7 @@
 #include <string.h>
 #include "compat.h"
 #include "zpsha256.h"
+#include "zpblake2s.h"
 #include "zprsa.h"
 
 #define ZPB_HDR_SIZE 64
@@ -157,10 +179,15 @@ static void usage(const char *p)
 {
     fprintf(stderr, "zpbuild - ZeroPoint ROM signer (HQ mastering step)\n\n");
     fprintf(stderr, "Usage: %s IN.elf -o OUT.zpb\n", p);
-    fprintf(stderr, "       [--title NAME] [--dev AUTHOR] [--entry ADDR] [--selftest] [-v]\n\n");
+    fprintf(stderr, "       [--title NAME] [--dev AUTHOR] [--entry ADDR] [--codesize N]\n");
+    fprintf(stderr, "       [--selftest] [-v]\n\n");
     fprintf(stderr, "Reads a zplink ELF, reconstructs the ROM payload, and writes a\n");
     fprintf(stderr, "signed .zpb ROM (ZPB header + payload + RSA-2048/SHA-256 trailer).\n");
     fprintf(stderr, "Entry defaults to the ELF entry point; override with --entry.\n");
+    fprintf(stderr, "--codesize N opts into code/data-split signing: the first N payload\n");
+    fprintf(stderr, "bytes are SHA-256-signed as code, the rest BLAKE2s-hashed as data,\n");
+    fprintf(stderr, "both folded into one signed composite digest. Omit for the original\n");
+    fprintf(stderr, "single-region SHA-256-over-the-whole-payload path.\n");
 }
 
 int main(int argc, char **argv)
@@ -168,7 +195,8 @@ int main(int argc, char **argv)
     const char *in = NULL, *out = NULL;
     char title[32], dev[16];
     unsigned long entry = 0, img_size = 0, elf_entry = 0, elf_len = 0, total;
-    int have_entry = 0, verbose = 0, i;
+    unsigned long code_size = 0;
+    int have_entry = 0, have_codesize = 0, verbose = 0, i;
     unsigned char *elf, *img;
     unsigned char hdr[ZPB_HDR_SIZE], digest[32], sig[ZP_RSA_BYTES];
     zp_sha256 sh;
@@ -183,6 +211,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i],"-v")) verbose=1;
         else if (!strcmp(argv[i],"-o") && i+1<argc) out=argv[++i];
         else if (!strcmp(argv[i],"--entry") && i+1<argc){ entry=parse_addr(argv[++i]); have_entry=1; }
+        else if (!strcmp(argv[i],"--codesize") && i+1<argc){ code_size=parse_addr(argv[++i]); have_codesize=1; }
         else if (!strcmp(argv[i],"--title") && i+1<argc){ memset(title,0,32); strncpy(title,argv[++i],31); }
         else if (!strcmp(argv[i],"--dev") && i+1<argc){ memset(dev,0,16); strncpy(dev,argv[++i],15); }
         else if (argv[i][0]=='-'){ fprintf(stderr,"zpbuild: unknown option '%s'\n",argv[i]); usage(argv[0]); return 1; }
@@ -199,6 +228,10 @@ int main(int argc, char **argv)
     free(elf);
     if (!img) return 1;
     if (!have_entry) entry = elf_entry;
+    if (have_codesize && code_size > img_size) {
+        fprintf(stderr,"zpbuild: --codesize %lu exceeds payload size %lu\n",code_size,img_size);
+        free(img); return 1;
+    }
 
     /* ZPB header (identical layout to the old zplink rom mode). */
     memset(hdr,0,sizeof(hdr));
@@ -211,11 +244,32 @@ int main(int argc, char **argv)
     memcpy(hdr+16, title, 32);
     memcpy(hdr+48, dev, 16);
 
-    /* Hash covers header + payload so entry/title/size are authenticated. */
-    zp_sha256_init(&sh);
-    zp_sha256_update(&sh, hdr, ZPB_HDR_SIZE);
-    zp_sha256_update(&sh, img, img_size);
-    zp_sha256_final(&sh, digest);
+    if (have_codesize) {
+        /* Code/data split: code_digest = SHA256(header||code), data_digest
+           = BLAKE2s(data), and what actually gets RSA-signed is the
+           composite SHA256(header||code_digest||data_digest) - matching
+           rsa_verify_composite in ZPbootROM/def88186/rsa.def exactly (that
+           file's comment is the authoritative spec; keep both in sync). */
+        unsigned char code_digest[32], data_digest[32];
+        zp_sha256_init(&sh);
+        zp_sha256_update(&sh, hdr, ZPB_HDR_SIZE);
+        zp_sha256_update(&sh, img, code_size);
+        zp_sha256_final(&sh, code_digest);
+
+        zp_blake2s_buf(img + code_size, img_size - code_size, data_digest);
+
+        zp_sha256_init(&sh);
+        zp_sha256_update(&sh, hdr, ZPB_HDR_SIZE);
+        zp_sha256_update(&sh, code_digest, 32);
+        zp_sha256_update(&sh, data_digest, 32);
+        zp_sha256_final(&sh, digest);
+    } else {
+        /* Hash covers header + payload so entry/title/size are authenticated. */
+        zp_sha256_init(&sh);
+        zp_sha256_update(&sh, hdr, ZPB_HDR_SIZE);
+        zp_sha256_update(&sh, img, img_size);
+        zp_sha256_final(&sh, digest);
+    }
     zp_rsa_sign(digest, sig);
 
     f=fopen(out,"wb");
@@ -226,20 +280,29 @@ int main(int argc, char **argv)
         unsigned char tr[8+32];
         memset(tr,0,sizeof(tr));
         tr[0]='Z'; tr[1]='P'; tr[2]='S'; tr[3]='G';
-        tr[4]=1;                                 /* trailer version */
+        tr[4]=(unsigned char)(have_codesize?2:1);/* trailer version */
         tr[5]=(unsigned char)(ZP_RSA_BITS/64);   /* 2048/64 = 32 */
         put16(tr+6, ZP_RSA_BYTES);
         memcpy(tr+8, digest, 32);
         fwrite(tr,1,sizeof(tr),f);
         fwrite(sig,1,ZP_RSA_BYTES,f);
+        if (have_codesize) {
+            unsigned char cs[4];
+            put32(cs, code_size);
+            fwrite(cs,1,4,f);
+        }
     }
-    total=ZPB_HDR_SIZE+img_size+8+32+ZP_RSA_BYTES;
+    total=ZPB_HDR_SIZE+img_size+8+32+ZP_RSA_BYTES+(have_codesize?4:0);
     fclose(f);
     free(img);
 
     printf("ROM written: %s\n", out);
     printf("  header    : 64 bytes (ZPB v2, signed)\n");
     printf("  payload   : %lu bytes  (entry 0x%06lX)\n", img_size, entry);
+    if (have_codesize) {
+        printf("  split     : %lu code bytes (SHA-256) + %lu data bytes (BLAKE2s)\n",
+               code_size, img_size-code_size);
+    }
     printf("  signature : RSA-2048 PKCS#1 v1.5 / SHA-256 (256 bytes)\n");
     printf("  total     : %lu bytes\n", total);
     if (verbose){

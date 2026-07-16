@@ -48,7 +48,7 @@ $(BINDIR)/zplink: $(SRC)/zplink.c | $(BINDIR)
 	$(CC) $(CFLAGS) -o $@ $(SRC)/zplink.c $(LDFLAGS)
 
 # zpbuild: HQ mastering/signing step -> pulls in the SHA-256 + RSA key material.
-$(BINDIR)/zpbuild: $(SRC)/zpbuild.c $(SRC)/zpsha256.h $(SRC)/zprsa.h $(SRC)/zpkey.h | $(BINDIR)
+$(BINDIR)/zpbuild: $(SRC)/zpbuild.c $(SRC)/zpsha256.h $(SRC)/zpblake2s.h $(SRC)/zprsa.h $(SRC)/zpkey.h | $(BINDIR)
 	$(CC) $(CFLAGS) -o $@ $(SRC)/zpbuild.c $(LDFLAGS)
 
 # Disassemblers
