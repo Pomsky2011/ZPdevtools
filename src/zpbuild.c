@@ -232,15 +232,10 @@ int main(int argc, char **argv)
         fprintf(stderr,"zpbuild: --codesize %lu exceeds payload size %lu\n",code_size,img_size);
         free(img); return 1;
     }
-    /* sha256_hash_code (ZPbootROM/def88186/rsa.def) reads the code region
-     * with fixed $000000,X addressing - single-bank only, unlike the data
-     * region's blake2s_hash_multibank. A codeSize past 64KB would silently
-     * false-reject an otherwise-valid ROM at verify time; reject it here
-     * instead, at signing time, where the failure is loud and immediate. */
-    if (have_codesize && code_size > 65536UL) {
-        fprintf(stderr,"zpbuild: --codesize %lu exceeds 64KB (code region is single-bank)\n",code_size);
-        free(img); return 1;
-    }
+    /* No 64KB codeSize limit here: sha256_hash_code_multibank
+     * (ZPbootROM/def88186/rsa.def) DMA-stages the code region the same
+     * way blake2s_hash_multibank stages the data region, so codeSize can
+     * be anything up to img_size. */
 
     /* ZPB header (identical layout to the old zplink rom mode). */
     memset(hdr,0,sizeof(hdr));
