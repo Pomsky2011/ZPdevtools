@@ -861,6 +861,7 @@ int assemble_line(char *line) {
     const char *val_str;
     char clean_val[MAX_LINE];
     int i, j;
+    int force_absolute;
 
     p = line;
 
@@ -1045,6 +1046,26 @@ int assemble_line(char *line) {
     }
     substitute_equates(operand);
 
+    /* Leading '!' forces absolute (DB-relative) addressing even when the
+     * operand value is <=0xFF, which detect_addressing_mode() would
+     * otherwise silently encode as direct page. Direct page addressing is
+     * ALWAYS bank-0-relative on this CPU (matching real 65C816 semantics -
+     * see CPU::addrDirectPage(), src/cpu.cpp), completely ignoring the
+     * current DB register. Any small-valued I/O/window register access
+     * after SDB to a non-zero bank MUST use '!' or it silently targets
+     * bank $00 instead - writes there are dropped (ROM) or land in the
+     * wrong RAM, and reads pull whatever is actually at that bank-0
+     * address instead of the intended register. This was a real,
+     * previously-undiagnosed bug: ZPbootROM's init.def used bare small
+     * addresses (e.g. `sta $0021`) after `sdb #$D8`, so its DMA
+     * configuration writes were silently discarded into cartridge ROM
+     * and its wait_dma poll read cartridge payload bytes instead of the
+     * DMA status register - see bootrom-dp-addressing-db-bug memory. */
+    force_absolute = 0;
+    if (operand[0] == '!') {
+        force_absolute = 1;
+        memmove(operand, operand + 1, strlen(operand));
+    }
 
     /* DIV has a register form (DIV X,Y -> 0x92) plus long,X / long,Y forms that
      * divide the accumulator by a memory operand.  A bare address with ,X / ,Y
@@ -1072,6 +1093,17 @@ int assemble_line(char *line) {
     } else {
         /* Detect addressing mode */
         mode = detect_addressing_mode(operand, token);
+
+        if (force_absolute) {
+            switch (mode) {
+                case AM_DIRECT_PAGE:        mode = AM_ABSOLUTE; break;
+                case AM_DP_X:                mode = AM_ABSOLUTE_X; break;
+                case AM_DP_Y:                mode = AM_ABSOLUTE_Y; break;
+                case AM_DP_INDIRECT:         mode = AM_ABSOLUTE_INDIRECT; break;
+                case AM_DP_INDIRECT_X:       mode = AM_ABSOLUTE_INDEXED_INDIRECT; break;
+                default: break;  /* already absolute/long, or not DP-family */
+            }
+        }
     }
 
     /* Find instruction */
