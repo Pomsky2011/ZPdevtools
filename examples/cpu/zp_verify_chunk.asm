@@ -165,6 +165,20 @@
                           ; operand here first, then XORs against these
                           ; fixed (non-indexed) cells instead.
 
+; ---- MANIFEST_IDX bounds-check scratch: chunk_count is recomputed the
+; same way ZPbootROM/def88186/rsa.def's rsa_verify_composite_manifest
+; does (from codeSize/romSize, never trusted from a stored value), so an
+; out-of-range index can never reach past the real manifest into whatever
+; bytes happen to follow it in bank $E1 - see zp_verify_chunk's own
+; comment below for why this matters.
+.equ IMG_SIZE_LO  $1FEC
+.equ IMG_SIZE_HI  $1FEE
+.equ CODE_SIZE_LO $1FF0
+.equ CODE_SIZE_HI $1FF2
+.equ DATA_SIZE_LO $1FF4
+.equ DATA_SIZE_HI $1FF6
+.equ CHUNK_COUNT  $1FF8
+
 ; ---- manifest location (bank $E1, fixed - see docs/zpb-format.md) ----------
 ; $016C = header(64B) + trailer prefix(8B) + digest(32B) + signature(256B)
 ; + codeSize(4B) = 364.
@@ -722,7 +736,78 @@ blake2s_compress_finalize:
 ; ============================================================================
 ; zp_verify_chunk: see this file's header comment for the full contract.
 ; ============================================================================
+;
+; BOUNDS CHECK (runs before any hashing work): MANIFEST_IDX is caller-
+; supplied, and nothing stops a caller from passing a wrong or out-of-
+; range value - a bug in the caller's own chunk-index arithmetic, not a
+; forged-signature attack (that's not the threat model this guards
+; against). Without a check, an out-of-range index would read manifest
+; bytes past the real manifest's end - whatever happens to follow it in
+; bank $E1 (open bus, unrelated header fields, etc.) - and compare against
+; that, which is *usually* a mismatch by luck but was never actually
+; verified to be. chunk_count is recomputed here exactly the way
+; ZPbootROM/def88186/rsa.def's rsa_verify_composite_manifest does it
+; (never trusted from a stored value - there isn't one), so an
+; out-of-range index is now REJECTED before it can reach outside the real
+; manifest, into the code region, the header/trailer, or anywhere else.
 zp_verify_chunk:
+    ; imgSize (header offset 8/10, bank $E1:0008/000A) and codeSize
+    ; (v3 trailer offset $168/$16A, same as rsa.def) - both fixed-address
+    ; long reads, no indexing needed.
+    lda $E10008
+    sta IMG_SIZE_LO
+    lda $E1000A
+    sta IMG_SIZE_HI
+    lda $E10168
+    sta CODE_SIZE_LO
+    lda $E1016A
+    sta CODE_SIZE_HI
+
+    ; dataSize = imgSize - codeSize (32-bit)
+    sec
+    lda IMG_SIZE_LO
+    sbc CODE_SIZE_LO
+    sta DATA_SIZE_LO
+    lda IMG_SIZE_HI
+    sbc CODE_SIZE_HI
+    sta DATA_SIZE_HI
+
+    ; chunk_count = ceil(dataSize / 16384) = (dataSize + 16383) >> 14 -
+    ; same MUL-based fast-shift as rsa_verify_composite_manifest (mult =
+    ; 2^(16-14) = 2^2 = $0004; new_HI is never read, chunk_count always
+    ; fits in one 16-bit word - max cartridge is 8MB / 16384 = 489 chunks).
+    clc
+    lda DATA_SIZE_LO
+    adc #$3FFF
+    sta ROT_LO
+    lda DATA_SIZE_HI
+    adc #0
+    sta ROT_HI
+    lda ROT_HI
+    mul #$0004
+    sta ROT_TMP
+    lda ROT_LO
+    mul #$0004
+    txa
+    ora ROT_TMP
+    sta CHUNK_COUNT
+
+    ; reject out-of-range MANIFEST_IDX before doing any hashing work.
+    ; BLT doesn't exist on this CPU (see cpuasm.c's instruction table) and
+    ; BCC is a documented latent bug (silently encodes as BCS) - BGE
+    ; (true alias for BCS: carry set means A >= operand) is the only
+    ; trustworthy unsigned comparison branch, so the condition is written
+    ; as its complement: branch away on out-of-range, fall through on ok.
+    lda MANIFEST_IDX
+    cmp CHUNK_COUNT
+    bge zp_verify_chunk_idx_bad
+    bra zp_verify_chunk_idx_ok
+zp_verify_chunk_idx_bad:
+    lda #0
+    sta VERIFY_OK
+    rts
+zp_verify_chunk_idx_ok:
+
     ; ---- H[0..7] init: IV[] XOR the parameter block (digest_len=32,
     ; no key) - identical constants/derivation to blake2s.def.
     lda #$E647
