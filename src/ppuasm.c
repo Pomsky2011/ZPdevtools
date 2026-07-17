@@ -10,11 +10,11 @@
 
 #define MAX_LINE_LENGTH 256
 #define MAX_LABELS 512
-#define MAX_INSTRUCTIONS 65536
+#define MAX_INSTRUCTIONS 200000
 #define MAX_LABEL_LENGTH 64
 #define MAX_ALIASES 128
 #define MAX_CONSTANTS 128
-#define MAX_EXPANDED_LINES 65536
+#define MAX_EXPANDED_LINES 200000
 
 /* Instruction structure */
 typedef struct {
@@ -119,6 +119,7 @@ static const struct {
     {"CLRTILE",     0xA},
     {"CLRPALETTE",  0xB},
     {"TILEDRAW",    0xC},
+    {"SETTILEBANK", 0xD},
     {"CALL",        0xE},
     {"GBLS",        0xF},
     {NULL, 0}
@@ -528,6 +529,10 @@ static unsigned short assemble_preset_f(Instruction *inst) {
         reg_x = parse_register(inst->operand1, inst->line_num);
         suboperand = (reg_x << 2);
     }
+    else if (strcmp(inst->mnemonic, "SETTILEBANK") == 0) {
+        reg_x = parse_register(inst->operand1, inst->line_num);
+        suboperand = (reg_x << 2);
+    }
     else if (strcmp(inst->mnemonic, "MOVDP") == 0) {
         reg_x = parse_register(inst->operand1, inst->line_num);
         suboperand = (reg_x << 2);
@@ -880,6 +885,19 @@ static void second_pass(void) {
 
     for (i = 0; i < instruction_count; i++) {
         unsigned short word = assemble_instruction(&instructions[i]);
+
+        /* output_buffer is a fixed 64 KiB buffer, matching the PPU's own
+         * 16-bit (64 KiB) address space - a program that doesn't fit could
+         * never be loaded/executed anyway. Without this check, exceeding it
+         * silently overflows into adjacent heap memory (seen as a
+         * non-deterministic "free(): invalid next size" crash) instead of a
+         * clear error. */
+        if (output_size + 2 > 65536) {
+            fprintf(stderr,
+                "Error: assembled output exceeds 65536 bytes (the PPU's full "
+                "address space) at instruction %d - program does not fit\n", i);
+            exit(1);
+        }
 
         /* Output as big-endian */
         output_buffer[output_size++] = (word >> 8) & 0xFF;

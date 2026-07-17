@@ -25,7 +25,7 @@
 
 #define MAX_LINE 256
 #define MAX_LABELS 256
-#define MAX_CODE 16384
+#define MAX_CODE 131072
 #define MAX_FIXUPS 256
 
 /* Addressing modes */
