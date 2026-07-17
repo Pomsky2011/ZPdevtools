@@ -8,7 +8,7 @@
 ; WHY THIS NEEDS NO RSA AND NO CALL BACK INTO THE BOOT ROM: by the time
 ; cartridge code is running, the boot ROM has already verified that
 ; manifest_digest = BLAKE2s(manifest) matches what was RSA-signed, and it
-; will not have jumped here otherwise. manifest[] (bank $E1, offset
+; will not have jumped here otherwise. manifest[] (bank $E2, offset
 ; $016C+) is therefore already authenticated. The code below - which does
 ; nothing but recompute BLAKE2s over one chunk and compare it against
 ; manifest[i] - is itself part of the RSA-verified CODE region (it must be
@@ -65,7 +65,7 @@
 ; opcodes (ADC/SBC/AND/ORA/XOR/CMP/INC/DEC/LDX/LDY) have no long-addressed
 ; form at all (only LDA/STA do - see ZPdevtools/lib/zp_dma.asm's header
 ; comment, point 3); the manifest itself is still read via bank-explicit
-; $E1016C,X addressing (LDA only, then staged through CMP_TMP for the
+; $E2016C,X addressing (LDA only, then staged through CMP_TMP for the
 ; actual compare) regardless of DB, same convention rsa.def uses. Leaves
 ; A/X/Y 16-bit on return. Clobbers A/X/Y and every scratch address this
 ; file defines.
@@ -169,7 +169,7 @@
 ; same way ZPbootROM/def88186/rsa.def's rsa_verify_composite_manifest
 ; does (from codeSize/romSize, never trusted from a stored value), so an
 ; out-of-range index can never reach past the real manifest into whatever
-; bytes happen to follow it in bank $E1 - see zp_verify_chunk's own
+; bytes happen to follow it in bank $E2 - see zp_verify_chunk's own
 ; comment below for why this matters.
 .equ IMG_SIZE_LO  $1FEC
 .equ IMG_SIZE_HI  $1FEE
@@ -179,7 +179,7 @@
 .equ DATA_SIZE_HI $1FF6
 .equ CHUNK_COUNT  $1FF8
 
-; ---- manifest location (bank $E1, fixed - see docs/zpb-format.md) ----------
+; ---- manifest location (bank $E2, fixed - see docs/zpb-format.md) ----------
 ; $016C = header(64B) + trailer prefix(8B) + digest(32B) + signature(256B)
 ; + codeSize(4B) = 364.
 
@@ -743,7 +743,7 @@ blake2s_compress_finalize:
 ; forged-signature attack (that's not the threat model this guards
 ; against). Without a check, an out-of-range index would read manifest
 ; bytes past the real manifest's end - whatever happens to follow it in
-; bank $E1 (open bus, unrelated header fields, etc.) - and compare against
+; bank $E2 (open bus, unrelated header fields, etc.) - and compare against
 ; that, which is *usually* a mismatch by luck but was never actually
 ; verified to be. chunk_count is recomputed here exactly the way
 ; ZPbootROM/def88186/rsa.def's rsa_verify_composite_manifest does it
@@ -751,16 +751,16 @@ blake2s_compress_finalize:
 ; out-of-range index is now REJECTED before it can reach outside the real
 ; manifest, into the code region, the header/trailer, or anywhere else.
 zp_verify_chunk:
-    ; imgSize (header offset 8/10, bank $E1:0008/000A) and codeSize
+    ; imgSize (header offset 8/10, bank $E2:0008/000A) and codeSize
     ; (v3 trailer offset $168/$16A, same as rsa.def) - both fixed-address
     ; long reads, no indexing needed.
-    lda $E10008
+    lda $E20008
     sta IMG_SIZE_LO
-    lda $E1000A
+    lda $E2000A
     sta IMG_SIZE_HI
-    lda $E10168
+    lda $E20168
     sta CODE_SIZE_LO
-    lda $E1016A
+    lda $E2016A
     sta CODE_SIZE_HI
 
     ; dataSize = imgSize - codeSize (32-bit)
@@ -921,7 +921,7 @@ zp_verify_chunk_not_last:
     bra zp_verify_chunk_loop
 
 zp_verify_chunk_compare:
-    ; manifest[i] lives at bank $E1 offset $016C + MANIFEST_IDX*32.
+    ; manifest[i] lives at bank $E2 offset $016C + MANIFEST_IDX*32.
     ; Compute the byte offset (MANIFEST_IDX*32) via MUL, then compare all
     ; 16 words of H0_LO.. against it, byte-exact.
     lda MANIFEST_IDX
@@ -936,7 +936,7 @@ zp_verify_chunk_cmp_loop:
     ; CMP has no bank-explicit long+indexed form (only LDA/STA do - see
     ; this file's header note and ZPdevtools/lib/zp_dma.asm's point 3), so
     ; the manifest byte is loaded into CMP_TMP first and compared there.
-    lda $E1016C,X
+    lda $E2016C,X
     sta CMP_TMP
     lda H0_LO,Y
     cmp CMP_TMP
