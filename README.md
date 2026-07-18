@@ -181,9 +181,10 @@ SETBYTE 3, 0x12      ; R5[15:8] = 0x12
 | `JMR` | - | Jump relative to (PC) | `JMR` |
 | `MOV` | X | Move from (DP) to register X | `MOV R5` |
 | `SETREGBANK` | X_bank, Y_bank | Set register banks | `SETREGBANK 0, 1` |
-| `CLRTILE` | - | Clear all tile storage | `CLRTILE` |
+| `CLRTILE` | - | Clear all tile storage (all 4 banks) | `CLRTILE` |
 | `CLRPALETTE` | - | Clear palette | `CLRPALETTE` |
-| `TILEDRAW` | - | Draw tile at position (from 0x0200) | `TILEDRAW` |
+| `TILEDRAW` | - | Draw tile at position (from 0x0200); dispatches to one of 8 async blit channels when one is free, else draws synchronously | `TILEDRAW` |
+| `SETTILEBANK` | X | Select tile bank (0-3) from register X | `SETTILEBANK R5` |
 | `CALL` | address | Call function | `CALL function_label` |
 | `GBLS` | X | Get blank status into register X | `GBLS R0` |
 
@@ -460,10 +461,10 @@ See `examples/apu/` for more examples.
 
 ### PPU Documentation
 - `README.md` - This file (quick reference)
-- `docs/ppu/ucode.txt` - Complete PPU microcode specification (2800+ lines)
-- `docs/ppu/preset-e-and-shorthands.txt` - **Preset E & assembler shorthands guide**
+- `docs/ppu/ucode.txt` - Full PPU microcode specification (Revision 3.0, ground-truth-verified against the emulator source), including SETTILEBANK, tile banking, and the concurrent TILEDRAW blitter
+- `docs/ppu/preset-e-and-shorthands.txt` - Preset E, SETTILE/TILEDRAW/SETTILEBANK & assembler shorthands guide — pairs well with `ucode.txt`, focused more on idioms/examples than architecture
 
-**⚠️ Read `preset-e-and-shorthands.txt` before using the new features!**
+**⚠️ Read `preset-e-and-shorthands.txt` for shorthand/idiom examples; `ucode.txt` is the full architectural reference.**
 
 ### APU Documentation
 - `docs/apu/README.txt` - APU documentation index
@@ -497,8 +498,8 @@ See `examples/apu/` for more examples.
 
 ### Documentation
 - `docs/ppu/` - PPU documentation
-  - `ucode.txt` - Complete PPU instruction reference
-  - `preset-e-and-shorthands.txt` - PPU features guide
+  - `ucode.txt` - Full PPU instruction reference (Revision 3.0, all opcodes)
+  - `preset-e-and-shorthands.txt` - PPU idioms/shorthands guide (Preset E, SETTILE, TILEDRAW, SETTILEBANK)
 - `docs/apu/` - APU documentation (8 files)
   - `README.txt` - APU documentation index
   - `overview.txt` - Architecture overview

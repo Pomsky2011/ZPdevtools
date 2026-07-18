@@ -3,7 +3,8 @@
 ## Critical Bugs
 
 **NONE** — the loop-counter bug below was fixed in `32cd754` ("Fix critical
-PPU loop bug - Correct Preset E instruction encoding", 2025-10-23).
+PPU loop bug - Correct Preset E instruction encoding", 2025-10-23); BUILD's
+follow-on decoder-side half of the same bug was fixed 2026-07-17 (see below).
 
 ### ✅ RESOLVED: Loop Counters Get Stuck (2025-10-19, fixed 2025-10-23)
 **Root cause**: TARREG/SETBYTE/BUILD (Preset E) had wrong bit shifts in the
@@ -11,6 +12,21 @@ assembler — target-register field landed in the wrong bits of the suboperand,
 so labels/jumps resolved to garbage addresses.
 **Fix**: TARREG target_reg `<<6`→`<<8`, byte_sel `<<5`→`<<7`; SETBYTE target_reg
 `<<6`→`<<8`; BUILD t1 `<<6`→`<<8`, t2 `<<4`→`<<6`.
+
+### ✅ RESOLVED: BUILD's Emulator-Side Decoder Never Got the 2025-10-23 Fix (found + fixed 2026-07-17)
+**Root cause**: the 2025-10-23 fix above only touched `ppuasm.c` (the
+encoder). TARREG/SETBYTE's decoder in `ZeroPoint/src/ppu.cpp` was already
+correct, but BUILD's decoder there was never updated to match — it still
+read `targetReg1 = (operand>>6)&0x3` / `targetReg2 = (operand>>4)&0x3`
+against an encoder now emitting `T1<<8 | T2<<6`, silently corrupting T1 and
+forcing dest's low 2 bits to alias T2 for every BUILD instruction assembled
+since. Found while ground-truth-verifying `docs/ppu/ucode.txt`'s rewrite
+(§15.4 there has the full before/after).
+**Fix**: `ZeroPoint/src/ppu.cpp`'s BUILD case: `targetReg1 = (operand>>8)&0x3`,
+`targetReg2 = (operand>>6)&0x3`, matching the encoder exactly. Verified
+against `examples/ppu/test_add.asm` (the only existing BUILD usage — its
+result was accidentally unaffected by the bug either way) and the full
+`test_ppu` suite.
 
 ## Recent Changes
 
@@ -271,7 +287,14 @@ Now a **complete professional development environment**:
 
 ### Complete - PPU
 - ✅ README.md with basic usage
-- ✅ Instruction reference
+- ✅ Instruction reference — `docs/ppu/ucode.txt` rewritten (Revision 3.0,
+  2026) ground-truth-verified against `ppu.h`/`ppu.cpp`; fixes the stale
+  clock frequency, timing model, endianness claim, 5-state state machine,
+  per-instruction cycle counts, and HALT@0xE/immediate-SETTILE/
+  STRTDEFTILE-ENDDEFTILE opcodes from Revision 1.0, and documents
+  `SETTILEBANK` and TILEDRAW's async blit-channel dispatch. Also caught a
+  real BUILD (Preset E 0x2) encoder/decoder mismatch while verifying
+  (§15.4) — fixed in code the same day, see "Critical Bugs" above
 - ✅ Shorthand documentation (docs/ppu/preset-e-and-shorthands.txt)
 - ✅ Interrupt system (R59/R60)
 - ✅ Target register warnings

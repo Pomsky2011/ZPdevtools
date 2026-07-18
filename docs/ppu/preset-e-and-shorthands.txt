@@ -539,6 +539,16 @@ New System:
   MOVDP tile_pos             ; Set position via 0x0200-0x0203
   TILEDRAW                   ; Draw the tile
 
+TILEDRAW is not always synchronous. The PPU keeps 8 background blit
+channels; if one is free, TILEDRAW snapshots the current tile/position/
+blend state into it and returns after only ~8 cycles, and the actual
+64-pixel draw (~264 cycles opaque, ~392 blended) completes in the
+background over the following cycles rather than stalling the PPU. Only
+when all 8 channels are already busy does TILEDRAW fall back to drawing
+synchronously and paying the full cost as its own instruction stall. Code
+that assumes every TILEDRAW blocks for the full draw cost is only correct
+for that fallback case.
+
 Memory Map:
   0x0100-0x010B: Pixel drawing I/O (X, Y, R, G, B, A)
   0x0200-0x0201: X position (16-bit little-endian)
@@ -594,6 +604,31 @@ Example:
 
   ; Draw tile
   TILEDRAW
+
+================================================================================
+
+4.3 SETTILEBANK (Preset F sub-op 0xD)
+
+Tile storage is banked: 4 banks of 256 tiles each (1024 tiles total).
+SETTILEBANK selects which bank subsequent tile-definition writes
+(0x0300-0x033F) and SETTILE's tile ID index into — it's a bank-select
+register, not a wider tile ID field. SETTILE's own format (4.1 above) is
+unchanged.
+
+Format:
+  SETTILEBANK X              ; Select tile bank from register X
+
+  X (6 bits): Register containing the bank number (registers[X] mod 4)
+
+TILEDRAW snapshots the active tile bank into its blit channel at dispatch
+time, along with tile ID/mode/position/blend state (see 4.2) — changing
+banks after issuing a TILEDRAW does not affect a draw already in flight.
+CLRTILE clears all 4 banks, not just the active one.
+
+Example:
+  TARREG 2, LSB, R31
+  SETBYTE 2, 2                ; R31 = bank 2
+  SETTILEBANK R31              ; Subsequent tile writes/SETTILE target bank 2
 
 ================================================================================
 
@@ -758,6 +793,10 @@ All old instructions still work. The new features are purely additive:
   ✓ All 0x0-0xD opcodes unchanged
   ✓ Preset F instructions backward compatible (except SETTILE/TILEDRAW)
   ✓ New Preset E uses previously unused opcode 0xE
+  ✓ Preset F sub-op 0xD, previously reserved/no-op, is now SETTILEBANK (4.3)
+  ✓ TILEDRAW dispatches asynchronously when a blit channel is free (4.2) —
+    existing code that only issues TILEDRAW still works unchanged, it just
+    may return sooner than before
 
 Breaking changes:
   ✗ HALT opcode 0xE removed (use HLT shorthand instead)

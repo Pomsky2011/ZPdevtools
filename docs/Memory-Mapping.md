@@ -1,5 +1,14 @@
 # DEF88186 Memory Mapping Reference
 
+> **Note**: This is an early design-time map. Several regions below (APU/PPU
+> window sizes, `$D8-$DF`, `$E0-$FF`) predate the CPU's current
+> implementation and no longer match it exactly — see `ZeroPoint/CLAUDE.md`'s
+> "CPU Memory Map" for the authoritative, implementation-accurate layout
+> (in particular: the PPU/APU windows are single 64 KB banks at `$B0`/`$A0`
+> with the rest of their ranges unmapped, `$D8` is 96 bytes of I/O registers
+> rather than "reserved," and the boot/security region below has been split
+> further — see the correction in that section).
+
 ## Address Space Overview
 
 - **Total Space**: 16 MB (16,777,216 bytes)
@@ -51,10 +60,23 @@ Special regions:
 - `$D8-$DF`: Reserved
 
 ### Banks $E0-$FE (31 banks, 1.984 MB) - Boot / Security
-**Purpose**: Boot ROM, security keys, system ROM
+**Purpose**: Boot ROM, signed-ROM metadata, system ROM
 
-- `$E0-$EF`: Boot ROM and security keys
-- `$F0-$FE`: System ROM / OS code
+As actually implemented (see `ZeroPoint/CLAUDE.md`'s CPU Memory Map and
+`ZeroPoint/docs/zpb-format.md`), this range is not one undifferentiated
+blob:
+- `$E0`: Boot ROM (64 KB), read-only, mapped at construction. Hardware reset
+  lands the CPU here instead of bank `$00` whenever a boot ROM is loaded.
+- `$E1`: reserved for Boot ROM growth past 64 KB (a >64 KB Boot ROM spans
+  `$E0-$E1` as one region).
+- `$E2`: signed-ROM metadata — read-only, mapped only when a zpbuild-signed
+  ROM is loaded. Holds the raw 64-byte ZPB header, the "ZPSG" trailer
+  (magic/version/keysize/siglen/digest/signature, plus `codeSize` for
+  trailer versions 2/3 and the per-chunk BLAKE2s manifest for version 3),
+  and, for version 3, the chunk-verified bitmap immediately after the
+  manifest. Deliberately kept one bank clear of `$E0` so a Boot ROM
+  spanning `$E0-$E1` can't collide with it.
+- `$E3-$FE`: unmapped/reserved.
 
 ### Bank $FF (1 bank, 64 KB) - Final Boot ROM
 **Purpose**: Last initialized values, final boot sector

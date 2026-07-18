@@ -60,7 +60,7 @@ The CSV shows that at offset $0000-$0FFF:
 - Banks $00-$7F: Contains ROM
 - Banks $80-$9F: Contains Expansion Space
 - Banks $A0-$BF: Contains WRAM (model-specific)
-- Banks $E0-$FF: Contains Boot ROM
+- Banks $E0-$FF: Contains Boot ROM ($E0), signed-ROM metadata ($E2), and unmapped/reserved space (see Reference below for the current split)
 
 This means:
 - `$00:0000` = ROM byte 0
@@ -72,5 +72,5 @@ All at the same offset, but different banks = different physical locations!
 ## References
 
 For complete details, see:
-- `/Users/alexanderwhite/Documents/Code/ZPdevtools/docs/cpu/memory-map.txt`
-- `/Users/alexanderwhite/Documents/Code/ZeroPoint/CLAUDE.md`
+- `ZPdevtools/docs/cpu/memory-map.txt`
+- `ZeroPoint/CLAUDE.md` (authoritative — includes the current `$E0`/`$E1`/`$E2` boot/signing split)

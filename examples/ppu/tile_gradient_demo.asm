@@ -1,5 +1,13 @@
 ; Tile-based gradient demo
 ; Defines gradient tiles and draws them across the screen
+;
+; STALE: this predates the current tile API and will NOT assemble against
+; the current ppuasm/PPU. STRTDEFTILE/ENDDEFTILE and HALT were removed (see
+; docs/ppu/preset-e-and-shorthands.txt "Breaking changes"). Current
+; equivalent: SETTILE reg,mode to select a tile, write pixel data directly
+; to 0x0300-0x033F, SETPOS/MOVDP to 0x0200-0x0203 for position, then
+; TILEDRAW to draw — see preset-e-and-shorthands.txt section 4.2's worked
+; example, and use the HLT assembler shorthand instead of HALT.
 
 init:
     ; Set 32-bit render mode

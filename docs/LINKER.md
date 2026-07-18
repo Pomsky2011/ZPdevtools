@@ -66,7 +66,7 @@ $ readelf -l game.elf
 
 ```
 zpbuild IN.elf -o OUT.zpb [--title "NAME"] [--dev "AUTHOR"] [--entry ADDR]
-        [--selftest] [-v]
+        [--codesize N] [--selftest] [-v]
 ```
 
 | Option | Meaning |
@@ -75,6 +75,7 @@ zpbuild IN.elf -o OUT.zpb [--title "NAME"] [--dev "AUTHOR"] [--entry ADDR]
 | `-o OUT.zpb` | The signed ROM. |
 | `--title` / `--dev` | ROM metadata stamped into the header at signing time. |
 | `--entry ADDR` | Override the entry point (default: the ELF's entry). |
+| `--codesize N` | Opt into code + chunked-data-manifest signing (trailer version 3, see below): the first `N` bytes of the payload are "code," the rest is bulk "data." Omit for plain single-region signing (trailer version 1). |
 | `--selftest` | Run the SHA-256 + RSA sign/verify/tamper self-test and exit. |
 
 The payload is wrapped in the emulator's 64-byte `ZPBHeader` (see
@@ -86,22 +87,60 @@ The payload is wrapped in the emulator's 64-byte `ZPBHeader` (see
 +------------------+  offset 64
 | payload (romSize)|  the located image (CPU@base, PPU, APU, data...)
 +------------------+  offset 64 + romSize
-| "ZPSG" trailer   |  8-byte tag + SHA-256 digest (32) + RSA-2048 signature (256)
+| "ZPSG" trailer   |  see below - shape depends on trailer version (1 or 3)
 +------------------+
 ```
 
 The stock emulator reads exactly `romSize` payload bytes, so the signed trailer
 is transparent to it — an unsigned-aware loader still works, and a
-signature-checking loader (real hardware) finds the trailer at `64 + romSize`.
+signature-checking loader (the `ZPbootROM` project's `rsa_verify`, on real
+hardware or the emulator with `--boot`) finds the trailer at `64 + romSize`.
+
+### Trailer versions
+
+`zpbuild` produces one of two trailer versions depending on `--codesize`
+(full byte layout: `ZeroPoint/docs/zpb-format.md`):
+
+- **Version 1** (default, no `--codesize`): `"ZPSG"` tag + trailer version +
+  key size + siglen + a single SHA-256 digest of `ZPBHeader ‖ payload` (32
+  bytes) + RSA-2048 signature (256 bytes). Verifying it means hashing the
+  *entire* payload, which for a large cartridge (up to 8 MB) takes minutes
+  at boot on the target 16-bit CPU — fine for small ROMs, not for large ones.
+- **Version 3** (`--codesize N`): splits the payload into `code`
+  (`payload[0..N)`) and `data` (`payload[N..romSize)`). `data` is chopped
+  into 16384-byte chunks, each independently hashed with BLAKE2s into a
+  manifest; `code_digest = BLAKE2s(code)`, `manifest_digest =
+  BLAKE2s(concatenated per-chunk hashes)`, and the signed digest is
+  `SHA256(header ‖ code_digest ‖ manifest_digest)`. The boot ROM only hashes
+  `code` and the (small) manifest synchronously at boot — verifying any one
+  data chunk is deferred until cartridge code actually loads it (via a
+  `COP #$FF` call into the boot ROM, chunk index in `X`, vectoring to
+  `$E0:0004`; see `ZeroPoint/CLAUDE.md`'s CPU Memory Map and
+  `ZeroPoint/docs/zpb-format.md`'s "Runtime chunk verification" section).
+  This is what makes an 8 MB cartridge boot in seconds instead of minutes
+  while still making it impossible to consume unverified data undetected.
+  (Trailer version 2, code+whole-data-BLAKE2s with no chunk manifest, exists
+  in the format spec and the verifier still accepts it, but `zpbuild` no
+  longer produces it — superseded by version 3.)
+
+At runtime, the raw header + trailer (magic/version/digest/signature, plus
+`codeSize` and the manifest for version 3) are mapped read-only into CPU
+memory at bank `$E2` once the cartridge bus connects — `$E1` is reserved for
+Boot ROM growth past 64 KiB, kept separate from `$E2` so a large Boot ROM
+spanning `$E0-$E1` can't collide with the metadata region. `rsa_verify`
+reads it from there, not through the cartridge's own read/write window.
 
 ### Signing & keys
 
-The signature is **RSA-2048, PKCS#1 v1.5 over SHA-256**, computed over
-`ZPBHeader ‖ payload` (so the entry point, title, and size are authenticated).
-The key compiled into `zpbuild` from `src/zpkey.h` is a **development** key
-(Montgomery constants precomputed; *not* secret-grade) — good enough for a
-locally-loadable ROM the emulator accepts. A real vendor builds `zpbuild`
-against their own private key kept on the mastering machine.
+The signature is **RSA-2048, PKCS#1 v1.5 over SHA-256**, computed over the
+digest described above (`ZPBHeader ‖ payload` for version 1, or the
+composite `header ‖ code_digest ‖ manifest_digest` for version 3 — either
+way the entry point, title, size, and payload contents are all
+authenticated). The key compiled into `zpbuild` from `src/zpkey.h` is a
+**development** key (Montgomery constants precomputed; *not* secret-grade)
+— good enough for a locally-loadable ROM the emulator accepts. A real vendor
+builds `zpbuild` against their own private key kept on the mastering
+machine.
 
 Because `zpbuild` reproduces the old (pre-split) `zplink` ROM output exactly,
 existing `.zpb` files are byte-for-byte unchanged. The implementation is
