@@ -7,7 +7,8 @@
  * against ZeroPoint/src/apu.cpp (APU::executeInstruction and friends,
  * the ground truth for behavior) and apuasm.c (the assembler-side
  * syntax this tool's output is meant to round-trip through). Opcodes
- * 0x1C-0x1F are reserved and halt the APU on execution; several defined
+ * 0x1C and 0x1F are reserved and halt the APU on execution (0x1D and 0x1E
+ * are STRX/STAX indexed load/store and JMX/JSX indexed jump); several defined
  * opcodes also have unused/reserved sub-encodings (e.g. 0x0B subop 0/6/7)
  * that no real mnemonic maps to - those print as ".WORD" with a comment
  * instead of a fabricated mnemonic.
@@ -403,8 +404,30 @@ static void disassemble_instruction(uint8_t* data, size_t offset, size_t max_siz
             }
             break;
 
-        case 0x1D:
-        case 0x1E:
+        case 0x1D: { /* STRX/STAX - indexed load/store: bit10=dataReg,
+                        bit9=mode (0=STRX load, 1=STAX store), bit8=offsetReg.
+                        Address is (dp<<8)|registers[offsetReg] at runtime,
+                        not a compile-time literal like STR/STA. */
+            char buf[24];
+            int dataReg = (operand >> 10) & 1;
+            int offsetReg = (operand >> 8) & 1;
+            if (operand & 0x200) {
+                sprintf(buf, "STAX %s, %s", reg1(dataReg), reg1(offsetReg));
+            } else {
+                sprintf(buf, "STRX %s, %s", reg1(offsetReg), reg1(dataReg));
+            }
+            fprintf(out, "%-10s", buf);
+            break;
+        }
+
+        case 0x1E: { /* JMX/JSX - indexed jump to (Y<<8)|X: bit10 selects
+                        JSX(1, pushes return address)/JMX(0, plain goto). */
+            char buf[24];
+            sprintf(buf, (operand & 0x400) ? "JSX" : "JMX");
+            fprintf(out, "%-10s", buf);
+            break;
+        }
+
         case 0x1F:
             sprintf(note, "opcode 0x%02X, halts", opcode);
             print_reserved(out, instruction, note);

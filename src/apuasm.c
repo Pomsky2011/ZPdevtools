@@ -19,6 +19,23 @@ static uint16_t current_address = 0;
 static uint16_t* instructions = NULL;
 static long instruction_count = 0;
 
+/* .ORG state: the first .ORG in a file sets origin_base (the address the
+ * assembled file's byte 0 corresponds to once loaded) with no padding -
+ * this program's own bytes always start at file offset 0 regardless of
+ * where the loader eventually places them. Any *later* .ORG pads with
+ * zero words up to the requested address, measured from origin_base -
+ * this is how a fixed-address data table (e.g. a sine table) can follow
+ * code of unpredictable length within the same loaded blob. */
+static int origin_set = 0;
+static uint16_t origin_base = 0;
+
+/* .DB/.BYTE state: bytes are packed two-to-a-word (big-endian, matching
+ * how real instructions are written) since the output format has no
+ * notion of a lone byte. An odd trailing byte is flushed (zero-padded)
+ * at end of file. */
+static int db_pending = 0;
+static uint16_t db_pending_byte = 0;
+
 /* Token parsing */
 static char* tokens[MAX_TOKENS];
 static int token_count = 0;
@@ -101,6 +118,36 @@ int parse_number(const char* str) {
     }
 }
 
+/* Resolve an operand that names an absolute address: a known label resolves
+ * to its address, anything else falls back to a literal number (unchanged
+ * behavior for programs that pass raw offsets). Used for JMS/JSR, JNZ/JZ,
+ * BEQ/BNE/BLT/BGT, and JMP's absolute 3-arg form - all of which just take
+ * the low byte of whatever this returns, matching how those already work
+ * with literals (the caller is responsible for RP/page agreement). */
+int resolve_address(const char* tok) {
+    int lbl = find_label(tok);
+    if (lbl >= 0) return lbl;
+    return parse_number(tok);
+}
+
+/* Resolve a relative-branch operand (CME/CMN/CMG/CML, and JMP's bare/2-arg
+ * relative form). If `tok` names a known label, compute the signed
+ * word-distance from the instruction currently being assembled to that
+ * label (relative to PC *after* this instruction fetches, i.e.
+ * current_address + 2 - matches APU::step()'s pc+=2-before-execute order)
+ * and report it via *is_label so the caller can validate direction/range.
+ * If `tok` isn't a label, return it as a literal word-offset exactly as
+ * before (non-negative, *is_label cleared). */
+int resolve_relative_distance(const char* tok, int* is_label) {
+    int lbl = find_label(tok);
+    if (lbl >= 0) {
+        *is_label = 1;
+        return (lbl - (current_address + 2)) / 2;
+    }
+    *is_label = 0;
+    return parse_number(tok);
+}
+
 int parse_register(const char* str) {
     if (str[0] == 'R' || str[0] == 'r') {
         return parse_number(str + 1);
@@ -123,6 +170,15 @@ void emit_instruction(uint16_t inst) {
 
 uint16_t encode_instruction(uint8_t opcode, uint16_t operand) {
     return ((opcode & 0x1F) << 11) | (operand & 0x7FF);
+}
+
+/* Flush a lone trailing .DB byte (zero-padded into the low byte) at end of
+ * file, so an odd-length .DB run doesn't silently drop its last byte. */
+void flush_pending_byte(void) {
+    if (db_pending) {
+        emit_instruction((uint16_t)(db_pending_byte << 8));
+        db_pending = 0;
+    }
 }
 
 void assemble_line(char* line, int line_num) {
@@ -166,6 +222,43 @@ void assemble_line(char* line, int line_num) {
         upper_mnemonic[i] = toupper(upper_mnemonic[i]);
     }
 
+    /* Directives */
+
+    if (strcmp(upper_mnemonic, ".ORG") == 0) {
+        if (token_count >= 2) {
+            long addr = parse_number(tokens[1]);
+            if (!origin_set) {
+                origin_set = 1;
+                origin_base = (uint16_t)addr;
+                current_address = (uint16_t)addr;
+            } else {
+                if (addr < current_address) {
+                    error(".ORG cannot move backward (would overlap already-assembled bytes)", line_num);
+                }
+                if ((addr - current_address) & 1) {
+                    error(".ORG target must be word-aligned (APU instructions/data are 2 bytes)", line_num);
+                }
+                while (current_address < addr) {
+                    emit_instruction(0);
+                }
+            }
+        }
+        return;
+    }
+    else if (strcmp(upper_mnemonic, ".DB") == 0 || strcmp(upper_mnemonic, ".BYTE") == 0) {
+        for (i = 1; i < token_count; i++) {
+            int val = parse_number(tokens[i]) & 0xFF;
+            if (!db_pending) {
+                db_pending_byte = (uint16_t)val;
+                db_pending = 1;
+            } else {
+                emit_instruction((uint16_t)((db_pending_byte << 8) | (uint16_t)val));
+                db_pending = 0;
+            }
+        }
+        return;
+    }
+
     /* Instruction encoding */
 
     if (strcmp(upper_mnemonic, "NOP") == 0) {
@@ -185,21 +278,34 @@ void assemble_line(char* line, int line_num) {
          * has no reachable effect and is ignored, matching real hardware. */
         if (token_count >= 4) {
             int mode = parse_number(tokens[2]);
-            int addr = parse_number(tokens[3]);
+            int addr = resolve_address(tokens[3]);
             if (mode) {
                 emit_instruction(encode_instruction(0x01, 0x100 | (addr & 0xFF)));  /* $RPZZ */
             } else {
                 emit_instruction(encode_instruction(0x01, 0x200 | (addr & 0xFF)));  /* $80ZZ (BIOS) */
             }
         } else if (token_count >= 2) {
-            int addr = parse_number(tokens[1]);
-            emit_instruction(encode_instruction(0x01, addr & 0xFF));
+            /* Bare relative form: if the operand names a label, compute the
+             * actual word-distance and require it to be forward (the real
+             * hardware's backward-relative encoding is unreachable - see the
+             * comment above). A plain literal is passed through unchanged. */
+            int is_label = 0;
+            int dist = resolve_relative_distance(tokens[1], &is_label);
+            if (is_label) {
+                if (dist < 0) {
+                    error("JMP cannot branch backward to this label (real hardware quirk: D=1,M=0 decodes as an absolute BIOS jump instead) - use CMN/CML for backward branches", line_num);
+                }
+                if (dist > 0xFF) {
+                    error("JMP target out of range (max 255 words forward)", line_num);
+                }
+            }
+            emit_instruction(encode_instruction(0x01, dist & 0xFF));
         }
     }
     else if (strcmp(upper_mnemonic, "JNZ") == 0) {
         if (token_count >= 3) {
             int reg = parse_register(tokens[1]);
-            int addr = parse_number(tokens[2]);
+            int addr = resolve_address(tokens[2]);
             uint16_t operand = ((reg & 1) << 10) | (addr & 0xFF);
             emit_instruction(encode_instruction(0x02, operand));
         }
@@ -209,12 +315,12 @@ void assemble_line(char* line, int line_num) {
             /* jz X, Y, $ZZ — test reg X, mode Y, jump to $ZZ */
             int rx   = parse_register(tokens[1]);
             int mode = parse_number(tokens[2]);
-            int addr = parse_number(tokens[3]);
+            int addr = resolve_address(tokens[3]);
             emit_instruction(encode_instruction(0x02, 0x100 | ((rx&1)<<10) | ((mode&1)<<9) | (addr&0xFF)));
         } else if (token_count >= 3) {
             /* jz X, $ZZ — mode defaults to RP */
             int rx   = parse_register(tokens[1]);
-            int addr = parse_number(tokens[2]);
+            int addr = resolve_address(tokens[2]);
             emit_instruction(encode_instruction(0x02, 0x100 | ((rx&1)<<10) | 0x200 | (addr&0xFF)));
         }
     }
@@ -468,12 +574,32 @@ void assemble_line(char* line, int line_num) {
         if (token_count >= 4) {
             int rx = parse_register(tokens[1]);
             int ry = parse_register(tokens[2]);
-            int offset = parse_number(tokens[3]);
+            /* subOp's LSB is the branch direction, so a label operand must
+             * resolve to a distance whose sign matches the chosen mnemonic;
+             * a plain literal offset is passed through unchanged. */
+            int is_label = 0;
+            int dist = resolve_relative_distance(tokens[3], &is_label);
+            int forwardOnly = (strcmp(upper_mnemonic, "CME") == 0 || strcmp(upper_mnemonic, "CMG") == 0);
+            int offset;
             int subop;
             if (strcmp(upper_mnemonic, "CME") == 0) subop = 0;
             else if (strcmp(upper_mnemonic, "CMN") == 0) subop = 1;
             else if (strcmp(upper_mnemonic, "CMG") == 0) subop = 2;
             else subop = 3;
+            if (is_label) {
+                if (forwardOnly && dist < 0) {
+                    error("label is behind this CME/CMG - that direction is hardwired backward-only on real hardware for CMN/CML; use one of those instead", line_num);
+                }
+                if (!forwardOnly && dist > 0) {
+                    error("label is ahead of this CMN/CML - that direction is hardwired forward-only on real hardware for CME/CMG; use one of those instead", line_num);
+                }
+                offset = dist < 0 ? -dist : dist;
+                if (offset > 0x3F) {
+                    error("branch target out of range (max 63 words) for CME/CMN/CMG/CML", line_num);
+                }
+            } else {
+                offset = dist & 0x3F;
+            }
             emit_instruction(encode_instruction(0x19, ((rx & 1) << 10) | ((ry & 1) << 9) | (subop << 6) | (offset & 0x3F)));
         }
     }
@@ -481,7 +607,7 @@ void assemble_line(char* line, int line_num) {
         if (token_count >= 4) {
             int rx = parse_register(tokens[1]);
             int ry = parse_register(tokens[2]);
-            int offset = parse_number(tokens[3]);
+            int offset = resolve_address(tokens[3]);
             uint16_t operand = ((rx & 1) << 10) | ((ry & 1) << 9) | (offset & 0xFF);
             emit_instruction(encode_instruction(0x12, operand));
         }
@@ -490,7 +616,7 @@ void assemble_line(char* line, int line_num) {
         if (token_count >= 4) {
             int rx = parse_register(tokens[1]);
             int ry = parse_register(tokens[2]);
-            int offset = parse_number(tokens[3]);
+            int offset = resolve_address(tokens[3]);
             uint16_t operand = ((rx & 1) << 10) | ((ry & 1) << 9) | 0x100 | (offset & 0xFF);
             emit_instruction(encode_instruction(0x12, operand));
         }
@@ -499,7 +625,7 @@ void assemble_line(char* line, int line_num) {
         if (token_count >= 4) {
             int rx = parse_register(tokens[1]);
             int ry = parse_register(tokens[2]);
-            int offset = parse_number(tokens[3]);
+            int offset = resolve_address(tokens[3]);
             uint16_t operand = ((rx & 1) << 10) | ((ry & 1) << 9) | (offset & 0xFF);
             emit_instruction(encode_instruction(0x13, operand));
         }
@@ -508,7 +634,7 @@ void assemble_line(char* line, int line_num) {
         if (token_count >= 4) {
             int rx = parse_register(tokens[1]);
             int ry = parse_register(tokens[2]);
-            int offset = parse_number(tokens[3]);
+            int offset = resolve_address(tokens[3]);
             uint16_t operand = ((rx & 1) << 10) | ((ry & 1) << 9) | 0x100 | (offset & 0xFF);
             emit_instruction(encode_instruction(0x13, operand));
         }
@@ -521,7 +647,7 @@ void assemble_line(char* line, int line_num) {
     }
     else if (strcmp(upper_mnemonic, "JMS") == 0) {
         if (token_count >= 2) {
-            int addr = parse_number(tokens[1]);
+            int addr = resolve_address(tokens[1]);
             emit_instruction(encode_instruction(0x15, addr & 0xFF));
         }
     }
@@ -530,12 +656,38 @@ void assemble_line(char* line, int line_num) {
     }
     else if (strcmp(upper_mnemonic, "JSR") == 0) {
         if (token_count >= 2) {
-            int addr = parse_number(tokens[1]);
+            int addr = resolve_address(tokens[1]);
             emit_instruction(encode_instruction(0x15, 0x200 | (addr & 0xFF)));
         }
     }
     else if (strcmp(upper_mnemonic, "JDPS") == 0) {
         emit_instruction(encode_instruction(0x15, 0x600));
+    }
+    else if (strcmp(upper_mnemonic, "STRX") == 0) {
+        /* strx offsetReg, dataReg — indexed load: dataReg = mem[(dp<<8)|offsetReg]
+         * opcode 0x1D, bit10=dataReg, bit9=0 (load), bit8=offsetReg */
+        if (token_count >= 3) {
+            int offsetReg = parse_register(tokens[1]);
+            int dataReg = parse_register(tokens[2]);
+            emit_instruction(encode_instruction(0x1D, ((dataReg & 1) << 10) | ((offsetReg & 1) << 8)));
+        }
+    }
+    else if (strcmp(upper_mnemonic, "STAX") == 0) {
+        /* stax dataReg, offsetReg — indexed store: mem[(dp<<8)|offsetReg] = dataReg
+         * opcode 0x1D, bit10=dataReg, bit9=1 (store), bit8=offsetReg */
+        if (token_count >= 3) {
+            int dataReg = parse_register(tokens[1]);
+            int offsetReg = parse_register(tokens[2]);
+            emit_instruction(encode_instruction(0x1D, ((dataReg & 1) << 10) | 0x200 | ((offsetReg & 1) << 8)));
+        }
+    }
+    else if (strcmp(upper_mnemonic, "JMX") == 0) {
+        /* jmx — jump to (Y<<8)|X, no stack push. opcode 0x1E, bit10=0 */
+        emit_instruction(encode_instruction(0x1E, 0));
+    }
+    else if (strcmp(upper_mnemonic, "JSX") == 0) {
+        /* jsx — jump to (Y<<8)|X, pushes return address. opcode 0x1E, bit10=1 */
+        emit_instruction(encode_instruction(0x1E, 0x400));
     }
     else if (strcmp(upper_mnemonic, "INC") == 0 || strcmp(upper_mnemonic, "DEC") == 0) {
         if (token_count >= 2) {
@@ -590,11 +742,12 @@ void assemble_line(char* line, int line_num) {
         }
     }
     else if (strcmp(upper_mnemonic, "HLT") == 0) {
-        /* Opcodes 0x1C-0x1F are reserved; the interpreter's default case
-           treats any of them as an unknown opcode and halts. JMP 0 does NOT
-           halt here: JMP is a *relative* jump and pc is already past this
-           instruction by the time it executes (fetch does pc+=2 first), so
-           offset 0 just falls through to the next instruction. */
+        /* Opcodes 0x1C and 0x1F are reserved (0x1D/0x1E are now STRX/STAX and
+           JMX/JSX); the interpreter's default case treats any reserved
+           opcode as unknown and halts. JMP 0 does NOT halt here: JMP is a
+           *relative* jump and pc is already past this instruction by the
+           time it executes (fetch does pc+=2 first), so offset 0 just falls
+           through to the next instruction. */
         emit_instruction(encode_instruction(0x1C, 0));
     }
     else {
@@ -642,7 +795,13 @@ int main(int argc, char* argv[]) {
         output_file = default_output;
     }
 
-    /* First pass: collect labels */
+    /* Pass 1: walk the whole file once to learn every label's address,
+     * including ones defined later in the file than where they're used
+     * (forward references). Encoding done during this pass is discarded -
+     * find_label()/resolve_*() calls made before a label is reached will
+     * fall back to treating it as a literal (usually 0), but that's fine
+     * since only current_address's advancement and the label table from
+     * this pass are kept. */
     fp = fopen(input_file, "r");
     if (!fp) {
         fprintf(stderr, "Cannot open input file: %s\n", input_file);
@@ -656,6 +815,42 @@ int main(int argc, char* argv[]) {
         line_num++;
         assemble_line(line, line_num);
     }
+    flush_pending_byte();
+
+    fclose(fp);
+
+    /* Pass 2: re-assemble from the top of the file, now that every label
+     * (forward or backward) is already in the table from pass 1, so every
+     * resolve_address()/resolve_relative_distance() call sees the real
+     * address. Reset the address/instruction counters but keep the label
+     * table - re-adding the same labels at the same addresses here is
+     * harmless (assembly is deterministic, so pass 2 recomputes identical
+     * addresses; find_label() returns the first match either way). Also
+     * reset .ORG/.DB directive state, which pass 1 left in its end-of-file
+     * condition (origin_set in particular - left set, pass 2 must rediscover
+     * the first .ORG the same way pass 1 did instead of treating it as a
+     * mid-file jump and padding from address 0). */
+    current_address = 0;
+    instruction_count = 0;
+    origin_set = 0;
+    origin_base = 0;
+    db_pending = 0;
+    db_pending_byte = 0;
+
+    fp = fopen(input_file, "r");
+    if (!fp) {
+        fprintf(stderr, "Cannot open input file: %s\n", input_file);
+        free(instructions);
+        return 1;
+    }
+
+    line_num = 0;
+
+    while (fgets(line, sizeof(line), fp)) {
+        line_num++;
+        assemble_line(line, line_num);
+    }
+    flush_pending_byte();
 
     fclose(fp);
 

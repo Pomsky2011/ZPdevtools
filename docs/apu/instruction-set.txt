@@ -13,16 +13,22 @@ Register operands: bit 10 = first register (X=0, Y=1), bit 9 = second register (
 
 ## Instruction Categories
 
-1. Control Flow      — NOP, JMP, JNZ, JZ, JMS, JDP, JSR, JDPS
+1. Control Flow      — NOP, JMP, JNZ, JZ, JMS, JDP, JSR, JDPS, JMX, JSX
 2. Register Mgmt     — SRP, SDP, SDB, SCR, LDA, MOV, EXC, INC, DEC
 3. Logic             — NOR, AND, XOR
 4. Arithmetic        — ADD, SUB, ADC, SBC
 5. Shifts            — CRB
-6. Memory            — STA, STR, LDA, ZOR, ZOA
+6. Memory            — STA, STR, LDA, ZOR, ZOA, STRX, STAX
 7. Flag Operations   — SFR, CF, SF, STF
 8. Stack             — BSP, RET, PUX, PUY, POX, POY, PUDP, PODP
 9. Loop Control      — LST, LFN, BRT, BRP
 10. Conditional      — BEQ, BNE, BLT, BGT, CME, CMN, CMG, CML
+
+STRX/STAX and JMX/JSX are the two instructions in opcodes 0x1D/0x1E - the
+only pair in this ISA whose memory/jump address is computed from a register
+at runtime rather than baked in as a compile-time literal (every other
+memory or jump operand is fixed at assemble time). See their reference
+entries below.
 
 ---
 
@@ -559,9 +565,73 @@ Sets Z flag.
 
 ---
 
-### Opcodes 11100–11111 — Reserved
+### STRX / STAX — Indexed Load / Store
 ```
-Opcodes 0x1C–0x1F are reserved for future use.
+Opcode:  11101 (0x1D)
+Encoding: 11101 R D O 00000000  (R=dataReg, D=mode 0=load/1=store, O=offsetReg)
+Syntax:   STRX offsetReg, dataReg   ; dataReg = mem[(dp<<8) | offsetReg]
+          STAX dataReg, offsetReg   ; mem[(dp<<8) | offsetReg] = dataReg
+Cycles:   4
+
+The only load/store forms whose address byte is a live register value
+instead of a literal encoded at assemble time - STR/STA's $YY offset is
+fixed at assembly time, so a loop over a byte range with STR/STA needs one
+instruction per byte touched. STRX/STAX use whichever of X/Y holds the
+current offset (typically a loop counter advanced with INC X/INC Y),
+letting a data-copy or checksum loop stay small regardless of range size.
+dp itself is still set the normal way (SDP/SDP b,$XX) and advances a page
+at a time via INC DP for ranges spanning more than 256 bytes.
+
+Example (copy 256 bytes from page $30 to page $40, one instruction pair
+per byte regardless of range size). dataReg/offsetReg are each a single
+bit (X or Y only, never an arbitrary R-register), so with X as the
+persistent offset/counter, Y is the only place to land the loaded byte -
+and since Y's value doesn't need to survive past its own STAX each
+iteration, it's free to be reused as the loop-end comparison operand too:
+
+  scr x, 0          ; X = offset/counter, starts at 0
+copy_loop:
+  sdp $30
+  strx x, y          ; Y = mem[$30:X]   (source byte)
+  sdp $40
+  stax y, x           ; mem[$40:X] = Y   (destination byte)
+  inc x                ; advance the offset - wraps 0..255
+  scr y, 0              ; Y is free again (already stored) - reuse as 0
+  cmn x, y, copy_loop    ; loop while X != 0 (terminates once it wraps
+                          ; back to 0 after exactly 256 iterations)
+```
+
+### JMX / JSX — Indexed Jump
+```
+Opcode:  11110 (0x1E)
+Encoding: 11110 D 00000000000  (D=0: JMX, D=1: JSX)
+Syntax:   JMX   ; PC = (Y<<8) | X, no stack push
+          JSX   ; PC = (Y<<8) | X, pushes return address (RET to come back)
+Cycles:   4
+
+The only jump whose target is a runtime register value rather than a
+compile-time literal (every other jump - JMP/JMS/JSR/JDP/BEQ/BNE/BLT/BGT/
+JNZ/JZ - encodes its target address at assemble time, via a fixed offset
+combined with RP or DP/DB). JMX/JSX read the 16-bit target straight from
+X (low byte) and Y (high byte), matching BSP's X=low/Y=high convention -
+this is what makes a real "jump to an address read out of loaded data"
+possible without resorting to self-modifying code.
+
+Example (jump to an address loaded from two header bytes):
+  sdp $30
+  str $04, x    ; X = entry point low byte
+  str $05, y    ; Y = entry point high byte
+  jmx           ; PC = the loaded address
+```
+
+---
+
+### Opcodes 11100, 11111 — Reserved
+```
+Opcode 0x1C is also where the HLT shorthand mnemonic assembles to (a plain
+halting word, operand 0 - see apuasm.c). 0x1F is reserved for future use.
+Any operand under 0x1C or 0x1F that doesn't match a defined encoding halts
+the APU (APU::executeInstruction's default case).
 ```
 
 ---
@@ -599,9 +669,9 @@ Opcodes 0x1C–0x1F are reserved for future use.
 | 0x19   | 11001  | CME/CMN/CMG/CML          | Conditional     |
 | 0x1A   | 11010  | CRB                      | Shift           |
 | 0x1B   | 11011  | XOR                      | Logic           |
-| 0x1C   | 11100  | (reserved)               | —               |
-| 0x1D   | 11101  | (reserved)               | —               |
-| 0x1E   | 11110  | (reserved)               | —               |
+| 0x1C   | 11100  | (reserved; HLT shorthand)| —               |
+| 0x1D   | 11101  | STRX / STAX              | Memory          |
+| 0x1E   | 11110  | JMX / JSX                | Control         |
 | 0x1F   | 11111  | (reserved)               | —               |
 
 ## Flag Register
