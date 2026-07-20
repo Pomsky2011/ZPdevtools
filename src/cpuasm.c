@@ -353,8 +353,19 @@ void resolve_fixups(void) {
         addr = ((uint32_t)labels[idx].bank << 16) | labels[idx].address;
 
         if (f->mode == AM_PC_RELATIVE_LONG) {
-            /* Calculate relative offset (bank-agnostic - BRL is same-bank) */
-            int16_t offset = (int16_t)(labels[idx].address - (f->address + 3));
+            /* Calculate relative offset (bank-agnostic - BRL/PER are
+             * same-bank). f->address was recorded right after the opcode
+             * byte was emitted (add_fixup(pc, ...) above, called before the
+             * 2-byte operand placeholder) - i.e. f->address is already
+             * (opcode address + 1). The real reference point for the
+             * displacement is the address of the NEXT instruction, which is
+             * (opcode address + 3) for these always-3-byte instructions,
+             * i.e. f->address + 2 - the old "+ 3" here (mirroring the same
+             * mistake in the literal-operand branch above) put the
+             * reference point one byte past the real next-instruction
+             * address, so a forward "PER label"/"BRL label" landed one byte
+             * short of the intended target. */
+            int16_t offset = (int16_t)(labels[idx].address - (f->address + 2));
             code[f->address - org] = offset & 0xFF;
             code[f->address - org + 1] = (offset >> 8) & 0xFF;
         } else if (f->size == 1) {
@@ -395,6 +406,18 @@ AddressingMode detect_addressing_mode(const char *operand, const char *mnemonic)
     /* Special case: operand is 'A' for accumulator */
     if (strcmp(operand, "A") == 0 || strcmp(operand, "a") == 0) {
         return AM_ACCUMULATOR;
+    }
+
+    /* BRL/PER always take a PC-relative label/offset operand - a 16-bit
+     * signed displacement computed at assemble time, not a real absolute
+     * address - even though the user-facing syntax ("BRL label") looks
+     * identical to a bare absolute value. Without this, a label/numeric
+     * operand falls through to the generic detection below and comes back
+     * AM_ABSOLUTE, which find_instruction() can never match against BRL/PER
+     * (registered only under AM_PC_RELATIVE_LONG) - "Unknown instruction or
+     * addressing mode" for every use of either mnemonic. */
+    if (strcmp(mnemonic, "BRL") == 0 || strcmp(mnemonic, "PER") == 0) {
+        return AM_PC_RELATIVE_LONG;
     }
 
     /* Immediate */
@@ -461,10 +484,24 @@ AddressingMode detect_addressing_mode(const char *operand, const char *mnemonic)
             if (*(close + 1) == ',') {
                 return AM_DP_INDIRECT_LONG_Y;
             } else {
-                if (close == operand + 7) {  /* [$1234] */
-                    return AM_ABSOLUTE_INDIRECT_LONG;
+                /* [$12] (dp) vs [$1234] (JMP absolute indirect long) -
+                 * decide by value, the same way the parenthesized-indirect
+                 * case above does. The old check ("close == operand + 7")
+                 * was an off-by-one against "[$1234]" (7 chars, ']' at
+                 * index 6, i.e. operand + 6) so it never actually matched a
+                 * normal 4-hex-digit address - AM_ABSOLUTE_INDIRECT_LONG
+                 * was unreachable and every "JMP [addr]" silently fell
+                 * through to AM_DP_INDIRECT_LONG's 1-byte operand instead
+                 * of the real 2-byte one. */
+                start = operand + 1;
+                end = close;
+                len = end - start;
+                strncpy(temp, start, len);
+                temp[len] = '\0';
+                if (parse_number(temp, &val) && val <= 0xFF) {
+                    return AM_DP_INDIRECT_LONG;
                 }
-                return AM_DP_INDIRECT_LONG;
+                return AM_ABSOLUTE_INDIRECT_LONG;
             }
         }
     }
@@ -609,6 +646,13 @@ void init_instructions(void) {
     INST("STP", AM_IMPLIED, 0xFF, 1, 0);
     INST("KIL", AM_IMPLIED, 0xFF, 1, 0);
     INST("BRK", AM_IMMEDIATE, 0x62, 2, 7);
+    /* COP #$sig - GBA-SWI-style software interrupt (src/cpu.cpp opCOP),
+     * vectors through $00:FFE4-FFE5, one slot below BRK's $00:FFE6. INT and
+     * SWI are aliases for the x86/ARM-familiar spellings of the same
+     * opcode. */
+    INST("COP", AM_IMMEDIATE, 0xAF, 2, 7);
+    INST("INT", AM_IMMEDIATE, 0xAF, 2, 7);  /* Alias (x86-style) */
+    INST("SWI", AM_IMMEDIATE, 0xAF, 2, 7);  /* Alias (ARM-style) */
     INST("RTI", AM_IMPLIED, 0x17, 1, 6);
     INST("RTS", AM_IMPLIED, 0x19, 1, 6);
     INST("RTL", AM_IMPLIED, 0x18, 1, 6);
@@ -620,6 +664,13 @@ void init_instructions(void) {
      * fetch and X-keyed interpretation). In 8-bit mode the CPU just reads
      * the low byte and ignores the high one, so emitting both bytes here
      * unconditionally always matches what gets fetched. */
+
+    /* Bit test - BIT (cpu_instructions.cpp 0x01-0x05, never registered here) */
+    INST("BIT", AM_IMMEDIATE, 0x01, 3, 2);
+    INST("BIT", AM_ABSOLUTE, 0x02, 3, 3);
+    INST("BIT", AM_ABSOLUTE_X, 0x03, 3, 3);
+    INST("BIT", AM_DIRECT_PAGE, 0x04, 2, 3);
+    INST("BIT", AM_DP_X, 0x05, 2, 4);
 
     /* Loads - LDA */
     INST("LDA", AM_IMMEDIATE, 0x37, 3, 2);
@@ -661,6 +712,11 @@ void init_instructions(void) {
     INST("STA", AM_DP_INDIRECT_X, 0x4B, 2, 6);
     INST("STA", AM_DP_INDIRECT, 0x4C, 2, 5);
     INST("STA", AM_DP_INDIRECT_Y, 0x4D, 2, 6);
+    /* STA (sr,S),Y / [dp] / [dp],Y: real opcodes, documented in
+     * instruction-set.txt, but never registered here. */
+    INST("STA", AM_SR_INDIRECT_Y, 0x4E, 2, 7);
+    INST("STA", AM_DP_INDIRECT_LONG, 0x4F, 2, 6);
+    INST("STA", AM_DP_INDIRECT_LONG_Y, 0x50, 2, 6);
 
     /* Stores - STX */
     INST("STX", AM_ABSOLUTE, 0x58, 3, 3);
@@ -685,31 +741,106 @@ void init_instructions(void) {
     INST("ADC", AM_ABSOLUTE_Y, 0xB9, 3, 3);
     INST("ADC", AM_DIRECT_PAGE, 0x66, 2, 3);
     INST("ADC", AM_DP_X, 0xBA, 2, 4);
+    /* ADC's remaining addressing-mode variants (0xB0-0xB5, 0xBB-0xBD): real
+     * opcodes, documented in instruction-set.txt, but never registered here. */
+    INST("ADC", AM_DP_INDIRECT_Y, 0xB0, 2, 5);
+    INST("ADC", AM_DP_INDIRECT_X, 0xB1, 2, 6);
+    INST("ADC", AM_DP_INDIRECT, 0xB2, 2, 5);
+    INST("ADC", AM_SR_INDIRECT_Y, 0xB3, 2, 7);
+    INST("ADC", AM_DP_INDIRECT_LONG, 0xB4, 2, 6);
+    INST("ADC", AM_DP_INDIRECT_LONG_Y, 0xB5, 2, 6);
+    INST("ADC", AM_ABSOLUTE_LONG, 0xBB, 4, 5);
+    INST("ADC", AM_ABSOLUTE_LONG_X, 0xBC, 4, 5);
+    INST("ADC", AM_STACK_RELATIVE, 0xBD, 2, 4);
 
     /* Arithmetic - SBC */
     INST("SBC", AM_IMMEDIATE, 0xE1, 3, 2);
     INST("SBC", AM_ABSOLUTE, 0xE2, 3, 3);
     INST("SBC", AM_ABSOLUTE_Y, 0xE4, 3, 3);
     INST("SBC", AM_DIRECT_PAGE, 0xE5, 2, 3);
+    /* SBC's remaining addressing-mode variants (0xDC-0xE0, 0xE3, 0xE6-0xE9):
+     * real opcodes, documented in instruction-set.txt, but never registered
+     * here. */
+    INST("SBC", AM_DP_INDIRECT_X, 0xDC, 2, 6);
+    INST("SBC", AM_DP_INDIRECT_Y, 0xDD, 2, 5);
+    INST("SBC", AM_SR_INDIRECT_Y, 0xDE, 2, 7);
+    INST("SBC", AM_DP_INDIRECT_LONG, 0xDF, 2, 6);
+    INST("SBC", AM_DP_INDIRECT_LONG_Y, 0xE0, 2, 6);
+    INST("SBC", AM_ABSOLUTE_X, 0xE3, 3, 3);
+    INST("SBC", AM_DP_X, 0xE6, 2, 4);
+    INST("SBC", AM_ABSOLUTE_LONG, 0xE7, 4, 5);
+    INST("SBC", AM_ABSOLUTE_LONG_X, 0xE8, 4, 5);
+    INST("SBC", AM_STACK_RELATIVE, 0xE9, 2, 4);
 
     /* Arithmetic - INC/DEC */
     INST("INC", AM_ACCUMULATOR, 0x69, 1, 2);
     INST("INC", AM_ABSOLUTE, 0x6A, 3, 3);
+    INST("INC", AM_ABSOLUTE_X, 0x6B, 3, 3);
     INST("INC", AM_DIRECT_PAGE, 0x6C, 2, 5);
+    INST("INC", AM_DP_X, 0x6D, 2, 6);
+    /* 0x6E (cpu_inst_0x6E) is commented "INC long" in cpu_instructions.cpp
+     * but actually calls addrAbsolute() - a plain 2-byte/3-byte-instruction
+     * absolute operand, not a real 24-bit long form (that would need
+     * addrAbsoluteLong()/fetch24()). Its addressing syntax is therefore
+     * identical to 0x6A's (both "INC $1234"), just at a higher fixed cycle
+     * cost (6 vs 3) - functionally a redundant duplicate encoding. Registered
+     * here for documentation/table completeness and so cpudisasm.c's byte
+     * count agrees with this file, but find_instruction() always returns the
+     * first AM_ABSOLUTE match (0x6A), so this entry is unreachable from
+     * plain "INC $1234" source - that's expected, not a bug: there is no
+     * addressing-mode distinction between the two encodings to key off of. */
+    INST("INC", AM_ABSOLUTE, 0x6E, 3, 6);
     INST("INX", AM_IMPLIED, 0x6F, 1, 2);
     INST("INY", AM_IMPLIED, 0x70, 1, 2);
 
-    INST("DEC", AM_ACCUMULATOR, 0x71, 2, 2);
+    INST("DEC", AM_ACCUMULATOR, 0x71, 1, 2);
     INST("DEC", AM_ABSOLUTE, 0x72, 3, 3);
+    INST("DEC", AM_ABSOLUTE_X, 0x73, 3, 3);
     INST("DEC", AM_DIRECT_PAGE, 0x74, 2, 5);
+    INST("DEC", AM_DP_X, 0x75, 2, 6);
+    /* 0x76 mirrors 0x6E above ("DEC long" comment, actually addrAbsolute(),
+     * same shadowed-duplicate situation vs 0x72). */
+    INST("DEC", AM_ABSOLUTE, 0x76, 3, 6);
     INST("DEX", AM_IMPLIED, 0x77, 1, 2);
     INST("DEY", AM_IMPLIED, 0x78, 1, 2);
 
     /* Logic */
     INST("AND", AM_IMMEDIATE, 0xC4, 3, 2);
     INST("AND", AM_ABSOLUTE, 0xC5, 3, 3);
+    /* AND's remaining addressing-mode variants (0xBE-0xC3, 0xC6-0xCC): real
+     * opcodes, documented in instruction-set.txt, but never registered here. */
+    INST("AND", AM_DP_INDIRECT_X, 0xBE, 2, 6);
+    INST("AND", AM_DP_INDIRECT, 0xBF, 2, 5);
+    INST("AND", AM_DP_INDIRECT_Y, 0xC0, 2, 5);
+    INST("AND", AM_SR_INDIRECT_Y, 0xC1, 2, 7);
+    INST("AND", AM_DP_INDIRECT_LONG, 0xC2, 2, 6);
+    INST("AND", AM_DP_INDIRECT_LONG_Y, 0xC3, 2, 6);
+    INST("AND", AM_ABSOLUTE_X, 0xC6, 3, 3);
+    INST("AND", AM_ABSOLUTE_Y, 0xC7, 3, 3);
+    INST("AND", AM_DIRECT_PAGE, 0xC8, 2, 3);
+    INST("AND", AM_DP_X, 0xC9, 2, 4);
+    INST("AND", AM_ABSOLUTE_LONG, 0xCA, 4, 5);
+    INST("AND", AM_ABSOLUTE_LONG_X, 0xCB, 4, 5);
+    INST("AND", AM_STACK_RELATIVE, 0xCC, 2, 4);
+
     INST("ORA", AM_IMMEDIATE, 0xD3, 3, 2);
     INST("ORA", AM_ABSOLUTE, 0xD4, 3, 3);
+    /* ORA's remaining addressing-mode variants (0xCD-0xD2, 0xD5-0xDB): real
+     * opcodes, documented in instruction-set.txt, but never registered here. */
+    INST("ORA", AM_DP_INDIRECT_X, 0xCD, 2, 6);
+    INST("ORA", AM_DP_INDIRECT, 0xCE, 2, 5);
+    INST("ORA", AM_DP_INDIRECT_Y, 0xCF, 2, 5);
+    INST("ORA", AM_SR_INDIRECT_Y, 0xD0, 2, 7);
+    INST("ORA", AM_DP_INDIRECT_LONG, 0xD1, 2, 6);
+    INST("ORA", AM_DP_INDIRECT_LONG_Y, 0xD2, 2, 6);
+    INST("ORA", AM_ABSOLUTE_X, 0xD5, 3, 3);
+    INST("ORA", AM_ABSOLUTE_Y, 0xD6, 3, 3);
+    INST("ORA", AM_DIRECT_PAGE, 0xD7, 2, 3);
+    INST("ORA", AM_DP_X, 0xD8, 2, 4);
+    INST("ORA", AM_ABSOLUTE_LONG, 0xD9, 4, 5);
+    INST("ORA", AM_ABSOLUTE_LONG_X, 0xDA, 4, 5);
+    INST("ORA", AM_STACK_RELATIVE, 0xDB, 2, 4);
+
     INST("XOR", AM_IMMEDIATE, 0xF9, 3, 2);
     INST("EOR", AM_IMMEDIATE, 0xF9, 3, 2);  /* Alias */
     /* XOR addr: real opcode (cpu_inst_0x95, commented "EOR addr" there but
@@ -717,6 +848,23 @@ void init_instructions(void) {
      * registered here - only the immediate form was. */
     INST("XOR", AM_ABSOLUTE, 0x95, 3, 3);
     INST("EOR", AM_ABSOLUTE, 0x95, 3, 3);  /* Alias */
+    /* XOR's remaining addressing-mode variants (0x96-0x97, 0x9D-0x9F,
+     * 0xF8, 0xFA-0xFE): real opcodes (cpu_instructions.cpp inconsistently
+     * comments some of these "EOR" too - same alias, same opXOR() handler),
+     * documented in instruction-set.txt, but never registered here. */
+    INST("XOR", AM_ABSOLUTE_X, 0x96, 3, 3);
+    INST("EOR", AM_ABSOLUTE_X, 0x96, 3, 3);  /* Alias */
+    INST("XOR", AM_ABSOLUTE_Y, 0x97, 3, 3);
+    INST("EOR", AM_ABSOLUTE_Y, 0x97, 3, 3);  /* Alias */
+    INST("XOR", AM_DP_INDIRECT_X, 0x9D, 2, 6);
+    INST("XOR", AM_DP_INDIRECT, 0x9E, 2, 5);
+    INST("XOR", AM_DP_INDIRECT_Y, 0x9F, 2, 5);
+    INST("XOR", AM_SR_INDIRECT_Y, 0xF8, 2, 7);
+    INST("XOR", AM_DIRECT_PAGE, 0xFA, 2, 3);
+    INST("XOR", AM_DP_X, 0xFB, 2, 4);
+    INST("XOR", AM_ABSOLUTE_LONG, 0xFC, 4, 5);
+    INST("XOR", AM_ABSOLUTE_LONG_X, 0xFD, 4, 5);
+    INST("XOR", AM_STACK_RELATIVE, 0xFE, 2, 4);
 
     /* Shifts */
     INST("ASL", AM_ACCUMULATOR, 0x98, 1, 2);
@@ -741,11 +889,26 @@ void init_instructions(void) {
     INST("ROR", AM_ABSOLUTE, 0x85, 3, 3);
     INST("ROR", AM_ABSOLUTE_X, 0x86, 3, 3);
     INST("ROR", AM_DIRECT_PAGE, 0x87, 2, 5);
+    /* RCL A (0x8C): real opcode, documented in instruction-set.txt, but
+     * never registered here. Bare "RCL" (no operand) resolves to
+     * AM_ACCUMULATOR too, via detect_addressing_mode()'s implied-accumulator
+     * mnemonic list, which already includes RCL. */
+    INST("RCL", AM_ACCUMULATOR, 0x8C, 1, 4);
+    /* SHL/SHR X,Y (0x88-0x8B) are NOT registered here - see the dedicated
+     * special-case block in assemble_line() (mirrors the DIV X,Y handling
+     * below): both take a bare register name (X or Y) as their only operand,
+     * with the register itself selecting the opcode, which the
+     * mnemonic+AM_* lookup table has no way to express (AM_IMPLIED can only
+     * ever map a mnemonic to a single opcode). */
 
     /* Jumps */
     INST("JMP", AM_ABSOLUTE, 0x0F, 3, 4);
     INST("JMP", AM_ABSOLUTE_LONG, 0x10, 4, 4);
     INST("JMP", AM_ABSOLUTE_INDEXED_INDIRECT, 0x0C, 3, 4);
+    /* JMP (addr) / JMP [addr] (0x0D/0x0E): real opcodes, documented in
+     * instruction-set.txt, but never registered here. */
+    INST("JMP", AM_ABSOLUTE_INDIRECT, 0x0D, 3, 4);
+    INST("JMP", AM_ABSOLUTE_INDIRECT_LONG, 0x0E, 3, 4);
     INST("JSR", AM_ABSOLUTE, 0x12, 3, 4);
     INST("JSR", AM_ABSOLUTE_INDEXED_INDIRECT, 0x11, 3, 4);
     INST("BRL", AM_PC_RELATIVE_LONG, 0x08, 3, 4);
@@ -771,9 +934,30 @@ void init_instructions(void) {
     INST("PHX", AM_IMPLIED, 0x30, 1, 3);
     INST("PHY", AM_IMPLIED, 0x31, 1, 3);
     INST("PHP", AM_IMPLIED, 0x2F, 1, 3);
-    INST("PLP", AM_IMPLIED, 0x33, 1, 3);
+    INST("POPF", AM_IMPLIED, 0x33, 1, 3);
+    INST("PLP", AM_IMPLIED, 0x33, 1, 3);  /* Alias */
     INST("PHD", AM_IMPLIED, 0x2D, 1, 4);
     INST("PHB", AM_IMPLIED, 0x2C, 1, 3);
+    /* PHK (0x2E): real opcode, documented in instruction-set.txt, but never
+     * registered here. */
+    INST("PHK", AM_IMPLIED, 0x2E, 1, 3);
+    /* WAI (0x1C): real opcode, documented in instruction-set.txt, but never
+     * registered here. */
+    INST("WAI", AM_IMPLIED, 0x1C, 1, 3);
+    /* PUSH word / PEA addr / PEI (dp) / PER label (0x27-0x2A): real opcodes,
+     * documented in instruction-set.txt, but never registered here.
+     * PUSH/PEA are functionally identical in cpu.cpp (both fetch16() a
+     * literal 16-bit value and push16() it) - only the mnemonic differs, so
+     * "PUSH #$1234" (immediate, x86-PUSH-style syntax) and "PEA $1234"
+     * (bare absolute, real-65816-PEA-style syntax) are kept as separate
+     * addressing-mode conventions rather than forcing one syntax onto both
+     * mnemonics. PEI takes a direct-page-indirect operand like real 65816
+     * PEI. PER takes a PC-relative label/offset like BRL - see the
+     * BRL/PER carve-out added to detect_addressing_mode() above. */
+    INST("PUSH", AM_IMMEDIATE, 0x27, 3, 3);
+    INST("PEA", AM_ABSOLUTE, 0x28, 3, 3);
+    INST("PEI", AM_DP_INDIRECT, 0x29, 2, 6);
+    INST("PER", AM_PC_RELATIVE_LONG, 0x2A, 3, 6);
 
     /* Flags */
     INST("SEC", AM_IMPLIED, 0x63, 1, 2);
@@ -803,6 +987,19 @@ void init_instructions(void) {
     INST("CMP", AM_ABSOLUTE, 0xA7, 3, 3);
     INST("CMP", AM_ABSOLUTE_X, 0xA8, 3, 3);
     INST("CMP", AM_ABSOLUTE_Y, 0xA9, 3, 3);
+    /* CMP's remaining addressing-mode variants (0xA0-0xA5, 0xAA-0xAE): real
+     * opcodes, documented in instruction-set.txt, but never registered here. */
+    INST("CMP", AM_DP_INDIRECT_X, 0xA0, 2, 6);
+    INST("CMP", AM_DP_INDIRECT, 0xA1, 2, 5);
+    INST("CMP", AM_DP_INDIRECT_Y, 0xA2, 2, 5);
+    INST("CMP", AM_SR_INDIRECT_Y, 0xA3, 2, 7);
+    INST("CMP", AM_DP_INDIRECT_LONG, 0xA4, 2, 6);
+    INST("CMP", AM_DP_INDIRECT_LONG_Y, 0xA5, 2, 6);
+    INST("CMP", AM_DIRECT_PAGE, 0xAA, 2, 3);
+    INST("CMP", AM_DP_X, 0xAB, 2, 4);
+    INST("CMP", AM_ABSOLUTE_LONG, 0xAC, 4, 5);
+    INST("CMP", AM_ABSOLUTE_LONG_X, 0xAD, 4, 5);
+    INST("CMP", AM_STACK_RELATIVE, 0xAE, 2, 4);
     INST("CPX", AM_ABSOLUTE, 0x79, 3, 3);
     INST("CPY", AM_ABSOLUTE, 0x7A, 3, 3);
 
@@ -1090,6 +1287,31 @@ int assemble_line(char *line) {
             error("DIV expects 'X,Y', 'long,X' or 'long,Y'");
             return -1;
         }
+    } else if (strcmp(token, "SHL") == 0 || strcmp(token, "SHR") == 0) {
+        /* SHL/SHR X,Y (0x88-0x8B): each mnemonic covers two opcodes - one
+         * per register - selected by the bare register name in the operand
+         * (there is no memory-operand form at all). That's not expressible
+         * as a single (mnemonic, AM_*) table entry the way every other
+         * instruction here is, so - like DIV X,Y above - dispatch on the
+         * operand text directly instead of going through
+         * detect_addressing_mode()/find_instruction(). */
+        char norm[MAX_LINE];
+        int k = 0;
+        for (i = 0; operand[i] && k < MAX_LINE - 1; i++) {
+            char ch = (char)toupper((unsigned char)operand[i]);
+            if (ch != ' ' && ch != '\t') norm[k++] = ch;
+        }
+        norm[k] = '\0';
+        if (strcmp(norm, "X") == 0) {
+            emit_byte(token[2] == 'L' ? 0x88 : 0x8A);  /* SHL X / SHR X */
+            return 0;
+        } else if (strcmp(norm, "Y") == 0) {
+            emit_byte(token[2] == 'L' ? 0x89 : 0x8B);  /* SHL Y / SHR Y */
+            return 0;
+        } else {
+            error("SHL/SHR expects 'X' or 'Y'");
+            return -1;
+        }
     } else {
         /* Detect addressing mode */
         mode = detect_addressing_mode(operand, token);
@@ -1168,8 +1390,19 @@ int assemble_line(char *line) {
             emit_byte(value & 0xFF);
         } else if (inst->bytes == 3) {
             if (mode == AM_PC_RELATIVE_LONG && !is_label) {
-                /* Calculate relative offset */
-                int16_t offset = (int16_t)(value - (pc + 1));
+                /* Calculate relative offset. BRL/PER (cpu.cpp opBRL()/
+                 * opPER()) add the signed offset to PC as it stands right
+                 * after the 2-byte operand is fetched - i.e. relative to
+                 * the address of the NEXT instruction (this 3-byte
+                 * instruction's own address + 3). `pc` here is read after
+                 * emit_byte(opcode) but before the operand bytes are
+                 * emitted, so it's already (opcode address + 1); the
+                 * reference point is therefore pc + 2, not pc + 1 - the old
+                 * "+ 1" undershot by one byte, so a literal-address
+                 * "PER $target" or "BRL $target" landed one byte before the
+                 * intended target. See the matching fixup-path fix in
+                 * resolve_fixups() below for the label-operand case. */
+                int16_t offset = (int16_t)(value - (pc + 2));
                 emit_word(offset);
             } else if (is_label && mode == AM_PC_RELATIVE_LONG) {
                 /* Add fixup for relative address */

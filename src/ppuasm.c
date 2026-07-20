@@ -72,7 +72,9 @@ static const struct {
     int opcode;
 } basic_opcodes[] = {
     {"DEFCALL",    0x0},
-    {"ENDDEFCALL", 0x1},
+    {"MOVXP",      0x1},
+    {"ENDDEFCALL", 0x1},  /* Alias (old name predating the MOVXP rename) */
+    {"NOP",        0x1},
     {"SWAPREG",    0x2},
     {"CLR",        0x3},
     {"CMP",        0x4},
@@ -586,9 +588,13 @@ static unsigned short assemble_instruction(Instruction *inst) {
         reg_y = parse_register(inst->operand2, inst->line_num);
         operand = (reg_x << 6) | reg_y;
     }
-    else if (strcmp(inst->mnemonic, "ENDDEFCALL") == 0) {
-        /* ENDDEFCALL X - encoding: 0001 000000 XXXXXX */
+    else if (strcmp(inst->mnemonic, "MOVXP") == 0 || strcmp(inst->mnemonic, "ENDDEFCALL") == 0) {
+        /* MOVXP X (formerly ENDDEFCALL) - encoding: 0001 0 00000 XXXXXX */
         operand = parse_register(inst->operand1, inst->line_num) & 0x3F;
+    }
+    else if (strcmp(inst->mnemonic, "NOP") == 0) {
+        /* NOP - encoding: 0001 1 ----------- (bit 11 set, rest don't-care) */
+        operand = 0x800;
     }
     else if (strcmp(inst->mnemonic, "SWAPREG") == 0) {
         reg_x = parse_register(inst->operand1, inst->line_num);
@@ -732,11 +738,16 @@ static void expand_shorthands(FILE *fp) {
             continue;
         }
 
-        /* Expand PUSH shorthand */
+        /* Expand PUSH shorthand. SP is incremented *before* SETDP, matching
+         * the native push convention (PPU::pushReturnAddress in ppu.h: SP +=
+         * 2, then write at the new SP) - writing at the pre-increment SP
+         * here left PUSH/POP reading from different addresses (POP/RET both
+         * SETDP before decrementing, so they read the current top-of-stack
+         * word, not where the old PUSH order wrote). */
         if (strcmp(mnemonic, "PUSH") == 0) {
+            sprintf(expanded_lines[expanded_line_count++], "INC SP");
+            sprintf(expanded_lines[expanded_line_count++], "INC SP");
             sprintf(expanded_lines[expanded_line_count++], "SETDP SP");
-            sprintf(expanded_lines[expanded_line_count++], "INC SP");
-            sprintf(expanded_lines[expanded_line_count++], "INC SP");
             sprintf(expanded_lines[expanded_line_count++], "MOVDP %s", op1);
             continue;
         }
@@ -760,17 +771,32 @@ static void expand_shorthands(FILE *fp) {
             continue;
         }
 
-        /* Expand JSR shorthand */
+        /* Expand JSR shorthand. The old expansion pushed PC's *current*
+         * value as the "return address" before PC had ever been loaded with
+         * one (it was only overwritten afterward with the call target), so
+         * RET always popped garbage. Fixed version loads PC with the
+         * compile-time address of the instruction right after this
+         * expansion (a synthetic @jsr_ret_N label, same trick HLT/JMR-label
+         * already use for a compile-time-known target), pushes that with
+         * the corrected push order, then loads and jumps to the real
+         * target. */
         if (strcmp(mnemonic, "JSR") == 0) {
+            char ret_label[64];
+            sprintf(ret_label, "@jsr_ret_%d", auto_label_counter++);
+            sprintf(expanded_lines[expanded_line_count++], "TARREG 0, LSB, PC");
+            sprintf(expanded_lines[expanded_line_count++], "TARREG 1, MSB, PC");
+            sprintf(expanded_lines[expanded_line_count++], "SETBYTE 0, %s", ret_label);
+            sprintf(expanded_lines[expanded_line_count++], "SETBYTE 1, %s", ret_label);
+            sprintf(expanded_lines[expanded_line_count++], "INC SP");
+            sprintf(expanded_lines[expanded_line_count++], "INC SP");
             sprintf(expanded_lines[expanded_line_count++], "SETDP SP");
-            sprintf(expanded_lines[expanded_line_count++], "INC SP");
-            sprintf(expanded_lines[expanded_line_count++], "INC SP");
             sprintf(expanded_lines[expanded_line_count++], "MOVDP PC");
             sprintf(expanded_lines[expanded_line_count++], "TARREG 0, LSB, PC");
             sprintf(expanded_lines[expanded_line_count++], "TARREG 1, MSB, PC");
             sprintf(expanded_lines[expanded_line_count++], "SETBYTE 0, %s", op1);
             sprintf(expanded_lines[expanded_line_count++], "SETBYTE 1, %s", op1);
             sprintf(expanded_lines[expanded_line_count++], "JMR");
+            sprintf(expanded_lines[expanded_line_count++], "%s:", ret_label);
             continue;
         }
 

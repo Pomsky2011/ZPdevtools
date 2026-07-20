@@ -28,16 +28,18 @@ typedef struct {
     const char* description;
 } InstrInfo;
 
-/* Basic instructions (0x0-0xD) */
+/* Basic instructions (0x0-0xD). Mnemonic is NULL for opcodes 0x1/0x6/0x7,
+ * which pick between two mnemonics via bit 11 of the operand at decode time
+ * (see disassemble_instruction) and can't be printed from a static table. */
 static const InstrInfo basic_instructions[14] = {
     {"DEFCALL", "Define call address"},
-    {"MOVXP", "Move execution pointer (or NOP)"},
+    {NULL, "Move execution pointer / NOP"},
     {"SWAPREG", "Swap two registers"},
     {"CLR", "Clear register"},
     {"CMP", "Compare registers"},
     {"CLRF", "Clear flags"},
-    {"JMZ/JMG", "Jump if zero/greater"},
-    {"JNZ/JNG/JML", "Jump if not zero/not greater/less"},
+    {NULL, "Jump if zero/greater"},
+    {NULL, "Jump if not zero/not greater"},
     {"INC", "Increment register"},
     {"DEC", "Decrement register"},
     {"ADD", "Add registers"},
@@ -46,16 +48,16 @@ static const InstrInfo basic_instructions[14] = {
     {"INTDIV", "Integer divide registers"}
 };
 
-/* Preset E instructions */
+/* Preset E instructions (subop = bits 11-10 of the operand, 2 bits) */
 static const char* preset_e_names[] = {
     "TARREG", "SETBYTE", "BUILD", "CPREG"
 };
 
-/* Preset F instructions */
+/* Preset F instructions (subop = bits 11-8 of the operand, 4 bits) */
 static const char* preset_f_names[] = {
     "SETPOS", "SETTILE", "SETDP", "MOVDP", "SETRENDMOD",
     "PALETTE16", "PALETTE256", "JMR", "MOV", "SETREGBANK",
-    "CLRTILE", "CLRPALETTE", "TILEDRAW", "RESERVED", "CALL", "GBLS"
+    "CLRTILE", "CLRPALETTE", "TILEDRAW", "SETTILEBANK", "CALL", "GBLS"
 };
 
 /* Read file */
@@ -136,25 +138,37 @@ static void disassemble_instruction(uint8_t* data, size_t offset, size_t max_siz
 
     /* Decode instruction */
     if (opcode <= 0xD) {
-        /* Basic instruction */
-        fprintf(out, "%-12s", basic_instructions[opcode].mnemonic);
+        /* Basic instruction. Encodings per ppu.cpp: DEFCALL/SWAPREG/CMP/
+         * ADD/SUB/MUL/INTDIV pack two 6-bit registers as (X<<6)|Y; CLR/INC/
+         * DEC take a single 6-bit register in the low 6 bits; CLRF and the
+         * two branch opcodes take no register operand at all (branches jump
+         * via REG_PC, not an operand field); opcode 0x1 and the two branch
+         * opcodes (0x6/0x7) each pick their real mnemonic from bit 11. */
+        const char *mnemonic;
+        switch (opcode) {
+            case 0x1: mnemonic = (operand & 0x800) ? "NOP" : "MOVXP"; break;
+            case 0x6: mnemonic = (operand & 0x800) ? "JMG"  : "JMZ";  break;
+            case 0x7: mnemonic = (operand & 0x800) ? "JNG"  : "JNZ"; break;
+            default:  mnemonic = basic_instructions[opcode].mnemonic; break;
+        }
+        fprintf(out, "%-12s", mnemonic);
 
-        /* Show operand based on instruction */
-        if (opcode == 0x0) {
-            /* DEFCALL - operand is address */
-            fprintf(out, " $%03X", operand);
-        } else if (opcode >= 0x2 && opcode <= 0xD) {
-            /* Most instructions use register operands */
-            uint8_t reg1 = (operand >> 6) & 0x3F;
-            uint8_t reg2 = operand & 0x3F;
-            fprintf(out, " R%d, R%d", reg1, reg2);
-        } else if (opcode == 0x1) {
-            /* MOVXP/NOP */
-            if (operand == 0) {
-                fprintf(out, " (NOP)");
-            } else {
-                fprintf(out, " $%03X", operand);
-            }
+        switch (opcode) {
+            case 0x0: case 0x2: case 0x4: case 0xA: case 0xB: case 0xC: case 0xD:
+                fprintf(out, " R%d, R%d", (operand >> 6) & 0x3F, operand & 0x3F);
+                break;
+            case 0x1:
+                /* MOVXP RY; NOP takes no operand */
+                if (!(operand & 0x800)) {
+                    fprintf(out, " R%d", operand & 0x3F);
+                }
+                break;
+            case 0x3: case 0x8: case 0x9:
+                fprintf(out, " R%d", operand & 0x3F);
+                break;
+            default:
+                /* 0x5 CLRF, 0x6 JMZ/JMG, 0x7 JNZ/JNG - no operand */
+                break;
         }
 
         if (show_comments) {
@@ -162,41 +176,79 @@ static void disassemble_instruction(uint8_t* data, size_t offset, size_t max_siz
         }
 
     } else if (opcode == 0xE) {
-        /* Preset E */
-        uint8_t subop = (operand >> 8) & 0xF;
-        uint8_t param = operand & 0xFF;
+        /* Preset E: subop = bits 11-10 (2 bits), suboperand = bits 9-0 (10 bits) */
+        uint8_t subop = (operand >> 10) & 0x3;
+        uint16_t suboperand = operand & 0x3FF;
 
-        if (subop < 4) {
-            fprintf(out, "%-12s", preset_e_names[subop]);
+        fprintf(out, "%-12s", preset_e_names[subop]);
 
-            if (subop == 0) {
-                /* TARREG T, Y, X */
-                uint8_t T = (param >> 6) & 0x3;
-                uint8_t Y = (param >> 3) & 0x7;
-                uint8_t X = param & 0x7;
+        switch (subop) {
+            case 0: {
+                /* TARREG T, LSB/MSB, RX - encoding: TT Y 0 XXXXXX */
+                uint8_t T = (suboperand >> 8) & 0x3;
+                uint8_t Y = (suboperand >> 7) & 0x1;
+                uint8_t X = suboperand & 0x3F;
                 fprintf(out, " %d, %s, R%d", T, Y ? "MSB" : "LSB", X);
-            } else if (subop == 1) {
-                /* SETBYTE T, imm8 */
-                uint8_t T = (param >> 6) & 0x3;
-                uint8_t imm = param & 0x3F;
-                fprintf(out, " %d, $%02X", T, imm);
-            } else {
-                fprintf(out, " $%02X", param);
+                break;
             }
-        } else {
-            fprintf(out, "PRESET_E_%X  $%02X", subop, param);
+            case 1: {
+                /* SETBYTE T, $imm - encoding: TT XXXXXXXX */
+                uint8_t T = (suboperand >> 8) & 0x3;
+                uint8_t imm = suboperand & 0xFF;
+                fprintf(out, " %d, $%02X", T, imm);
+                break;
+            }
+            case 2: {
+                /* BUILD T1, T2, Rdest - encoding: TT TT XXXXXX */
+                uint8_t T1 = (suboperand >> 8) & 0x3;
+                uint8_t T2 = (suboperand >> 6) & 0x3;
+                uint8_t dest = suboperand & 0x3F;
+                fprintf(out, " %d, %d, R%d", T1, T2, dest);
+                break;
+            }
+            case 3: {
+                /* CPREG RX, RY - encoding: 00 XXXX YYYY */
+                uint8_t rx = (suboperand >> 4) & 0xF;
+                uint8_t ry = suboperand & 0xF;
+                fprintf(out, " R%d, R%d", rx, ry);
+                break;
+            }
         }
 
     } else if (opcode == 0xF) {
-        /* Preset F */
+        /* Preset F: subop = bits 11-8 (4 bits), param = bits 7-0 (8 bits) */
         uint8_t subop = (operand >> 8) & 0xF;
         uint8_t param = operand & 0xFF;
 
-        if (subop < 16) {
-            fprintf(out, "%-12s", preset_f_names[subop]);
-            fprintf(out, " $%02X", param);
-        } else {
-            fprintf(out, "PRESET_F_%X  $%02X", subop, param);
+        fprintf(out, "%-12s", preset_f_names[subop]);
+
+        switch (subop) {
+            case 0x0: /* SETPOS RX, RY */
+                fprintf(out, " R%d, R%d", (param >> 4) & 0xF, param & 0xF);
+                break;
+            case 0x1: /* SETTILE RX, mode */
+                fprintf(out, " R%d, %d", (param >> 2) & 0x3F, param & 0x3);
+                break;
+            case 0x2: /* SETDP RX */
+            case 0x3: /* MOVDP RX */
+            case 0x8: /* MOV RX */
+            case 0xD: /* SETTILEBANK RX */
+            case 0xF: /* GBLS RX */
+                fprintf(out, " R%d", (param >> 2) & 0x3F);
+                break;
+            case 0x4: /* SETRENDMOD mode */
+                fprintf(out, " %d", (param >> 7) & 0x1);
+                break;
+            case 0x9: /* SETREGBANK bankX, bankY */
+                fprintf(out, " %d, %d", (param >> 4) & 0x3, (param >> 2) & 0x3);
+                break;
+            case 0xE: /* CALL $imm */
+                fprintf(out, " $%02X", param);
+                break;
+            default:
+                /* 0x5 PALETTE16, 0x6 PALETTE256, 0x7 JMR, 0xA CLRTILE,
+                 * 0xB CLRPALETTE, 0xC TILEDRAW - no operand */
+                break;
         }
     }
 

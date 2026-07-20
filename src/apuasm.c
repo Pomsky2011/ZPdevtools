@@ -173,9 +173,27 @@ void assemble_line(char* line, int line_num) {
         emit_instruction(encode_instruction(0x00, stall));
     }
     else if (strcmp(upper_mnemonic, "JMP") == 0) {
-        if (token_count >= 2) {
+        /* Real encoding (APU::execJMP, apu.cpp): direction=bit9, mode=bit8,
+         * offset=bits7-0 - not the doc's D=bit10/M=bit9/fixed-0=bit8 (off by
+         * one bit; bit10 is unused dead weight in real hardware). Relative
+         * is only taken when bits9-8 are both 0, which also means the
+         * "backward" direction (bit9=1, bit8=0) is unreachable - that
+         * combination decodes as absolute-BIOS instead. So: bare "JMP $ZZ"
+         * is a forward-only relative jump (bits9-8=00); "JMP D, M, $ZZ"
+         * (doc-style 3-arg form) selects absolute addressing via M
+         * (0=$80ZZ BIOS, 1=$RPZZ) - D is accepted for doc compatibility but
+         * has no reachable effect and is ignored, matching real hardware. */
+        if (token_count >= 4) {
+            int mode = parse_number(tokens[2]);
+            int addr = parse_number(tokens[3]);
+            if (mode) {
+                emit_instruction(encode_instruction(0x01, 0x100 | (addr & 0xFF)));  /* $RPZZ */
+            } else {
+                emit_instruction(encode_instruction(0x01, 0x200 | (addr & 0xFF)));  /* $80ZZ (BIOS) */
+            }
+        } else if (token_count >= 2) {
             int addr = parse_number(tokens[1]);
-            emit_instruction(encode_instruction(0x01, addr & 0x7FF));
+            emit_instruction(encode_instruction(0x01, addr & 0xFF));
         }
     }
     else if (strcmp(upper_mnemonic, "JNZ") == 0) {
@@ -226,40 +244,65 @@ void assemble_line(char* line, int line_num) {
     else if (strcmp(upper_mnemonic, "PUY")  == 0) { emit_instruction(encode_instruction(0x17, 0x500)); }
     else if (strcmp(upper_mnemonic, "POX")  == 0) { emit_instruction(encode_instruction(0x17, 0x600)); }
     else if (strcmp(upper_mnemonic, "POY")  == 0) { emit_instruction(encode_instruction(0x17, 0x700)); }
+    /* NOR/AND/ADD/SUB (opcodes 0x04-0x07) share one encoding shape:
+     * toMem = !(operand & 0x100) in apu.cpp - bit8 CLEAR means "store the
+     * word result to dp:$offset (bits7-0)", bit8 SET means "store to
+     * register Z (bits6-0)". Same $-prefix-vs-register-name dispatch XOR/CRB
+     * already use below to pick between their two forms. */
     else if (strcmp(upper_mnemonic, "NOR") == 0) {
         if (token_count >= 4) {
             int rx = parse_register(tokens[1]);
             int ry = parse_register(tokens[2]);
-            int rz = parse_register(tokens[3]);
-            uint16_t operand = ((rx & 1) << 10) | ((ry & 1) << 9) | 0x100 | (rz & 0x7F);
-            emit_instruction(encode_instruction(0x04, operand));
+            char first = tokens[3][0];
+            if (first == '$' || first == '0' || (first >= '1' && first <= '9')) {
+                int offset = parse_number(tokens[3]);
+                emit_instruction(encode_instruction(0x04, ((rx & 1) << 10) | ((ry & 1) << 9) | (offset & 0xFF)));
+            } else {
+                int rz = parse_register(tokens[3]);
+                emit_instruction(encode_instruction(0x04, ((rx & 1) << 10) | ((ry & 1) << 9) | 0x100 | (rz & 0x7F)));
+            }
         }
     }
     else if (strcmp(upper_mnemonic, "AND") == 0) {
         if (token_count >= 4) {
             int rx = parse_register(tokens[1]);
             int ry = parse_register(tokens[2]);
-            int rz = parse_register(tokens[3]);
-            uint16_t operand = ((rx & 1) << 10) | ((ry & 1) << 9) | 0x100 | (rz & 0x7F);
-            emit_instruction(encode_instruction(0x05, operand));
+            char first = tokens[3][0];
+            if (first == '$' || first == '0' || (first >= '1' && first <= '9')) {
+                int offset = parse_number(tokens[3]);
+                emit_instruction(encode_instruction(0x05, ((rx & 1) << 10) | ((ry & 1) << 9) | (offset & 0xFF)));
+            } else {
+                int rz = parse_register(tokens[3]);
+                emit_instruction(encode_instruction(0x05, ((rx & 1) << 10) | ((ry & 1) << 9) | 0x100 | (rz & 0x7F)));
+            }
         }
     }
     else if (strcmp(upper_mnemonic, "ADD") == 0) {
         if (token_count >= 4) {
             int rx = parse_register(tokens[1]);
             int ry = parse_register(tokens[2]);
-            int rz = parse_register(tokens[3]);
-            uint16_t operand = ((rx & 1) << 10) | ((ry & 1) << 9) | 0x100 | (rz & 0x7F);
-            emit_instruction(encode_instruction(0x06, operand));
+            char first = tokens[3][0];
+            if (first == '$' || first == '0' || (first >= '1' && first <= '9')) {
+                int offset = parse_number(tokens[3]);
+                emit_instruction(encode_instruction(0x06, ((rx & 1) << 10) | ((ry & 1) << 9) | (offset & 0xFF)));
+            } else {
+                int rz = parse_register(tokens[3]);
+                emit_instruction(encode_instruction(0x06, ((rx & 1) << 10) | ((ry & 1) << 9) | 0x100 | (rz & 0x7F)));
+            }
         }
     }
     else if (strcmp(upper_mnemonic, "SUB") == 0) {
         if (token_count >= 4) {
             int rx = parse_register(tokens[1]);
             int ry = parse_register(tokens[2]);
-            int rz = parse_register(tokens[3]);
-            uint16_t operand = ((rx & 1) << 10) | ((ry & 1) << 9) | 0x100 | (rz & 0x7F);
-            emit_instruction(encode_instruction(0x07, operand));
+            char first = tokens[3][0];
+            if (first == '$' || first == '0' || (first >= '1' && first <= '9')) {
+                int offset = parse_number(tokens[3]);
+                emit_instruction(encode_instruction(0x07, ((rx & 1) << 10) | ((ry & 1) << 9) | (offset & 0xFF)));
+            } else {
+                int rz = parse_register(tokens[3]);
+                emit_instruction(encode_instruction(0x07, ((rx & 1) << 10) | ((ry & 1) << 9) | 0x100 | (rz & 0x7F)));
+            }
         }
     }
     else if (strcmp(upper_mnemonic, "LDA") == 0) {
@@ -366,20 +409,72 @@ void assemble_line(char* line, int line_num) {
             emit_instruction(encode_instruction(0x0D, operand));
         }
     }
+    else if (strcmp(upper_mnemonic, "BRT") == 0) {
+        /* brt $WW - break from the highest-ID active loop, resuming at the
+         * loop's endAddress + $WW*2 words forward (execBRT, apu.cpp). Raw
+         * 11-bit operand, no dispatch bits. */
+        if (token_count >= 2) {
+            int offset = parse_number(tokens[1]);
+            emit_instruction(encode_instruction(0x0E, offset & 0x7FF));
+        }
+    }
+    else if (strcmp(upper_mnemonic, "BRP") == 0) {
+        /* brp - break to re-enter; currently a no-op in the emulator
+         * (execBRP discards its operand), but still a real, distinct
+         * mnemonic that must assemble. */
+        emit_instruction(encode_instruction(0x0F, 0));
+    }
+    /* ADC/SBC (opcodes 0x10-0x11) share NOR/AND/ADD/SUB's toMem polarity
+     * (bit8 CLEAR = write byte to dp:$offset, bit8 SET = write register Z).
+     * The old code never set bit8 for the register form, so "ADC X, Y, Z"
+     * silently encoded as a memory write to dp:(Z&0x7F) instead of writing
+     * register Z - a real runtime correctness bug, not just a missing mode. */
     else if (strcmp(upper_mnemonic, "ADC") == 0) {
         if (token_count >= 4) {
             int rx = parse_register(tokens[1]);
             int ry = parse_register(tokens[2]);
-            int rz = parse_register(tokens[3]);
-            emit_instruction(encode_instruction(0x10, ((rx&1)<<10)|((ry&1)<<9)|(rz&0x7F)));
+            char first = tokens[3][0];
+            if (first == '$' || first == '0' || (first >= '1' && first <= '9')) {
+                int offset = parse_number(tokens[3]);
+                emit_instruction(encode_instruction(0x10, ((rx & 1) << 10) | ((ry & 1) << 9) | (offset & 0xFF)));
+            } else {
+                int rz = parse_register(tokens[3]);
+                emit_instruction(encode_instruction(0x10, ((rx & 1) << 10) | ((ry & 1) << 9) | 0x100 | (rz & 0x7F)));
+            }
         }
     }
     else if (strcmp(upper_mnemonic, "SBC") == 0) {
         if (token_count >= 4) {
             int rx = parse_register(tokens[1]);
             int ry = parse_register(tokens[2]);
-            int rz = parse_register(tokens[3]);
-            emit_instruction(encode_instruction(0x11, ((rx&1)<<10)|((ry&1)<<9)|(rz&0x7F)));
+            char first = tokens[3][0];
+            if (first == '$' || first == '0' || (first >= '1' && first <= '9')) {
+                int offset = parse_number(tokens[3]);
+                emit_instruction(encode_instruction(0x11, ((rx & 1) << 10) | ((ry & 1) << 9) | (offset & 0xFF)));
+            } else {
+                int rz = parse_register(tokens[3]);
+                emit_instruction(encode_instruction(0x11, ((rx & 1) << 10) | ((ry & 1) << 9) | 0x100 | (rz & 0x7F)));
+            }
+        }
+    }
+    else if (strcmp(upper_mnemonic, "CME") == 0 || strcmp(upper_mnemonic, "CMN") == 0 ||
+             strcmp(upper_mnemonic, "CMG") == 0 || strcmp(upper_mnemonic, "CML") == 0) {
+        /* opcode 0x19, subOp = bits7-6 selects CME(00)/CMN(01)/CMG(10)/CML(11)
+         * (apu.cpp's case 0x19 dispatch). subOp's LSB doubles as branch
+         * direction inside each execCM*: CME/CMG always branch forward,
+         * CMN/CML always branch backward - direction is not independently
+         * selectable despite the doc's 4-arg "X, Y, D, $WW" syntax, so this
+         * only takes X, Y, $WW (offset is 6 bits, bits5-0). */
+        if (token_count >= 4) {
+            int rx = parse_register(tokens[1]);
+            int ry = parse_register(tokens[2]);
+            int offset = parse_number(tokens[3]);
+            int subop;
+            if (strcmp(upper_mnemonic, "CME") == 0) subop = 0;
+            else if (strcmp(upper_mnemonic, "CMN") == 0) subop = 1;
+            else if (strcmp(upper_mnemonic, "CMG") == 0) subop = 2;
+            else subop = 3;
+            emit_instruction(encode_instruction(0x19, ((rx & 1) << 10) | ((ry & 1) << 9) | (subop << 6) | (offset & 0x3F)));
         }
     }
     else if (strcmp(upper_mnemonic, "BEQ") == 0) {
