@@ -8,8 +8,8 @@ start:
     ; Set Y register to 100
     SCR Y, 100
 
-    ; Add them together into R2
-    ADD X, Y, R2
+    ; Add them together into X
+    ADD X, Y, X
 
     ; Halt
     HLT

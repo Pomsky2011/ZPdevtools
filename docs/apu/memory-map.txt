@@ -70,13 +70,13 @@ $0080-$00FF: Reserved2          (future use)
 - DSP coefficient storage
 
 **Notes:**
-- Fastest memory region
-- Not memory-mapped to CPU
-- Initialized to zero on power-up (implementation dependent)
+- Same 4-cycle access cost as every other region (there are no wait states)
+- Visible to the CPU through the APU window (bank $A0), like all APU memory
+- Zeroed on APU reset
 
 **Recommended Usage:**
 ```
-$0100-$01FF: Stack (256 bytes, grows downward from $01FF)
+$0100-$01FF: Stack (256 bytes, grows UP from $0100 after BSP with X=$00, Y=$01)
 $0200-$07FF: Variable storage
 $0800-$0FFF: Audio generation buffers
 ```
@@ -86,8 +86,8 @@ $0800-$0FFF: Audio generation buffers
 2 KiB buffer for receiving data from the main CPU.
 
 **DEF88186 Interface:**
-- Bidirectional communication bus
-- CPU writes here, APU reads
+- Plain shared RAM: the CPU reaches it through the APU window (bank $A0) at $A0:1000-$A0:17FF
+- By convention the CPU writes here and the APU reads
 - Typically used for commands and parameters
 
 **Example Uses:**
@@ -104,9 +104,9 @@ APU side: Reads from $1000-$17FF
 ```
 
 **Notes:**
-- Check for new data via polling or interrupts
-- May have hardware flags for "data ready"
-- Implementation-specific buffering behavior
+- There are no interrupts and no "data ready" flags: poll a command byte
+- A common protocol: the CPU writes the arguments first and the command byte last; the APU zeroes the command byte when it has taken the command (see programming-guide.txt, Example 4)
+- No buffering: reads and writes hit the same bytes immediately
 
 ### $1800-$1FFF: DEF88186 Output (APU → CPU)
 
@@ -129,16 +129,11 @@ CPU side: Reads from this region (maps to APU output)
 4 KiB region for extended MMP functionality.
 
 **Purpose:**
-- Additional MMP control registers
-- Real-time mixer status
-- Per-sample audio output buffer
-- Advanced DSP parameters
+- Reserved for additional MMP control registers, mixer status and DSP parameters
 
 **Notes:**
-- Implementation-specific
-- May include DMA control for sample loading
-- Could provide waveform visualization data
-- Consult hardware documentation for details
+- Currently plain read/write memory with no hardware behind it
+- Reserved for future MMP expansion; do not rely on its contents
 
 ### $3000-$6FFF: ARAM (Audio RAM)
 
@@ -152,7 +147,7 @@ CPU side: Reads from this region (maps to APU output)
 - Mixing intermediate results
 
 **Performance:**
-- Slightly slower than $0100-$0FFF region (implementation dependent)
+- Same access cost as every other region
 - Large enough for substantial audio buffers
 - Can hold ~16K samples at 8-bit
 - Can hold ~8K samples at 16-bit
@@ -162,6 +157,9 @@ CPU side: Reads from this region (maps to APU output)
 $3000-$4FFF: Synthesis waveform tables (8 KiB)
 $5000-$6FFF: Effect processing buffers (8 KiB)
 ```
+
+A program the CPU uploads for the BIOS to launch also lives here: header at
+$3000-$301F, image from $3020 (see ZPbootROM's `launch.uas`).
 
 ### $7000-$7FFF: STL (Sample Table List)
 
@@ -209,8 +207,8 @@ This means:
 - Debugging utilities
 
 **Usage:**
-- Jump to BIOS routines using JMP with Y=0 (forces $80XX addressing)
-- Example: `JMP 0, 1, $50` jumps to $8050 (BIOS region)
+- Jump to BIOS routines with `JNZ` or `JMP 1, 0, $XX`, which always target $80XX, or with `JSR`/`JMS` when RP = $80
+- Example: `JMP 1, 0, $50` jumps to $8050 (BIOS region)
 
 **Common BIOS Functions (example):**
 ```
@@ -271,34 +269,27 @@ S  = Clamping Two Amount (0-15, ±8 PCM values)
 
 ### $D000-$FFFF: AROM (Audio ROM, Banked)
 
-Banked ROM region providing access to 448 KiB of audio program storage.
+Banked ROM region providing access to the 448 KiB audio ROM.
 
 **Banking Details:**
-- Total AROM: 448 KiB
-- Bank Size: 24 KiB per bank
-- Banks: 18 total (0-17)
+- Total AROM: 448 KiB (458,752 bytes)
+- Bank stride: 24 KiB (bank `n` starts at ROM offset `n * 24576`)
+- Banks: 18 (0-17); the CPU's `APU_ROMBANK` register rejects values of 18 or more and keeps the previous bank
 - Visible Window: $D000-$FFFF (12 KiB at a time)
-- Bank Selection: RBC instruction
 
-**Banking Calculation:**
-```
-Total banks = 448 KiB ÷ 24 KiB = 18.67 banks (18 full banks)
-
-Note: Window is 12 KiB but banks are 24 KiB
-Implementation may map half-bank or use overlapping scheme
-```
+The window is only half as large as a bank, so a bank shows the first 12 KiB
+of its 24 KiB stride; the other 12 KiB of each bank, and the 16 KiB left over
+past bank 17, cannot be reached through the window. Lay out AROM contents
+accordingly (12 KiB of reachable data per bank).
 
 **Bank Switching:**
-```
-RBC 0x000     ; Bank 0 visible at $D000-$FFFF
-RBC 0x001     ; Bank 1 visible at $D000-$FFFF
-RBC 0x011     ; Bank 17 visible at $D000-$FFFF
-```
+There is no APU instruction that changes the ROM bank. The CPU selects it by
+writing the `APU_ROMBANK` register ($D80016 in the CPU's I/O bank). Bank 0 is
+selected at reset.
 
 **Important:**
-- Code executing from AROM should not switch its own bank (will crash)
-- Copy bank-switching code to RAM first
-- Use RBC carefully in interrupt handlers
+- AROM is read-only
+- Changing the bank under running AROM code swaps the code out from under it: switch banks only while running from RAM, the BIOS or ARAM
 
 **Recommended Organization:**
 ```
@@ -312,65 +303,52 @@ Bank 3+: Music data, effect data, wavetables
 
 ### Reading a 16-bit Value
 ```
-SDP $10       ; Set data page
-SBF 0         ; Low byte first
-STR $50, R0   ; Load low byte from $1050
-SBF 1         ; High byte
-STR $50, R1   ; Load high byte from $1050
-; Now R0 = low byte, R1 = high byte
+sdp $10       ; Set data page
+str $50, x    ; X = low byte of the word at $1050
+str $51, y    ; Y = high byte (the next address up)
 ```
 
 ### Writing a 16-bit Value
 ```
-SDP $10       ; Set data page
-SDB $50       ; Set data byte offset
-WRL 0xCD      ; Write low byte
-WRH 0xAB      ; Write high byte
-; $1050 now contains $ABCD
+sdp $10       ; Set data page
+lda x, $CD
+sta x, $50    ; low byte  -> $1050
+lda x, $AB
+sta x, $51    ; high byte -> $1051; the word at $1050 now holds $ABCD
 ```
 
 ### Copying Memory Block
 ```
-; Copy 16 bytes from $1000 to $2000
-SRP $10       ; Source page
-SDP $20       ; Dest page
-SCR R2, 16    ; Counter
-SCR R3, 0     ; Offset
-
-loop:
-  SBF 0
-  STR R3, R0  ; Read from $10XX (RP for source)
-  SDP $20
-  STA R0, R3  ; Write to $20XX
-  SDP $10     ; Restore source page
-
-  ADD R3, 1, R3  ; Increment offset
-  SUB R2, 1, R2  ; Decrement counter
-  JNZ R2, loop
+; Copy 256 bytes from page $30 to page $40
+    scr x, 0
+copy_loop:
+    sdp $30
+    strx x, y            ; Y = mem[$30:X]
+    sdp $40
+    stax y, x            ; mem[$40:X] = Y
+    inc x
+    scr y, 0
+    cmn x, y, copy_loop  ; loop until X wraps back to 0
 ```
 
 ## Memory Performance Notes
 
-### Access Speed (Implementation Dependent)
-1. **Fastest:** $0100-$0FFF (General RAM)
-2. **Fast:** $3000-$6FFF (ARAM)
-3. **Medium:** $7000-$7FFF (STL), $9000-$CFFF (SST)
-4. **Slow:** $D000-$FFFF (AROM, ROM access penalty)
-5. **Variable:** $0000-$00FF (MMP registers, side effects)
-6. **Bus:** $1000-$1FFF (DEF88186, synchronization overhead)
+### Access Speed
+Every instruction takes 4 cycles regardless of which region it touches; there
+are no wait states anywhere in the address space (RAM, ARAM, STL, SST, BIOS,
+AROM, MMP registers, DEF88186 buffers all cost the same). `NOP $XXX` is the
+only way to add cycles.
 
-### Memory-Mapped I/O Warnings
+### Memory-Mapped I/O Notes
 
 **MMP Registers ($0000-$00FF):**
-- Reads may have side effects (clear flags, advance counters)
-- Writes trigger hardware actions (start playback, etc.)
+- Reads return the last byte written and have no side effects
+- Writes to pitch, volume, pan and STL registers take effect immediately (an STL write starts or stops playback when its high byte is written)
 - Do not use as general storage
-- Access only when needed
 
 **DEF88186 Buffers ($1000-$1FFF):**
-- May have synchronization delays
-- CPU access could conflict with APU access
-- Use semaphore/flag system for coordination
+- Plain RAM shared with the CPU: no flags, no interrupts
+- Use a command-byte/semaphore protocol for coordination
 
 ## Memory Layout Example
 
@@ -406,9 +384,7 @@ $D000-$FFFF:  Program code (banked AROM)
 - $0200-$0FFF (if needed)
 
 ### Safe for Code Execution
-- $0100-$0FFF (RAM, can be modified)
-- $8000-$8FFF (BIOS ROM)
-- $D000-$FFFF (AROM, read-only)
+- Any address can be fetched and executed. In practice: $0100-$0FFF (RAM), $3000-$6FFF (ARAM), $8000-$8FFF (BIOS) and $D000-$FFFF (AROM)
 
 ### Reserved / Hardware Use
 - $0000-$00FF (MMP, read/write with caution)
@@ -421,16 +397,15 @@ $D000-$FFFF:  Program code (banked AROM)
 ## Memory Initialization
 
 On APU reset/power-on:
-- RAM regions: Undefined (may be zero, may be random)
-- MMP registers: Reset to default state (all channels off)
-- ROM regions: Contain firmware/program data
-- DEF88186 buffers: Cleared or undefined (implementation-specific)
+- All of memory (RAM, ARAM, STL, SST, DEF88186 buffers) and the whole AROM array are zeroed, and the registers are zeroed; a loaded BIOS image is then re-applied
+- MMP channels reset internally to pitch $1000, volume 255, pan 128, no sample (the register bytes read back as $00 until written)
+- PC = $8000, RP = $80, SP = $0000
 
-**Best Practice:** Initialize all RAM before use.
+**Best Practice:** Initialize SP with `BSP` and the MMP registers before use.
 
 ## See Also
 
 - registers.txt - Register details for memory addressing
-- instruction-set.txt - Memory access instructions (STA, STR, WRH, WRL)
+- instruction-set.txt - Memory access instructions (STA, STR, LDA, STRX, STAX)
 - sst.txt - Sample Storage format
 - mmp.txt - MMP register details

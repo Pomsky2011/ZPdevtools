@@ -40,17 +40,13 @@ Field:   [X] [X] [Y] [L] [V] [U] [T] [S]
 
 **XX (Nybbles 0-1): Amount of Loops**
 - 8-bit value (0-255)
-- Number of times to repeat this block
-- 0 = Play once, no looping
-- 255 = Loop 255 times
-- Typically set to 255 for continuous loops
+- Intended as the number of times to repeat this block (0 = once)
+- **Not honoured by the mixer yet**: write 0. Whether a sample loops is decided by the Z bit and the STL loop word, below
 
 **Y (Nybble 2): Sample to Start Looping At**
 - 4-bit value (0-15)
-- Which sample within this block to start loop from
-- 0 = Loop from first sample (sample 0)
-- 11 = Loop from last sample (sample 11)
-- Samples 0-11 correspond to bytes 4-15 of block
+- Intended as the sample within this block to loop from
+- **Not honoured by the mixer yet**: write 0. Use the STL loop word to pick a loop point
 
 **L (Nybble 3): Loop Configuration**
 - 4 bits: `ZW00` (bits 3,2,1,0)
@@ -319,8 +315,13 @@ Block 4: L[W]=1 (final block)
 
 ### Sector Traversal
 
-The MMP hardware reads blocks sequentially until it encounters a block
-with the W bit set (L[bit 2] = 1), indicating the end of the sector.
+The MMP hardware reads blocks sequentially, starting at the STL entry's sample
+address, until it encounters a block with the W bit set (header byte 1 & 0x04),
+indicating the end of the sector. If no block sets W, it keeps reading to the
+end of SST ($CFFF) and treats everything up to there as the sample, so always
+terminate a sector. The whole sector is copied when the channel's STL address
+changes; later edits to the SST blocks do not affect what an already-started
+channel plays.
 
 ## Sample Capacity Calculations
 
@@ -364,64 +365,48 @@ At 11 kHz sample rate:
 
 ### Writing a Sample to SST
 
+A complete, tested program that writes a block, an STL entry and starts
+playback is in programming-guide.txt (Example 1). The block-writing part:
 ```
-; Write a simple sine wave sample to $9000
-
-SDP $90       ; Set data page to SST region
-SDB $00       ; Start at $9000
-
-; Write header (4 bytes)
-WRH 0xFF      ; XX = 255 (loop forever)
-WRL 0x00      ; (high byte of XX + low nybble of Y)
-; Note: Actual nybble packing may vary, this is conceptual
-
-SDB $01
-WRH 0x00      ; Y=0, L=0100 (final block, loop from 0)
-WRL 0x00      ; V=0, U=0, T=0, S=0
-
-; Write sample data (12 bytes, sine wave approximation)
-SDB $04
-SBF 0
-SCR R0, 0
-STA R0, $04
-SCR R0, 30
-STA R0, $05
-SCR R0, 58
-STA R0, $06
-; ... etc for all 12 samples
+; Write a one-block sine wave to $9000
+sdp $90             ; DP = $90: SST at $9000
+lda x, $00
+sta x, $00          ; byte 0: XX (unused, 0)
+lda x, $04
+sta x, $01          ; byte 1: Y=0, L=0100 (W = final block, looping)
+zoa $02             ; bytes 2-3: V/U/T/S = 0
+lda x, $00
+sta x, $04          ; sample 0 (signed 8-bit)
+lda x, $40
+sta x, $05          ; sample 1
+lda x, $6E
+sta x, $06          ; sample 2
+; ... etc for all 12 samples at $04-$0F
 ```
 
 ### Writing an STL Entry
 
 ```
-; Point STL entry 0 ($7000) to SST block at $9000
-
-SDP $70       ; STL region
-SDB $00       ; First entry
-
-WRH 0x90      ; Sample address high byte
-WRL 0x00      ; Sample address low byte
-
-SDB $02       ; Loop address offset
-WRH 0x00      ; Loop address = 0 (loop entire sample)
-WRL 0x00
+; Point STL entry 0 ($7000) to the SST block at $9000
+sdp $70             ; STL region
+lda x, $00
+sta x, $00          ; sample address low
+lda x, $90
+sta x, $01          ; sample address high -> $9000
+zoa $02             ; loop word = 0 (loop the whole sample)
 ```
 
 ### Configuring MMP to Play the Sample
 
 ```
-; Set MMP channel 0 to play sample at STL entry $7000
+; Set MMP channel 0 to play the sample at STL entry $7000
+sdp $00             ; MMP registers
+zor x
+sta x, $50          ; channel 0 STL address low  ($50/$51 = channel 0)
+lda x, $70
+sta x, $51          ; channel 0 STL address high: playback starts
 
-SDP $00       ; MMP registers
-; Write $7000 to channel 0 STL address register
-; (See mmp.txt for exact register layout)
-
-; Assuming STL address is at offset $54 for channel 0:
-SDB $54
-WRH 0x70
-WRL 0x00
-
-; Set pitch, volume, enable channel...
+; Set pitch, volume, pan as needed (see mmp.txt)
 ```
 
 ## Advanced Techniques
@@ -448,9 +433,9 @@ MMP pitch control acts as a resampling rate:
 
 ```
 1. Reserve SST blocks for dynamic samples
-2. Stream new sample data from CPU via DEF88186
-3. Overwrite SST blocks during playback gaps
-4. Update STL entries to point to new blocks
+2. Write new sample data into SST (the CPU can write it through the APU window, bank $A0)
+3. Point a free STL entry at the new blocks
+4. Write that STL address to a channel (the channel copies the sector when its STL address changes, so overwriting blocks under a playing channel has no effect until it is retriggered)
 ```
 
 ### Compression via Clamping
@@ -467,8 +452,9 @@ Use clamping to restore full range at playback:
 1. **12-Sample Granularity:** Samples must be multiples of 12 samples
 2. **16-Byte Block Size:** Overhead of 4 header bytes per 12 samples (33%)
 3. **Limited Clamping Points:** Only 2 clamp points per block
-4. **Loop Point Resolution:** Loop points aligned to sample boundaries (not sample-accurate for multi-block loops)
-5. **No Compression:** All samples stored as raw PCM
+4. **Loop Point Resolution:** The STL loop word is a sample number, so a loop can start at any sample of the sector (not only block boundaries)
+5. **No Compression:** All samples stored as raw signed 8-bit PCM
+6. **Unused Header Fields:** XX, Y and the V/U/T/S clamping fields are not yet honoured by the mixer
 
 ## Best Practices
 

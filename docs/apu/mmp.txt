@@ -78,9 +78,9 @@ For equal temperament:
   Pitch value for N semitones up = Base × (1.0595)^N
 
 Examples (base = $1000):
-  +1 semitone:  $10F3
-  +2 semitones: $11F1
-  +7 semitones: $1782 (perfect fifth)
+  +1 semitone:  $10F4
+  +2 semitones: $11F6
+  +7 semitones: $17F9 (perfect fifth)
   +12 semitones: $2000 (octave)
   -12 semitones: $0800 (octave down)
 ```
@@ -141,7 +141,10 @@ Pan = 192: 25% left,  75% right
 Pan = 255:  0% left, 100% right
 ```
 
-**Default:** Channels reset to pan=128 (center).
+**Default:** Channels reset to pan=128 (center). The mixer resets each channel
+to pitch $1000, volume 255, pan 128 and STL $0000, but the register bytes
+themselves read back as $00 until a program writes them, so an init routine
+(below) is worth running if you read these registers back.
 
 ### Reserved0 ($0040-$004F)
 
@@ -178,13 +181,11 @@ Channel 15: $006E-$006F
 **Example:**
 ```
 ; Start channel 0 at STL entry $7000
-SDP $00
-SBF 1
-SCR X, $70
-STA X, $50      ; ch0 STL high byte = $70
-SBF 0
-ZOR X
-STA X, $50      ; ch0 STL low byte = $00
+sdp $00
+zor x
+sta x, $50      ; ch0 STL low byte  = $00
+lda x, $70
+sta x, $51      ; ch0 STL high byte = $70 (the high-byte write starts it)
 ```
 
 ### Reserved1 ($0070-$007F)
@@ -216,45 +217,43 @@ effect in the current implementation.
 
 **Example Code:**
 ```
-; Initialize all 16 MMP channels
+; Initialize all 16 MMP channels. STAX stores Y at DP:X, and a hardware loop
+; walks X across each register block.
 init_mmp:
-  PUDP
-  SDP $00
-
-  ; Zero out pitch ($0000-$001F)
-  ZOR X
-  SDB $00
-  LST 0, 32     ; 16 channels × 2 bytes
-    STA X       ; write 0 via dp:db
-    INC DB
-  LFN 0
-
-  ; Set all volumes to 255 ($0020-$002F)
-  SCR X, $FF
-  SDB $20
-  LST 1, 16
-    STA X
-    INC DB
-  LFN 1
-
-  ; Set all pans to 128 / center ($0030-$003F)
-  SCR X, $80
-  SDB $30
-  LST 2, 16
-    STA X
-    INC DB
-  LFN 2
-
-  ; Zero STL addresses ($0050-$006F)
-  ZOR X
-  SDB $50
-  LST 3, 32     ; 16 channels × 2 bytes
-    STA X
-    INC DB
-  LFN 3
-
-  PODP
-  RET
+    sdp $00
+    scr x, $01             ; pitch high bytes: $01, $03, ... $1F
+    scr y, $10
+    lst 0, 16
+      stax y, x
+      inc x
+      inc x
+    lfn 0
+    scr x, $00             ; pitch low bytes: $00, $02, ... $1E
+    zor y
+    lst 0, 16
+      stax y, x
+      inc x
+      inc x
+    lfn 0
+    scr x, $20             ; volumes: $20-$2F
+    scr y, $FF
+    lst 0, 16
+      stax y, x
+      inc x
+    lfn 0
+    scr x, $30             ; pans: $30-$3F
+    scr y, $80
+    lst 0, 16
+      stax y, x
+      inc x
+    lfn 0
+    scr x, $50             ; STL addresses: $50-$6F
+    zor y
+    lst 0, 32
+      stax y, x
+      inc x
+    lfn 0
+    ret
 ```
 
 ### Starting Playback
@@ -273,31 +272,27 @@ Channel starts playing immediately when STL address is written (non-zero).
 **Example:**
 ```
 ; Play sample from STL $7000 on channel 0, center pan
-SDP $00
+sdp $00
 
-; Set pitch = 1.0×
-SBF 1
-SCR X, $10
-STA X, $00      ; ch0 pitch high = $10
-SBF 0
-ZOR X
-STA X, $00      ; ch0 pitch low = $00
+; Set pitch = 1.0x
+lda x, $10
+sta x, $01      ; ch0 pitch high = $10
+zor x
+sta x, $00      ; ch0 pitch low = $00
 
 ; Set volume = 255
-SCR X, $FF
-STA X, $20      ; ch0 volume
+lda x, $FF
+sta x, $20      ; ch0 volume
 
 ; Set pan = center
-SCR X, $80
-STA X, $30      ; ch0 pan
+lda x, $80
+sta x, $30      ; ch0 pan
 
-; Write STL address (starts playback)
-SBF 1
-SCR X, $70
-STA X, $50      ; ch0 STL high = $70
-SBF 0
-ZOR X
-STA X, $50      ; ch0 STL low = $00
+; Write STL address (starts playback): low byte first, high byte last
+zor x
+sta x, $50      ; ch0 STL low = $00
+lda x, $70
+sta x, $51      ; ch0 STL high = $70
 ```
 
 ### Stopping Playback
@@ -306,25 +301,21 @@ Write $0000 to the channel's STL address register.
 
 ```
 ; Stop channel 0
-SDP $00
-ZOR X
-SBF 0
-STA X, $50      ; ch0 STL low = $00
-SBF 1
-STA X, $50      ; ch0 STL high = $00
+sdp $00
+zor x
+sta x, $50      ; ch0 STL low = $00
+sta x, $51      ; ch0 STL high = $00
 ```
 
 ### Changing Pitch in Real-Time
 
 ```
-; Bend channel 0 pitch up to $1200 (1.125×)
-SDP $00
-SBF 1
-SCR X, $12
-STA X, $00      ; ch0 pitch high = $12
-SBF 0
-ZOR X
-STA X, $00      ; ch0 pitch low = $00
+; Bend channel 0 pitch up to $1200 (1.125x)
+sdp $00
+lda x, $12
+sta x, $01      ; ch0 pitch high = $12
+zor x
+sta x, $00      ; ch0 pitch low = $00
 ```
 
 ### Stereo Panning
@@ -333,37 +324,33 @@ Write a pan value to the channel's pan register:
 
 ```
 ; Pan channel 0 hard left
-SDP $00
-ZOR X
-STA X, $30      ; ch0 pan = 0 (full left)
+sdp $00
+zor x
+sta x, $30      ; ch0 pan = 0 (full left)
 
 ; Pan channel 1 hard right
-SCR X, $FF
-STA X, $31      ; ch1 pan = 255 (full right)
+lda x, $FF
+sta x, $31      ; ch1 pan = 255 (full right)
 
 ; Pan channel 2 center
-SCR X, $80
-STA X, $32      ; ch2 pan = 128 (center)
+lda x, $80
+sta x, $32      ; ch2 pan = 128 (center)
 ```
 
 ### Smooth Pan Sweep
 
 ```
-; Sweep channel 0 from full left to full right over ~256 steps
+; Sweep channel 0 from full left to full right over 256 steps
 pan_sweep:
-  PUDP
-  SDP $00
-
-  ZOR X         ; X = pan position, start at 0 (full left)
+    sdp $00
+    zor x               ; X = pan position, start at 0 (full left)
 pan_loop:
-  STA X, $30    ; write pan to channel 0
-  INC X
-  NOP $10       ; delay
-  CME X, Y      ; check if X wrapped (== 0 again)
-  BNE X, Y, pan_loop
-
-  PODP
-  RET
+    sta x, $30          ; write pan to channel 0
+    inc x
+    nop $200            ; delay
+    scr y, $00
+    cmn x, y, pan_loop  ; loop until X wraps back to 0
+    ret
 ```
 
 ## Advanced Techniques
@@ -380,72 +367,72 @@ All three point to the same STL entry.
 ### Dynamic Channel Allocation
 
 ```
-; Find a free channel (STL = $0000) and play a sample
-; Returns channel number in X, or $FF if no free channel
+; Find a free channel (STL address = $0000)
+; Returns the channel number in X, or $FF if every channel is busy.
+; A channel is free when its STL high byte is 0 (valid STL addresses are
+; $7000-$7FFF).
 alloc_channel:
-  PUDP
-  SDP $00
-  SDB $50       ; STL address base
-
-  LST 0, 16
-    LDA X       ; read STL low byte
-    CME X, Y    ; compare to 0 (Y pre-zeroed)
-    BEQ X, Y, found_free
-    ADD DB, 2   ; skip to next channel STL
-  LFN 0
-
-  SCR X, $FF    ; no free channel
-  PODP
-  RET
-
-found_free:
-  ; channel index = (DB - $50) / 2
-  ; ... set pitch, volume, pan, STL ...
-  PODP
-  RET
+    sdp $00
+    scr x, $51          ; channel 0's STL high byte
+alloc_loop:
+    strx x, y           ; Y = STL high byte
+    jz y, alloc_found
+    inc x
+    inc x               ; next channel's high byte
+    scr y, $71          ; one past channel 15's high byte ($6F)
+    cmn x, y, alloc_loop
+    scr x, $FF          ; no free channel
+    ret
+alloc_found:
+    scr y, $51
+    sub x, y, x         ; X = 2 * channel
+    scr y, $01
+    crb x, y, x         ; X >>= 1
+    ret
 ```
 
 ### Doppler Effect
 
 ```
-; Decrease pitch gradually (object moving away)
+; Object moving away: slide channel 0's pitch down from $1200 to $0E00
+doppler:
+    sdp $00
+    lda x, $12          ; X = pitch high byte
+    scr y, $0D
 doppler_loop:
-  SUB PitchHi, 0       ; ... decrement 16-bit pitch in memory ...
-  SDP $00
-  SBF 1
-  LDA X, PitchHi
-  STA X, $00
-  SBF 0
-  LDA X, PitchLo
-  STA X, $00
-  NOP 100
-  JMP doppler_loop
+    sta x, $01
+    dec x
+    nop $7FF
+    nop $7FF
+    bgt x, y, doppler_loop
+    ret
 ```
 
 ### Arpeggios
 
 ```
-; C-E-G arpeggio on channel 0
+; C-E-G arpeggio on channel 0 (pitch = $1000 * 2^(semitones/12))
 arpeggio_loop:
-  SDP $00
-  SBF 1
-
-  ; C ($1000)
-  SCR X, $10
-  STA X, $00
-  NOP 1000
-
-  ; E (+4 semitones, ~$1260)
-  SCR X, $12
-  STA X, $00
-  NOP 1000
-
-  ; G (+7 semitones, ~$1782)
-  SCR X, $17
-  STA X, $00
-  NOP 1000
-
-  JMP arpeggio_loop
+    sdp $00
+    lda x, $10
+    sta x, $01          ; C = $1000
+    zor x
+    sta x, $00
+    nop $7FF
+    nop $7FF
+    lda x, $14
+    sta x, $01          ; E = +4 semitones = $1429
+    lda x, $29
+    sta x, $00
+    nop $7FF
+    nop $7FF
+    lda x, $17
+    sta x, $01          ; G = +7 semitones = $17F9
+    lda x, $F9
+    sta x, $00
+    nop $7FF
+    nop $7FF
+    jms arpeggio_loop
 ```
 
 ## Performance Considerations
@@ -476,12 +463,9 @@ Mitigations:
 
 ```
 ; Read channel 0 STL address
-SDP $00
-SDB $50
-SBF 0
-LDA X           ; X = STL low byte
-SBF 1
-LDA Y           ; Y = STL high byte
+sdp $00
+str $50, x      ; X = STL low byte
+str $51, y      ; Y = STL high byte
 
 ; If X==0 and Y==0, channel is stopped
 ```
@@ -490,12 +474,10 @@ LDA Y           ; Y = STL high byte
 
 ```
 ; Silence channel 3 by zeroing its STL address
-SDP $00
-ZOR X
-SBF 0
-STA X, $56      ; ch3 STL low = 0
-SBF 1
-STA X, $56      ; ch3 STL high = 0
+sdp $00
+zor x
+sta x, $56      ; ch3 STL low = 0
+sta x, $57      ; ch3 STL high = 0
 ```
 
 ## Limitations

@@ -11,6 +11,11 @@ Bit:  15  14  13  12  11 | 10   9   8   7   6   5   4   3   2   1   0
 
 Register operands: bit 10 = first register (X=0, Y=1), bit 9 = second register (X=0, Y=1)
 
+Source operands are always X or Y. NOR/AND/ADD/SUB/ADC/SBC can write their
+result to a 7-bit destination register field (R0-R127), but only R0 (X) and
+R1 (Y) can be read by any instruction, so in practice the destination is X or
+Y, or a memory byte. XOR and CRB have a 1-bit destination (X or Y).
+
 ## Instruction Categories
 
 1. Control Flow      — NOP, JMP, JNZ, JZ, JMS, JDP, JSR, JDPS, JMX, JSX
@@ -53,15 +58,19 @@ Example:
 ### JMP — Unconditional Jump (with stack)
 ```
 Opcode:  00001
-Encoding: 00001 D M 0 ZZZZZZZZ
-Syntax:   JMP D, M, $ZZ
+Encoding: 00001 x B M ZZZZZZZZ     (bit 10 unused, B = bit 9, M = bit 8)
+Syntax:   JMP label                ; forward relative jump
+          JMP D, M, $ZZ            ; absolute jump (D is accepted but ignored)
 Cycles:   4
 
 Pushes 16-bit return address onto stack, then jumps.
-  D=0, M=0: Jump forward ZZ words
-  D=1, M=0: Jump backward ZZ words
-  D=0, M=1: Jump to $80ZZ (BIOS)
-  D=1, M=1: Jump to $RPZZ
+  B=0, M=0: Jump forward ZZ words (relative)
+  B=1, M=0: Jump to $80ZZ (BIOS page)
+  M=1:      Jump to $RPZZ (B ignored)
+
+There is no backward relative form: the combination that would mean "backward"
+(B=1, M=0) decodes as the $80ZZ absolute jump instead, and apuasm rejects a
+backward label. Use CMN/CML (or JMS) to branch backward.
 
 Example:
   JMP 0, 1, $20   ; Push return addr, jump to $RP20
@@ -73,15 +82,16 @@ Example:
 ### JNZ — Jump if Not Zero
 ```
 Opcode:  00010 (bit 8 = 0)
-Encoding: 00010 X 0 M ZZZZZZZZ
-Syntax:   JNZ X, M, $ZZ
+Encoding: 00010 X 0 0 ZZZZZZZZ
+Syntax:   JNZ X, $ZZ
 Cycles:   4
 
-If register X != 0: push return address, jump.
-  M=0: jump to $80ZZ
-  M=1: jump to $RPZZ
+If register X != 0: push return address, jump to $80ZZ (the BIOS page).
 
-Sets no flags.
+JNZ can only target $80ZZ: the bit that would select $RPZZ is bit 8, which is
+also what distinguishes JZ from JNZ, so it is always 0 here. It also pushes a
+return address when taken, which makes it a conditional call, not a loop
+branch. Sets no flags.
 ```
 
 ### JZ — Jump if Zero
@@ -133,7 +143,7 @@ The 2-arg form (SDP b, $XX) sets byte b of the data pointer:
 ```
 Opcode:  00100
 Encoding: 00100 X Y 0 ZZZZZZZZ   (result → memory $DPZZ)
-          00100 X Y 1 Z 0000000   (result → register Z)
+          00100 X Y 1 0 ZZZZZZZ   (result → register Z, R0-R127)
 Syntax:   NOR X, Y, $ZZ
           NOR X, Y, Z
 Cycles:   4
@@ -145,7 +155,7 @@ Result = ~(X | Y). Sets Z flag.
 ```
 Opcode:  00101
 Encoding: 00101 X Y 0 ZZZZZZZZ
-          00101 X Y 1 Z 0000000
+          00101 X Y 1 0 ZZZZZZZ
 Syntax:   AND X, Y, $ZZ
           AND X, Y, Z
 Cycles:   4
@@ -157,7 +167,7 @@ Result = X & Y. Sets Z flag.
 ```
 Opcode:  00110
 Encoding: 00110 X Y 0 ZZZZZZZZ
-          00110 X Y 1 Z 0000000
+          00110 X Y 1 0 ZZZZZZZ
 Syntax:   ADD X, Y, $ZZ
           ADD X, Y, Z
 Cycles:   4
@@ -170,7 +180,7 @@ Result = X + Y (8-bit, wraps). Sets Z and C flags.
 ```
 Opcode:  00111
 Encoding: 00111 X Y 0 ZZZZZZZZ
-          00111 X Y 1 Z 0000000
+          00111 X Y 1 0 ZZZZZZZ
 Syntax:   SUB X, Y, $ZZ
           SUB X, Y, Z
 Cycles:   4
@@ -190,7 +200,11 @@ Encoding: 01000 X 1 0 YYYYYYYY
 Syntax:   STA X, $YY
 Cycles:   4
 
-Stores register X to $DPYY. BF selects byte (0=low, 1=high).
+Stores register X to the byte at $DPYY. (The core implements this as a word
+write that keeps the next byte's value, so the byte at $DPYY+1 is rewritten
+with itself - harmless in RAM, but it re-fires an MMP register write on an
+odd address.) The BF byte-select flag exists in the core but no instruction
+sets it, so these always act on the byte at $DPYY.
 ```
 
 ### STR — Load Register from Memory
@@ -200,7 +214,7 @@ Encoding: 01000 X 0 0 YYYYYYYY
 Syntax:   STR $YY, X
 Cycles:   4
 
-Loads register X from $DPYY. BF selects byte (0=low, 1=high).
+Loads register X from the byte at $DPYY.
 ```
 
 ---
@@ -337,7 +351,7 @@ Exits current loop but preserves its state for re-entry.
 ```
 Opcode:  10000
 Encoding: 10000 X Y 0 ZZZZZZZZ
-          10000 X Y 1 Z 0000000
+          10000 X Y 1 0 ZZZZZZZ
 Syntax:   ADC X, Y, Z
 Cycles:   4
 
@@ -349,7 +363,7 @@ Use after ADD to chain 16-bit addition.
 ```
 Opcode:  10001
 Encoding: 10001 X Y 0 ZZZZZZZZ
-          10001 X Y 1 Z 0000000
+          10001 X Y 1 0 ZZZZZZZ
 Syntax:   SBC X, Y, Z
 Cycles:   4
 
@@ -461,10 +475,14 @@ PUY    — Push Y (8-bit)
 POX    — Pop to X (8-bit)
 POY    — Pop to Y (8-bit)
 
+The stack grows UP: a push writes at SP and then increments it, a pop
+decrements SP and then reads. Initialize it into RAM, e.g. X=$00, Y=$01 puts
+the stack at $0100.
+
 Example:
-  lda X, $FF
-  lda Y, $FF
-  BSP           ; SP = $FFFF
+  lda X, $00
+  lda Y, $01
+  BSP           ; SP = $0100
 
   JSR $20       ; Call subroutine at $RP20
   ; In subroutine:
@@ -691,15 +709,18 @@ Manipulated by: SFR, CF, SF, STF
 All instructions: 4 clock cycles (base).
 NOP adds up to 2047 additional stall cycles.
 
-At 4 MHz with 4 CPI: 1,000,000 instructions/second (~1 μs per instruction).
+The APU clock is 4,250,710 Hz (master / 16), so with 4 cycles per instruction
+that is 1,062,677 instructions/second (~0.94 μs per instruction), or about
+22 instructions per 48 kHz output sample. There are no wait states: reading or
+writing any region (RAM, ARAM, SST, AROM, MMP registers) costs the same 4 cycles.
 
 ## Programming Tips
 
 1. Use LDA X, $YY for immediates (alias for SCR)
 2. Set RP/DP once per region — minimize changes
 3. Use hardware loops (LST/LFN) instead of manual counter branches
-4. BF must be set before every STA/STR
-5. Initialize stack with BSP at startup before any JSR/JMP/RET
+4. JNZ pushes a return address when taken (use JZ/CM*/B** for loops)
+5. Initialize stack with BSP at startup before any JSR/JMP/RET (it grows up)
 6. PUDP/PODP save the full data pointer (dp+db) across calls
 7. JMS/JDP are pure gotos — JSR/JDPS push return address
 8. ADC/SBC chain after ADD/SUB for 16-bit math

@@ -2,16 +2,18 @@
 
 ## Register Overview
 
-The APU has 256 general-purpose 8-bit registers plus several special-purpose registers.
+The APU has two usable 8-bit general-purpose registers, X and Y, plus several
+special-purpose registers. (The core allocates a 256-entry register array, but
+see "R2-R127" below for why only the first two matter.)
 
 ### General Purpose Registers
 - **R0 (X)** (8-bit) - Primary accumulator/index register
 - **R1 (Y)** (8-bit) - Secondary accumulator/index register
-- **R2-R255** (8-bit each) - Extended general purpose registers
+- **R2-R127** (8-bit each) - Write-only scratch (see below); R128-R255 cannot be addressed at all
 
-Note: Arithmetic instructions (NOR, AND, ADD, SUB, ADC, SBC, XOR, NOR) encode source
-operands in 1 bit (0=R0/X, 1=R1/Y). Destination can be any register R0-R255 or memory.
-Extended registers R2-R255 are used as destinations or via STA/STR/LDA.
+Note: Every instruction that reads a register (NOR, AND, ADD, SUB, ADC, SBC, XOR,
+CRB, STA, MOV, comparisons, ...) encodes it in 1 bit (0=R0/X, 1=R1/Y). Only the
+result of NOR/AND/ADD/SUB/ADC/SBC has a wider (7-bit) destination field.
 
 ### Special Purpose Registers
 - **PC** (Program Counter) - 16-bit, tracks current instruction address
@@ -19,7 +21,7 @@ Extended registers R2-R255 are used as destinations or via STA/STR/LDA.
 - **RP** (ROM Page) - 8-bit, high byte for jump target addressing
 - **DP** (Data Page) - 8-bit, high byte for memory addressing
 - **DB** (Data Byte) - 8-bit, secondary memory addressing byte
-- **BF** (Byte Flip) - 1-bit, selects high/low byte in word operations
+- **BF** (Byte Flip) - 1-bit, reserved: no instruction sets it, so it is always 0
 - **FLAGS** - 4-bit status flags register (0bzglc)
 
 ---
@@ -70,23 +72,16 @@ BEQ X, Y, $50     ; Branch to [RP:$50] if X == Y
 
 ---
 
-### R2-R255 Extended Registers (8-bit each)
+### R2-R127 Write-Only Scratch Registers
 
-**Purpose:** General purpose storage. Not addressable as arithmetic sources directly,
-but usable as destinations and via STA/STR.
+**Purpose:** None in practice. The result field of NOR/AND/ADD/SUB/ADC/SBC is 7
+bits wide, so those instructions can write R2-R127, but no instruction can read
+anything except R0 (X) and R1 (Y) - there is no load, move or ALU source form
+for the others. Keep your data in X, Y and memory ($DP:$YY), and use
+`PUX`/`PUY` or a RAM scratch page to spill values.
 
-**Conventions (suggested):**
-- R0-R3:   Temporaries / function arguments / return values
-- R4-R15:  Callee-saved locals
-- R16-R31: General locals
-- R32-R255: Extended storage / large arrays
-
-**Usage:**
-```
-LDA X, 42
-STA X, $20        ; Store X into [DP:$20] (accessible as R-indexed memory)
-STR $20, X        ; Load [DP:$20] back into X
-```
+R128-R255 exist in the core's register array but cannot be named by any
+instruction.
 
 ---
 
@@ -100,19 +95,21 @@ STR $20, X        ; Load [DP:$20] back into X
 - Modified by all jump/branch/call/return instructions
 
 **Modification Instructions:**
-- `JMP $ZZ` / `JMP DP` — unconditional jump
-- `JSR $ZZ` / `JSR DP` — call (pushes return address)
+- `JMP` — relative or absolute jump, always pushes a return address
+- `JMS $ZZ` / `JDP` — plain goto (to $RPZZ / to $DPDB), no push
+- `JSR $ZZ` / `JDPS` — call (pushes return address)
+- `JMX` / `JSX` — goto / call to the address in Y:X
 - `RET` — return (pops return address)
-- `JNZ X, $ZZ` — jump if R0/R1 != 0
-- `JZ X, $ZZ` — jump if R0/R1 == 0
-- `BEQ/BNE/BLT/BGT X, Y, $ZZ` — compare-and-branch
+- `JNZ X, $ZZ` — if R0/R1 != 0: push return address and jump to $80ZZ (BIOS page only)
+- `JZ X, $ZZ` — if R0/R1 == 0: jump (no push)
+- `BEQ/BNE/BLT/BGT X, Y, $ZZ` — compare-and-branch to $RPZZ
+- `CME/CMN/CMG/CML` — compare and jump a short relative distance
 
 **Executable Regions:**
-```
-$0100-$0FFF  RAM (self-modifying code)
-$8000-$8FFF  BIOS ROM
-$D000-$FFFF  AROM (banked)
-```
+The core fetches instructions from any address, so code can run from RAM
+($0100-$0FFF), ARAM ($3000-$6FFF, where a CPU-uploaded program lives), the
+BIOS ($8000-$8FFF) or AROM ($D000-$FFFF, banked). Instructions are 2 bytes wide
+and PC advances by 2 after each fetch.
 
 ---
 
@@ -122,35 +119,41 @@ $D000-$FFFF  AROM (banked)
 
 **Characteristics:**
 - 16-bit register
-- Grows downward (SP decrements on push, increments on pop)
+- Grows UP: a push writes the byte at SP and then increments SP; a pop decrements SP and then reads
+- A call pushes the return address high byte first, then the low byte
 - Managed automatically by push/pop and call/return instructions
 - Can be manually adjusted with `INC SP` / `DEC SP`
+- Reset value is $0000, so it must be initialized with `BSP` before the first call
 
 **Instructions that use SP:**
 - `PUX` — push R0 (X) onto stack
 - `PUY` — push R1 (Y) onto stack
-- `PUDP` — push DP onto stack
+- `PUDP` — push DP and DB onto stack
 - `POX` — pop from stack into R0 (X)
 - `POY` — pop from stack into R1 (Y)
-- `PODP` — pop from stack into DP
-- `JSR $ZZ` / `JSR DP` — pushes return address (2 bytes)
+- `PODP` — pop DP and DB from stack
+- `JSR $ZZ` / `JDPS` / `JSX` — pushes return address (2 bytes)
+- `JMP` / taken `JNZ` — also push a return address
 - `RET` — pops return address (2 bytes)
 - `INC SP` / `DEC SP` — manual SP adjustment
-- `BSP $XX` — set SP low byte
+- `BSP` — SP = X (low byte) | Y (high byte) << 8
 
 **Set By:**
 ```
-BSP $FF       ; SP low byte = $FF (initial stack setup)
-INC SP        ; SP++
-DEC SP        ; SP--
+lda x, $00
+lda y, $01
+bsp           ; SP = $0100 (initial stack setup, in General RAM)
+inc sp        ; SP++
+dec sp        ; SP--
 ```
 
 **Stack Layout Example:**
 ```
-; Stack grows down from $01FF
-BSP $FF       ; SP = $xxFF
-SRP $01
-; Stack now starts at $01FF
+; Stack grows up from $0100
+scr x, $00
+scr y, $01
+bsp           ; SP = $0100
+jsr func      ; pushes the return address: SP = $0102
 ```
 
 ---
@@ -160,10 +163,10 @@ SRP $01
 **Purpose:** High byte of jump target addresses.
 
 **Used In:**
-- `JMP $ZZ` (Y=0) → jumps to $RPZZ
-- `JNZ X, $ZZ` → jumps to $RPZZ if X != 0
-- `JZ X, $ZZ` → jumps to $RPZZ if X == 0
+- `JMS $ZZ` → jumps to $RPZZ
 - `JSR $ZZ` → calls $RPZZ (pushes return address)
+- `JMP` with D=1, M=1 → pushes, then jumps to $RPZZ
+- `JZ X, $ZZ` → jumps to $RPZZ if X == 0
 - `BEQ/BNE/BLT/BGT X, Y, $ZZ` → conditional branch to $RPZZ
 
 **Set By:**
@@ -174,7 +177,7 @@ SRP $D0       ; RP = $D0
 **Example:**
 ```
 SRP $80       ; Set RP to BIOS region
-JMP $10       ; Jump to $8010
+JMS $10       ; Jump to $8010
 
 SRP $D0       ; Set RP to AROM region
 BEQ X, Y, $50 ; If X == Y, jump to $D050
@@ -199,13 +202,15 @@ RP=$D0 → Jumps to $D0XX (AROM)
 - `STA X, $YY` → stores to $DPYY
 - `STR $YY, X` → loads from $DPYY
 - `NOR/AND/ADD/SUB/ADC/SBC/XOR` with memory destination → result to $DPZZ
-- `ZOA $XX` → zeros $DPXX
-- `JMP DP` / `JSR DP` → jumps to $DPDB (combined with DB)
+- `ZOA $XX` → zeros the word at $DPXX
+- `LDA X` / `STA X` / `STA $XX` → load/store the byte at $DPDB
+- `STRX` / `STAX` → load/store the byte at $DP:(X or Y)
+- `JDP` / `JDPS` → jumps to $DPDB (combined with DB)
 
 **Set By:**
 ```
 SDP $30             ; DP = $30 (immediate)
-SDP b, $XX          ; DP[b] = $XX (set high or low nibble)
+SDP 1, $XX          ; same as SDP $XX (SDP 0, $XX sets DB instead)
 PODP                ; Pop DP from stack
 ```
 
@@ -240,68 +245,52 @@ STR $00, X    ; Load from $9000 into X
 
 ### DB - Data Byte Register (8-bit)
 
-**Purpose:** Low byte offset for `JMP DP` / `JSR DP` indirect jumps.
+**Purpose:** Low byte of the (DP:DB) address used by the one-argument load/store forms and the indirect jumps.
 
 **Used In:**
-- `JMP DP` → jumps to address formed as ($DP << 8) | $DB
-- `JSR DP` → calls address ($DP << 8) | $DB (pushes return address)
+- `LDA X` / `STA X` / `STA $XX` → load/store the byte at ($DP << 8) | $DB
+- `JDP` → jumps to address formed as ($DP << 8) | $DB
+- `JDPS` → calls address ($DP << 8) | $DB (pushes return address)
 
 **Set By:**
 ```
 SDB $50       ; DB = $50
+SDP 0, $50    ; same thing
 ```
 
 **Example:**
 ```
 SDP $D0       ; DP = $D0
 SDB $40       ; DB = $40
-JMP DP        ; Jump to $D040
+JDP           ; Jump to $D040
 ```
 
 **Notes:**
-- DB is secondary to DP for indirect jumps
-- Not used for STA/STR addressing (those use $DPYY directly)
+- Not used by the two-argument STA/STR forms (those use $DPYY directly) or by STRX/STAX
+- `PUDP`/`PODP` save and restore DP and DB together
 
 ---
 
-### BF - Byte Flip Register (1-bit)
+### BF - Byte Flip Register (1-bit, reserved)
 
-**Purpose:** Selects high or low byte in 16-bit word memory operations.
+The core carries a BF bit that the memory-destination ALU forms and STA/STR
+consult to pick the low or high byte of a word, but **no instruction sets it**
+(the original `SBF` instruction's opcode was reused for `LDA`/`STA`), so BF is
+always 0 and every access is to the byte at the address you name.
 
-**Values:**
-- 0 = Low byte (bits 7-0)
-- 1 = High byte (bits 15-8)
-
-**Used In:**
-- `STA X, $YY` — which byte of $DPYY to write
-- `STR $YY, X` — which byte of $DPYY to read
-- Arithmetic instructions with memory destination
-
-**Set By:**
-```
-SBF 0         ; BF = 0 (low byte)
-SBF 1         ; BF = 1 (high byte)
-```
-
-**Example - Reading a 16-bit Value:**
+To touch a 16-bit value, address its two bytes directly (low byte at the lower
+address):
 ```
 SDP $10
-SBF 0
-STR $50, X    ; X = low byte of $1050
-SBF 1
-STR $50, Y    ; Y = high byte of $1050
+STR $50, X    ; X = low byte of the word at $1050
+STR $51, Y    ; Y = high byte
 ```
-
-**Example - Writing a 16-bit Value:**
 ```
 SDP $20
-LDA X, $CD    ; Low byte
-LDA Y, $AB    ; High byte
-SBF 0
-STA X, $30    ; Write low byte to $2030
-SBF 1
-STA Y, $30    ; Write high byte to $2030
-; $2030 now contains $ABCD
+LDA X, $CD
+LDA Y, $AB
+STA X, $30    ; low byte  -> $2030
+STA Y, $31    ; high byte -> $2031; the word at $2030 now holds $ABCD
 ```
 
 ---
@@ -327,47 +316,48 @@ Bit 0 (0x01): C = Carry flag     — arithmetic carry/borrow
 | SBC X, Y    | Z, C, G, L             |
 | CME/CMN/CML/CMG | Z, G, L           |
 | BEQ/BNE/BLT/BGT | Z, G, L (before branch) |
-| SF n        | Sets specific flag bit  |
-| CF n        | Clears specific flag bit |
-| SFR reg     | FLAGS = reg & 0x0F      |
-| STF reg     | reg = FLAGS             |
+| SF mask     | FLAGS |= mask          |
+| CF mask     | FLAGS &= ~mask         |
+| SFR mask    | FLAGS = mask           |
+| STF X/Y     | upper nybble of X/Y = FLAGS |
 
 **Read By:**
 - `BEQ/BNE/BLT/BGT` — branch based on Z/G/L
 - `ADC/SBC` — reads C flag to include carry
 - `STF X` — reads FLAGS into X for manual inspection
 
-**Flag Instructions:**
+**Flag Instructions** (the operand is a 4-bit mask of Z=0x8, G=0x4, L=0x2, C=0x1):
 ```
-SF 0          ; Set carry flag (FLAGS |= 0x01)
-SF 1          ; Set less flag
-SF 2          ; Set greater flag
-SF 3          ; Set zero flag
-CF 0          ; Clear carry flag
-CF 1          ; Clear less flag
-SFR X         ; Load FLAGS from X (FLAGS = X & 0x0F)
-STF X         ; Store FLAGS into X
+SF 0x1        ; Set carry flag (FLAGS |= 0x01)
+SF 0x2        ; Set less flag
+SF 0x4        ; Set greater flag
+SF 0x8        ; Set zero flag
+CF 0x1        ; Clear carry flag
+CF 0x2        ; Clear less flag
+SFR 0x0       ; Set FLAGS to the given mask (here: clear all)
+STF X         ; X = (X & 0x0F) | (FLAGS << 4)
 ```
 
 **Example - Carry Arithmetic:**
 ```
-; Add 16-bit values: (R2:R3) + (R4:R5)
-LDA X, R3     ; not direct, use STA/STR
-; assume X = low byte, Y = low byte of second
-ADD X, Y, X   ; X = low + low (sets C on overflow)
-STF Y         ; save flags
-; now do high bytes
-LDA X, R2_high
-LDA Y, R4_high
-ADC X, Y, X   ; X = high + high + carry
+; Add 16-bit values ($0201:$0200) + ($0203:$0202) -> ($0205:$0204)
+SDP $02
+STR $00, X
+STR $02, Y
+ADD X, Y, $04     ; low + low (sets C on overflow), stored to $0204
+STR $01, X
+STR $03, Y
+ADC X, Y, $05     ; high + high + carry, stored to $0205
 ```
 
 **Example - Manual Flag Check:**
 ```
-SUB X, Y, X   ; X = X - Y, sets Z/G/L/C
-STF Y         ; Y = flags
-AND Y, X, Y   ; check zero: Y &= 0x08 (FLAG_Z)
-JNZ Y, zero_case
+; Branch if the last ADD carried
+ADD X, Y, X
+STF Y             ; Y's upper nybble = FLAGS: Z=bit 7, G=bit 6, L=bit 5, C=bit 4
+SCR X, $10        ; mask for the carry bit
+AND X, Y, X       ; X = Y & $10, nonzero if carry was set
+JZ X, no_carry    ; JZ jumps when X == 0
 ```
 
 ---
@@ -388,8 +378,7 @@ JNZ Y, zero_case
 - R0 (X), R1 (Y), FLAGS
 
 **Callee-saved (callee must preserve):**
-- RP, DP, DB, BF
-- R4-R15 (by convention)
+- RP, DP, DB (use PUDP/PODP for DP and DB)
 
 **Call/Return Example:**
 ```
@@ -436,24 +425,22 @@ POX           ; restore X
 
 On APU reset:
 - PC: $8000 (BIOS entry point)
-- SP: $01FF (top of RAM stack area)
-- RP, DP, DB, BF: $00, $00, $00, 0
+- SP: $0000 (not usable until BSP sets it)
+- RP: $80 (so JSR/JMS/branches reach the BIOS page)
+- DP, DB, BF: $00, $00, 0
 - FLAGS: $00 (all clear)
-- R0-R255: undefined, should be initialized
+- R0-R255: zeroed
 
 **Recommended Boot Sequence:**
 ```
 start:
-  SRP $D0       ; RP → AROM region
-  SDP $01       ; DP → RAM
+  SRP $80       ; RP -> the page this code lives in
+  SDP $01       ; DP -> RAM
   SDB $00       ; DB = 0
-  SBF 0         ; BF = low byte
-  CF 0          ; clear carry
-  CF 1          ; clear less
-  CF 2          ; clear greater
-  CF 3          ; clear zero
-  ZOR X         ; clear X
-  ZOR Y         ; clear Y
+  SFR 0x0       ; clear all flags
+  SCR X, $00
+  SCR Y, $01
+  BSP           ; SP = $0100
   ; ... initialize RAM, then jump to main
 ```
 

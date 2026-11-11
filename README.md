@@ -380,7 +380,7 @@ Assembles APU assembly language into binary format.
 ### Usage
 
 ```bash
-./apuasm <input.asm> [output.bin]
+executables/apuasm <input.asm> [output.bin]
 ```
 
 If no output file is specified, uses the input filename with `.bin` extension.
@@ -397,13 +397,13 @@ SCR X, 42    ; Set X register to 42
 ```asm
 loop:
     ADD X, Y, X
-    JMP loop
+    CMN X, Y, loop   ; backward branch (JMP only goes forward)
 ```
 
 #### Registers
-- `X`, `Y` - Primary registers (aliases for R0, R1)
-- `R0` to `R255` - General purpose registers
-- Special registers: `PC` (Program Counter), `RP` (ROM Page), `DP` (Data Page), `DB` (Data Byte)
+- `X`, `Y` - The two usable registers (aliases for R0, R1)
+- `R2` to `R127` - Accepted as ALU destinations but write-only: nothing can read them back, so keep data in X, Y and memory
+- Special registers: `PC` (Program Counter), `SP` (Stack Pointer), `RP` (ROM Page), `DP` (Data Page), `DB` (Data Byte)
 
 #### Immediate Values
 - Decimal: `42`
@@ -420,25 +420,26 @@ See `docs/apu/instruction-set.txt` for complete instruction reference.
 |------------|---------|-------------|
 | `NOP` | `NOP 100` | No operation (stall 100 cycles) |
 | `SCR` | `SCR X, 42` | Set register to constant |
-| `ADD` | `ADD X, Y, R2` | Add X + Y, store in R2 |
-| `SUB` | `SUB X, Y, R2` | Subtract X - Y, store in R2 |
-| `JMP` | `JMP $50` | Jump to address |
+| `ADD` | `ADD X, Y, X` | Add X + Y, store in X |
+| `SUB` | `SUB X, Y, X` | Subtract X - Y, store in X |
+| `JMS` | `JMS $50` | Jump to $RP50 (no return address pushed) |
+| `JSR` | `JSR $50` | Call $RP50 (RET returns) |
 | `LST` | `LST 0, 10` | Loop start (ID 0, 10 iterations) |
 | `LFN` | `LFN 0` | Loop finish (ID 0) |
 | `SDP` | `SDP $30` | Set data page to $30 |
-| `WRH` | `WRH 0xAB` | Write high byte to $DPDB |
-| `WRL` | `WRL 0xCD` | Write low byte to $DPDB |
+| `STA` | `STA X, $50` | Store X to $DP50 |
+| `STR` | `STR $50, X` | Load X from $DP50 |
 | `HLT` | `HLT` | Halt (infinite loop) |
 
 ### APU Example Programs
 
 #### Simple Addition
 ```asm
-; Add 42 + 100, result in R2
+; Add 42 + 100, result in X
 start:
     SCR X, 42       ; X = 42
     SCR Y, 100      ; Y = 100
-    ADD X, Y, R2    ; R2 = X + Y = 142
+    ADD X, Y, X     ; X = X + Y = 142
     HLT
 ```
 
@@ -468,12 +469,12 @@ See `examples/apu/` for more examples.
 
 ### APU Documentation
 - `docs/apu/README.txt` - APU documentation index
-- `docs/apu/overview.txt` - Architecture overview (8-bit RISC, 4.2 MHz, MMP, SST)
-- `docs/apu/instruction-set.txt` - Complete instruction reference (41 instructions)
+- `docs/apu/overview.txt` - Architecture overview (8-bit RISC, 4.25 MHz, MMP, SST)
+- `docs/apu/instruction-set.txt` - Complete instruction reference (57 mnemonics)
 - `docs/apu/memory-map.txt` - Memory layout ($0000-$FFFF, banking)
-- `docs/apu/registers.txt` - Register reference (X, Y, PC, RP, DP, DB, BF)
+- `docs/apu/registers.txt` - Register reference (X, Y, PC, SP, RP, DP, DB, FLAGS)
 - `docs/apu/sst.txt` - Sample Storage System format
-- `docs/apu/mmp.txt` - Music Mixing Processor (16 stereo channels)
+- `docs/apu/mmp.txt` - Music Mixing Processor (16 mono channels with pan)
 - `docs/apu/programming-guide.txt` - Examples and programming patterns
 
 **🎵 Complete APU/DSP documentation now available!**

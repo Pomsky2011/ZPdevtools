@@ -9,19 +9,19 @@ the main CPU to handle all audio-related tasks.
 ## Core Specifications
 
 - **Architecture**: 8-bit RISC
-- **Clock Speed**: 4 MHz (executes every 16th master clock cycle)
+- **Clock Speed**: 4.250710 MHz (executes every 16th master clock cycle)
 - **Cycles Per Instruction (CPI)**: 4
-- **Effective Performance**: 1.0 MIPS (Million Instructions Per Second)
+- **Effective Performance**: 1.06 MIPS (1,062,677 instructions per second)
 - **Instruction Size**: 16-bit fixed width
 - **Instruction Format**: 5-bit opcode + 11-bit operands
 
 ## System Clock Synchronization
 
-The APU runs at 4 MHz, synchronized to the 64 MHz master clock. It executes only on
-master cycle 15 of each 16-cycle pattern:
+The APU runs at 4.250710 MHz, synchronized to the 68.011355 MHz master clock. It
+executes only on master cycle 15 of each 16-cycle pattern:
 
-- **Master clock**: 64 MHz (PPU pixel clock)
-- **APU clock**: 4 MHz (every 16 master cycles)
+- **Master clock**: 68.011355 MHz (PPU pixel clock)
+- **APU clock**: 4.250710 MHz (every 16 master cycles)
 - **Execution pattern**: Master cycles 0-14 (idle), 15 (APU executes)
 
 This deterministic pattern ensures perfect synchronization with other system components.
@@ -29,26 +29,26 @@ This deterministic pattern ensures perfect synchronization with other system com
 ## Performance Characteristics
 
 ### Clock Budget
-- Total cycles per second: 4,000,000
-- Instructions per second: 1,000,000 (at 4 CPI average)
-- At 60 Hz audio: ~16,666 instructions per frame
-- At 48 kHz sample rate: ~20.83 instructions per sample
+- Total cycles per second: 4,250,710
+- Instructions per second: 1,062,677 (every instruction is 4 cycles)
+- At 60 Hz: ~17,711 instructions per frame
+- At 48 kHz sample rate: ~22.1 instructions per sample
 
 ### Audio Frame Budget (60 Hz)
 ```
 Frame time: 16.67 ms
-Cycles per frame: 66,666
-Instructions per frame: 16,666 (at 4 CPI)
+Cycles per frame: ~70,845
+Instructions per frame: ~17,711 (at 4 CPI)
 Samples per frame (48 kHz): 800
-Instruction budget per sample: ~20 instructions
+Instruction budget per sample: ~22 instructions
 ```
 
 ## Major Subsystems
 
 ### 1. CPU Core (UAS - Universal Audio System)
 - 8-bit register-based processor
-- 5 general-purpose 8-bit registers (X, Y, and 3 others usable in operations)
-- Dedicated registers for memory management (DP, RP, DB, BF)
+- 2 usable general-purpose 8-bit registers (X and Y); see registers.txt
+- Dedicated registers for memory management (DP, RP, DB)
 - 16-bit program counter
 - Support for loops, functions, and conditional branching
 
@@ -57,19 +57,18 @@ Instruction budget per sample: ~20 instructions
 - Per-channel pitch control (resampling, fixed-point 12-bit fraction)
 - Per-channel volume control (0=silent, 255=max)
 - Per-channel pan (0=full L, 128=center, 255=full R)
-- Linear interpolation for pitch-shifted playback
+- Cubic (Catmull-Rom) interpolation for pitch-shifted playback
 
 ### 3. SST (Sample Storage/Streaming)
 - Sample block format with loop support
 - 12-byte sample blocks per entry
-- Clamping system for dynamic range compression/expansion
-- Loop points and one-shot playback modes
-- 4-byte headers per block with extensive control flags
+- Final-block (W) and one-shot (Z) flags, plus a loop point set in the STL entry
+- 4-byte headers per block (the loop-count and clamping fields are defined but not yet honoured by the mixer)
 
 ### 4. DEF88186 Interface
 - Bidirectional communication with main CPU
-- 2 KiB input buffer ($1000-$17FF)
-- 2 KiB output buffer ($1800-$1FFF)
+- 2 KiB input buffer ($1000-$17FF) and 2 KiB output buffer ($1800-$1FFF)
+- Both are plain RAM that the CPU reaches through the APU window (bank $A0); there are no ready flags or interrupts
 - Allows CPU to control APU and receive status
 
 ## Memory Organization
@@ -92,28 +91,26 @@ $D000-$FFFF   AROM (Audio ROM, banked) (12 KiB visible)
 ```
 
 ### Banking System
-- **AROM**: 448 KiB total, organized into 24 KiB banks
-- **Bank Switch**: Use RBC (ROM Bank Change) instruction
-- **Bank Count**: 18 banks × 24 KiB each
-- **Visible Window**: $D000-$FFFF (12 KiB at a time)
+- **AROM**: 448 KiB array; banks start every 24 KiB (18 banks, 0-17)
+- **Bank Switch**: the CPU writes the APU_ROMBANK register ($D80016); the APU has no bank-switch instruction
+- **Visible Window**: $D000-$FFFF (12 KiB at a time: the first 12 KiB of the selected bank)
 
-Total ROM capacity: 448 KiB (Audio ROM) + 64 KiB (SST) = 512 KiB
+SST ($9000-$CFFF, 16 KiB) is writable sample RAM, not part of the ROM; see memory-map.txt for the bank layout.
 
 ## Programming Model
 
 ### Instruction Categories
 1. **Control Flow**: JMP, JNZ, conditional branches, loops, functions
 2. **Arithmetic/Logic**: NOR, AND, ADD, SUB
-3. **Memory Access**: STA (store), STR (load), WRH/WRL (write immediate)
-4. **Register Operations**: SCR (set constant), ZOR (zero), SBF (byte flip)
-5. **I/O**: IOO (output), IOI (input), IBC (I/O bank change)
+3. **Memory Access**: STA (store), STR (load), LDA/STA via dp:db, STRX/STAX (register-indexed), ZOA (zero a word)
+4. **Register Operations**: SCR/LDA (set constant), ZOR (zero), MOV, EXC, INC, DEC
+5. **Stack**: BSP, PUX/PUY/POX/POY, PUDP/PODP, RET
 6. **Special**: NOP with cycle stall, SRP/SDP/SDB (set page registers)
 
 ### Key Features
-- **Loops**: Hardware loop support with 16 unique loop IDs
-- **Functions**: Callable function system with CFS/CFE/CCF
-- **Banking**: Separate ROM and I/O banks for extended addressing
-- **Word Operations**: BF (Byte Flip) register allows 16-bit operations via high/low byte selection
+- **Loops**: Hardware loop support with 16 unique loop IDs (LST/LFN)
+- **Subroutines**: JSR/RET with a hardware stack (grows up)
+- **Byte-wide memory**: 16-bit values are two byte accesses, low byte at the lower address
 - **Conditional Jumps**: Multiple addressing modes (absolute, relative, offset)
 
 ## Audio Pipeline
@@ -168,8 +165,8 @@ Total ROM capacity: 448 KiB (Audio ROM) + 64 KiB (SST) = 512 KiB
 
 | Feature          | APU            | PPU            |
 |------------------|----------------|----------------|
-| Clock Speed      | 4.2 MHz        | 64 MHz         |
-| Instruction Set  | RISC (41)      | CISC (~40)     |
+| Clock Speed      | 4.25 MHz       | 68.01 MHz      |
+| Instruction Set  | RISC (57)      | CISC (35)      |
 | Register Width   | 8-bit          | 16-bit         |
 | Primary Purpose  | Audio          | Graphics       |
 | Hardware Accel   | MMP Mixer      | Tile Engine    |
