@@ -78,6 +78,11 @@ Music Mixing Processor register reference and operation guide.
 - Initialization, channel allocation
 - Advanced techniques (panning, Doppler, arpeggios)
 
+### zpa.txt and zpsnd.txt
+The ZPA sound pack and BIOS sequencer design (the pack format, the score event stream,
+the CPU mailbox protocol), and the `zpsnd` baker that builds packs from a text score.
+The baker and its reference interpreter exist; the BIOS engines are not written yet.
+
 ### programming-guide.txt
 Practical examples and programming patterns for common tasks.
 

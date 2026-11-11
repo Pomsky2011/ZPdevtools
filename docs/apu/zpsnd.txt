@@ -1,0 +1,85 @@
+# zpsnd: the ZPA sound pack baker
+
+`scripts/zpsnd.py` turns a text file (`.zps`) describing samples and a score into a
+ZPA pack (`.zpa`) for the APU BIOS sequencer. Stdlib-only Python 3. The format it
+writes is in zpa.txt; the SST block layout is in sst.txt.
+
+    python3 scripts/zpsnd.py bake  jingle.zps -o jingle.zpa [--listing jingle.lst]
+    python3 scripts/zpsnd.py trace jingle.zpa --ticks 900 [--mailbox 700=1]
+    python3 scripts/zpsnd.py info  jingle.zpa
+    python3 scripts/test_zpsnd.py                    # tests (needs ZeroPoint's zpa_play for the mixer tests)
+
+`bake` prints the sample bank layout and sizes; `--listing` writes the compiled event
+stream. `trace` runs the pack through the reference engine and prints one line per MMP
+register write (`t0132 ch2  pitch 916`); `--mailbox TICK=VALUE` sets the byte the CPU
+writes to $1000. Builds are deterministic.
+
+## File format
+
+`;` starts a comment. Samples come first, then a `score` section.
+
+    tickrate 120                       ; only 120 is supported
+    sample NAME KIND key=value ...
+    score
+    ...events...
+
+### Samples
+
+All samples end up as signed 8-bit SST sectors that are a multiple of 12 samples.
+
+    KIND    sine | saw | square | tri    cycle=N [amp=0.9] [rate=48000]
+            noise                        [rate=8000] [len=0.5] [lp=Hz] [hp=Hz] [poles=2]
+                                         [attack=S] [decay=S] [seed=N]
+            wav                          file=PATH [rate=16000] [start=S] [end=S]
+    common  loop=none|whole|A..B   xfade=N   gain=G   norm=PEAK
+
+- Tone kinds are one cycle that loops forever. The cycle is repeated until its length
+  is a multiple of 12 (cycle=64 becomes 192 samples), because a sector wraps at its end.
+- `noise` is white noise from a seeded generator, optionally filtered and shaped by
+  an exponential decay.
+- `wav` reads any PCM WAV (8/16/24/32-bit, mono or stereo), mixes to mono and resamples
+  to `rate` with a windowed-sinc filter.
+- `loop=none` (the default for noise/wav) makes a one-shot (the Z bit) padded with zeros.
+  `loop=whole` loops the whole sample. `loop=A..B` plays 0..B once then loops A..B; A and
+  B are seconds, or sample indices with an `n` suffix (`600n`). B is rounded down to a
+  multiple of 12. `xfade=N` blends the N samples before B toward the N samples before A
+  so the loop seam is continuous.
+- `norm=0.95` scales the peak to that level (noise defaults to 0.95); `gain=` is a plain
+  multiplier.
+
+### Score events
+
+Every event starts with a time: `@T` is absolute, `+T` is relative to the previous
+event. `T` is seconds (`0.5`) or ticks (`60t`). After the first `label`, only `+T` is
+allowed, because jumping back restarts timing from the jump. `label NAME` takes no time.
+
+    note CH SAMPLE [pitch=native|raw=N|hz=F|semis=S] [vol=0..255] [pan=0..255]
+    set CH [pitch args] [vol=] [pan=]
+    slide CH pitch|vol|pan to=V|raw=|hz=|semis= over=T
+    off CH
+    post N                        ; write N to the APU status byte
+    nop                           ; do nothing: gives slides time to finish
+    mark / rep N                  ; repeat the body N more times (nests 4 deep)
+    jump LABEL
+    jz LABEL                      ; jump while the CPU mailbox byte is 0
+    jeq VALUE LABEL               ; jump if the mailbox byte equals VALUE
+    wait                          ; hold until the mailbox byte is non-zero
+    end                           ; silence everything, return to the BIOS idle loop
+
+Pitch: `raw` is the MMP pitch value, `hz` is the frequency of a tone sample, `semis` is
+semitones from the sample's native pitch (rate * 4096 / 48000), and `native` is that
+native pitch. Slides run in a straight line and land exactly on the target in exactly
+`over` ticks (a smaller-than-`over` slide finishes early); long slides are split into
+chained events automatically.
+
+### What the compiler checks
+
+- Samples fit SST (16 KiB), at most 256 samples, the score fits the 12,256 bytes the BIOS
+  checksums, channels 0-15, volumes/pans 0-255.
+- A slide needs a note on the channel first, and a parameter cannot start a new slide
+  while its previous one is running.
+- A `label`, `mark`, `rep`, `jump`, `jz` or `jeq` must come after all slides have
+  finished (use `nop`).
+- Every path into a label (falling in or jumping) and every `rep` must leave all
+  channels in the same state, so a loop is repeatable and slide deltas are always known.
+  If not, put a `set` after the label.

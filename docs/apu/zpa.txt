@@ -1,17 +1,20 @@
 # ZPA: APU Sound Pack and BIOS Sequencer (design, not yet implemented)
 
-STATUS: design only. Nothing in this file exists in the BIOS, the emulator or a
-tool yet. It builds on the MMP/SST behaviour in mmp.txt and sst.txt, which is
-implemented and tested (ZeroPoint `tools/test_mmp.cpp`).
+STATUS: the pack format, the `zpsnd` baker and its reference interpreter are
+implemented and tested (scripts/zpsnd.py, scripts/test_zpsnd.py; see zpsnd.txt). The
+BIOS engines (assembly LLE, C++ HLE) and the Boot ROM upload are NOT written yet. This
+builds on the MMP/SST behaviour in mmp.txt and sst.txt, which is implemented and tested
+(ZeroPoint `tools/test_mmp.cpp`).
 
 ## Goal
 
 The CPU Boot ROM starts the APU and uploads a sound pack. The APU BIOS plays it:
 thunder, then a charge-up that keeps playing until the CPU reports the signature
-check result, then a release (verified) or a failure sting (rejected). When the
-score ends the BIOS goes back to waiting for a program, so a cartridge can load its
-own APU program at any time. The electric-guitar riff is deferred: version 1 is
-thunder + charge-up only (the format and engine are riff-ready, the notes are not).
+check result. At that point the boot music simply stops (all channels silenced) and
+the BIOS goes back to waiting for a program, so the cartridge's own APU program can
+be loaded and started. There is no release sound and no failure sting. The
+electric-guitar riff is deferred: version 1 is thunder + charge-up only (the format
+and engine are riff-ready, the notes are not).
 
 Decisions already made:
 - The sequencer engine lives in the BIOS (not in the uploaded data).
@@ -72,11 +75,30 @@ The sound budget (all resident in SST, no streaming needed):
 - guitar (deferred with the riff): one note at ~16 kHz, attack plus a ~512-sample
   sustain loop (STL loop word), repitched; a power chord uses two channels
 - thunder: a short noise crack plus a low-passed rumble loop with a crossfaded seam
-- charge-up and failure sting: a 64-sample saw/sine cycle with pitch and volume
-  slides on 2-3 detuned channels
+- charge-up: a 64-sample saw/sine cycle with pitch and volume slides on 2-3 detuned
+  channels
 - total without the guitar: a few thousand samples (the riff will add ~2 KB)
 
 Source samples must be mono, 8-bit signed, resampled by the tool.
+
+## Container (`.zpa`, written by zpsnd)
+
+    +0   "ZPA1"
+    +4   u8   tick rate in Hz (v1: 120)
+    +5   u8   flags (0)
+    +6   u16  STL image size in bytes          (little-endian, like the hardware tables)
+    +8   u16  SST image size in bytes
+    +10  u16  score size in bytes
+    +12  u16  reserved (0)
+    +14  u16  reserved (0)
+    +16  STL image   (N x 4 bytes; sample addresses are absolute, $9000 + offset)
+         SST image   (16-byte blocks)
+         score       (bytes for $3020)
+         BIOS header (32 bytes for $3000: magic $0B, entry $3020, checksum at $301F over
+                      the score zero-padded to $3020-$5FFF)
+
+The Boot ROM copies STL -> $7000, SST -> $9000, score -> $3020, then bytes 1-31 of the
+BIOS header -> $3001-$301F, and writes the magic byte ($3000) last of all.
 
 ## Score event stream
 
@@ -90,14 +112,16 @@ A score is a sequence of events. Each event is `delta` then `op` then its argume
 
     op   name        args                        effect
     $00  END         -                           silence all channels, return to the BIOS idle loop
-    $01  NOTE        ch, stl, pitch16, vol, pan  stop slides on ch, set pitch/vol/pan, write STL
-                                                 address $7000 + stl*4 (retriggers)
-    $02  PITCH       ch, delta16, ticks          add signed delta16 to the pitch each tick for `ticks` ticks
+    $01  NOTE        ch, stl, pitch16, vol, pan  cancel slides on ch, set pitch/vol/pan, write STL
+                                                 0 then address $7000 + stl*4 (a same-address write
+                                                 would not retrigger)
+    $02  PITCH       ch, delta16, ticks(u8)      add signed delta16 to the pitch each tick for `ticks` ticks
     $03  VOL         ch, delta16 (8.8), ticks    same, on volume (8.8 fixed point, clamped 0-255)
     $04  PAN         ch, delta16 (8.8), ticks    same, on pan
     $05  OFF         ch                          write STL address 0 (stop; also ends a one-shot early)
-    $06  SET         ch, pitch16, vol, pan       change values without retriggering the sample
+    $06  SET         ch, pitch16, vol, pan       change values without retriggering; cancels slides on ch
     $07  POST        byte                        write byte to the status register $1800
+    $08  NOP         -                           do nothing (gives slides time to finish before a label)
     $10  MARK        -                           loop target for REP (nest depth 4)
     $11  REP         count                       jump back to the matching MARK `count` times
     $12  JUMP        off16                       jump to a score offset (infinite loops)
@@ -114,17 +138,30 @@ The looping ops are what keep the charge-up playing for as long as verification 
     PITCH/VOL slides ... (rising over ~1.5 s)
     HOLD: ... a short held segment (slow shimmer slides) ...
         JZ   HOLD           ; mailbox still 0: keep charging
-        JEQ  2, FAIL        ; mailbox == 2: signature rejected
-        ... release: final thunder crack, charge-up channels OFF ...
-        END                 ; mailbox == 1
-    FAIL: ... failure sting (falling, detuned) ...
-        END
+        END                 ; any result (1 or 2): stop the music, back to the BIOS idle loop
 
 The ramp plays once; only the hold segment repeats, so the charge-up never restarts
 from the bottom while it waits. (If you would rather have the whole sweep repeat, put
 the label before the ramp instead; it is one label's difference in the score.)
 
 A jump is only checked at event boundaries, so the loop point is musically clean.
+
+Semantics the baker and every engine (LLE, HLE, the zpsnd reference interpreter) share:
+- Order within one tick: (1) run every event whose delta has elapsed, (2) advance all
+  slides one step, (3) write the channel values to the MMP. So a slide event with
+  `ticks = T` produces T steps on the tick it appears and the next T-1 ticks, and the
+  channel then holds the final value.
+- A jump (JUMP, taken JZ/JEQ, REP) resets the delta counter: the delta of the first event
+  at the target counts from the moment of the jump, not from the event before the label.
+- Pitch is an integer (no fraction), volume and pan are 8.8 fixed point whose high byte
+  is the MMP register. Slides longer than 255 ticks are split into chained events by
+  zpsnd. zpsnd tracks each channel's pitch/volume/pan through the score and refuses a
+  backward jump whose state differs from the state at the label (put a SET after the
+  label), so slide deltas are always computed from known values.
+- Time is quantized to ticks (1/120 s); the tool rounds seconds to the nearest tick.
+- `scripts/zpsnd.py trace` runs a baked score through a reference interpreter that
+  implements exactly these rules and prints the MMP register writes per tick. It is
+  the golden trace the BIOS engines are tested against.
 
 ## Engine tick (LLE)
 
@@ -157,14 +194,13 @@ pan, STL) at every tick.
 
 A headless harness (like `tools/test_boot_rom.cpp`) boots a signed ROM through
 ZPbootROM with the pack, captures the audio buffer, and checks: non-silence within a
-fixed time, riff looping while the mailbox is 0, charge-up after a pass, failure sting
-after a rejected ROM, and the APU back in `wait_for_header` afterward.
+fixed time, the charge-up hold looping while the mailbox is 0, all channels silent and
+the APU back in `wait_for_header` after the result (pass or fail), and a cartridge APU
+program loading and running afterward.
 
 ## Open items
 
 - The guitar riff (notes and source audio) is deferred. Thunder source audio and the
   licensing of anything from Freesound before it goes in a public repo.
-- What the release (verified) sounds like: currently a final thunder crack as the
-  charge-up cuts off.
 - Exact tick rate if 120 Hz turns out too coarse for the riff.
 - Streaming of longer samples (reserved op `$20 LOADSEG`, not designed).
