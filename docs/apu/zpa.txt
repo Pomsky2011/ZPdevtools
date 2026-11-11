@@ -1,10 +1,15 @@
-# ZPA: APU Sound Pack and BIOS Sequencer (design, not yet implemented)
+# ZPA: APU Sound Pack and BIOS Sequencer
 
-STATUS: the pack format, the `zpsnd` baker and its reference interpreter are
-implemented and tested (scripts/zpsnd.py, scripts/test_zpsnd.py; see zpsnd.txt). The
-BIOS engines (assembly LLE, C++ HLE) and the Boot ROM upload are NOT written yet. This
-builds on the MMP/SST behaviour in mmp.txt and sst.txt, which is implemented and tested
-(ZeroPoint `tools/test_mmp.cpp`).
+STATUS: implemented and tested end to end. The pack format and `zpsnd` baker (scripts/zpsnd.py,
+zpsnd.txt), the assembly engine in the APU BIOS (ZPbootROM apu/internalBIOS/engine.uas, "LLE"),
+the emulator's built-in C++ BIOS (ZeroPoint src/apu_hle.cpp, "HLE") and the Boot ROM upload
+(ZPbootROM def88186/gen_apu_upload.py) all exist. Tests:
+- `python3 scripts/test_zpa_engine.py`: hand-encoded scores (every op, clamping, REP nesting, WAIT,
+  long deltas, all 16 channels) through the reference interpreter, the LLE and the HLE; the MMP
+  register writes must be identical tick for tick (needs ZeroPoint's build/bin/test_zpa_engine).
+- ZeroPoint `build/bin/test_boot_jingle <bootrom.bin> <cart.zpb> [--bios bios_full.bin] [--expect 1|2]`:
+  boots the real ZPbootROM with a signed (or tampered) ROM and checks the jingle end to end.
+This builds on the MMP/SST behaviour in mmp.txt and sst.txt (ZeroPoint `tools/test_mmp.cpp`).
 
 ## Goal
 
@@ -31,22 +36,28 @@ Decisions already made:
 - No hardware envelopes: volume/pitch/pan are changed by the engine as "slides".
 - No APU timer: LLE timing is cycle-counted stalls. The engine tick is 120 Hz =
   4,250,710 / 120 = 35,422.6 APU cycles.
-- ARAM $3000-$6FFF (16 KiB) is where the BIOS looks for a header (see below);
-  engine state lives in General RAM ($0200-$07FF); $1000 is the CPU mailbox.
-- BIOS space: $8000-$8EFF (the sine table owns $8F00). The current handoff code uses
-  86 bytes, leaving about 3.7 KB (1,877 instructions) for the engine.
+- ARAM $3000-$5FFF is where the BIOS looks for a header and the score (see below). The engine's
+  per-channel state is one 256-byte page per channel at $6000-$6FFF (the checksum stops at
+  $5FFF, so a score never overlaps it); its globals are in General RAM page $0200; $1000 is the
+  CPU mailbox. After the engine ENDs a cartridge program may reuse all of it.
+- BIOS space: $8000-$8EFF (the sine table owns $8F00). The handoff code is under 128 bytes; the
+  engine takes pages $81-$88 (about 2 KB) plus dispatch tables at $8E00. Jumps carry only an 8-bit
+  offset, so the code is split into 256-byte pages and every routine declares its page with
+  `.rp`; apuasm refuses a jump into another page (programming-guide.txt, "Assembler directives").
 
 ## Upload protocol (Boot ROM -> APU)
 
-1. The Boot ROM already halts the APU at init (`APUCTRL = $02`).
-2. DMA the STL image to `$A0:7000` and the SST image to `$A0:9000` (bank `$A0` is the
-   APU window; plain memory writes).
-3. DMA the score image to `$A0:3020`, then write the 32-byte header at `$A0:3000`
-   last (magic byte last of all, so a half-written pack is never seen).
-4. Write `$00` to the mailbox (`$A0:1000`) and `$04` to `APUCTRL` (resume).
-5. The BIOS sees the header, checks the checksum, and starts the engine.
-6. When verification finishes the Boot ROM writes `$01` (passed) or `$02` (failed)
-   to `$A0:1000`, then continues. On pass it jumps to the cartridge immediately.
+1. The Boot ROM already halts the APU at init (`APUCTRL = $02`), so the BIOS cannot see a
+   half-written pack.
+2. After the PPU splash has loaded, `apu_upload` DMAs three blocks from bank $E1 offset $A000
+   (right after the 40 KiB PPU payload) into the APU window (bank `$A0`; DMA transfers are
+   multiples of 256 bytes, at most 1024): header + score to `$A0:3000`, the STL image to
+   `$A0:7000`, the SST image to `$A0:9000`. The header goes in the same block as the score;
+   it needs no separate "magic last" write because the APU is halted.
+3. It writes `$00` to the mailbox (`$A0:1000`) and `$04` to `APUCTRL` (resume).
+4. The BIOS sees the header, checks the checksum, and starts the engine.
+5. When verification finishes the Boot ROM writes `$01` (passed) or `$02` (failed) to `$A0:1000`
+   (main.def), then continues. On pass it jumps to the cartridge immediately.
 
 Header at `$3000` (extends the existing program header; byte 0 selects the type):
 
@@ -165,42 +176,65 @@ Semantics the baker and every engine (LLE, HLE, the zpsnd reference interpreter)
 
 ## Engine tick (LLE)
 
-Per tick: (1) run every event whose delta has elapsed, (2) advance all 16 channels'
-slides (fixed cost, zero deltas where idle), (3) write changed values to the MMP
-registers (STAX with DP = $00 turns a channel number into a register offset), (4)
-stall to 35,423 cycles. Event cost varies by under 1% of a tick, so tempo is stable
-without a clock. The stall is calibrated against the emulator's cycle counts.
+Per tick: (1) clear a WAIT if the mailbox is non-zero, then run every event whose delta has
+elapsed, (2) for each of the 16 channels advance its pitch/volume/pan slides (16-bit add with
+clamping) and write what changed to the MMP (one channel per page, DP walks the pages; STAX with
+DP = $00 and a precomputed offset turns a channel into a register address), (3) count the delta
+down, bump the tick counter, (4) stall to the period with a hardware loop of `NOP $7FF`.
 
-Engine RAM ($0200-$07FF): score pointer, tick/delta counter, REP stack, and per-channel
-slide state as 16-byte planar tables (pitch lo/hi, pitch delta lo/hi, pitch ticks, vol
-8.8, vol delta, vol ticks, pan 8.8, pan delta, pan ticks).
+Timing (measured with `test_zpa_engine --timing`): the stall is calibrated so a quiet tick (the
+charge-up hold) is exactly 35,423 APU cycles (ideal 35,422.6). Work varies with how many slides
+and writes are live, so busier ticks run up to a few percent long (one-off event bursts, like the
+first tick's three NOTEs, up to ~25%): over the jingle the average is within 1% of 120 Hz.
+
+State: tick counter at $0207/$0208 (little-endian; the test harness uses it to attribute writes),
+score pointer $0202/3, delta counter $0204/5, WAIT flag $0206, REP stack $0209-$0219 (four
+4-byte frames), decoded event arguments $0220-$0227. A channel page ($60 + ch) holds the pitch /
+volume / pan values, slide deltas and tick counts, the last values written, the playing and
+pending STL address and the MMP offsets (the layout is in the comment above chan_pass in
+engine.uas). A score never needs any of this; it is the engine's own workspace.
+
+Event decoding is table-driven: $8E00 (handler low bytes), $8E20 (argument byte counts) and
+$8E40 (handler pages) are indexed by op; an unknown op acts as END.
 
 ## HLE BIOS (emulator default when no APU BIOS image is loaded)
 
-A native C++ implementation of exactly the BIOS contract above, so the jingle plays
-with no `--apu-bios` file:
-- header wait, checksum check, magic-zeroing, and `$0A` program handoff
-- the engine, ticking on APU cycles at exactly 4,250,710 / 120 (fractional
-  accumulation, so there is no drift)
-- the mailbox ($1000) and status ($1800) protocol
-- charges the same cycles the real BIOS would for the checksum scan, so timing
-  matches
+A native C++ implementation of exactly the BIOS contract above (ZeroPoint src/apu_hle.cpp), so the
+jingle plays with no `--apu-bios` file:
+- header wait, checksum check, magic-zeroing, and `$0A` program handoff (RP=$80, DP=$30, SP=$0100,
+  X/Y = the entry point, as the real BIOS leaves them)
+- the engine, ticking on APU cycles at exactly 4,250,710 / 120 (integer arithmetic, no drift)
+- the mailbox ($1000) and status ($1800) protocol, and the tick counter at $0207
+- the real BIOS's startup time: 589,328 cycles for the header poll and checksum scan, then 8,000
+  for the engine's channel setup (constants measured with `test_zpa_engine --timing`)
 
-The LLE BIOS (this file's assembly) and the HLE must give the same audible result.
-Test: run the same pack under both and compare the MMP register trace (pitch, volume,
-pan, STL) at every tick.
+It is opt-in on a bare `APU` (`enableHLEBios(true)`; unit tests and demos that load code at
+$8000 run exactly what they are given) and `System` turns it on unless `loadAPUBios()` /
+`--apu-bios` supplies the real image. It only takes over when execution sits at an EMPTY BIOS
+entry ($8000), and drops out as soon as anything moves PC elsewhere (a program handoff,
+`loadAPUProgram`), so code loaded at $8000 still runs.
 
-## Boot ROM test plan
+The LLE BIOS and the HLE give the same MMP register writes at every tick (tested against the
+zpsnd reference); they differ only in cycle-level timing within a tick.
 
-A headless harness (like `tools/test_boot_rom.cpp`) boots a signed ROM through
-ZPbootROM with the pack, captures the audio buffer, and checks: non-silence within a
-fixed time, the charge-up hold looping while the mailbox is 0, all channels silent and
-the APU back in `wait_for_header` after the result (pass or fail), and a cartridge APU
-program loading and running afterward.
+## Boot ROM test plan (implemented: ZeroPoint tools/test_boot_jingle.cpp)
+
+Boots a signed ROM through ZPbootROM on the real core, with the HLE or the assembled BIOS, and
+checks: the jingle starts (0.16 s after power-on) and is audible, the engine ticks at 120 Hz right
+up to the verify result (the hold loops while the mailbox is 0), the result lands in $A0:1000
+(1 for a good signature, 2 for a tampered ROM), every channel is silent within 0.7 s of it (the
+hold loop polls the mailbox at its JZ events), the APU is back in the BIOS idle loop, and a
+cartridge `$0A` program is then accepted and run. A System "frame" is a 262x340 raster at the
+68 MHz master clock (~1.3 ms), not 1/60 s; the test converts through the master clock.
 
 ## Open items
 
 - The guitar riff (notes and source audio) is deferred. Thunder source audio and the
-  licensing of anything from Freesound before it goes in a public repo.
+  licensing of anything from Freesound before it goes in a public repo (the v1 jingle is
+  fully synthesized, so it has none).
 - Exact tick rate if 120 Hz turns out too coarse for the riff.
 - Streaming of longer samples (reserved op `$20 LOADSEG`, not designed).
+- Constant-time ticks: busier ticks run a few percent long (see "Engine tick"). Padding the
+  skipped branches with `NOP` stalls would make every tick the same length if that ever matters.
+- The REP stack is 4 deep in the HLE; the LLE does not bound it (a fifth MARK overruns into
+  the next RAM bytes). The baker refuses deeper nesting.
