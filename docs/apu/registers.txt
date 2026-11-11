@@ -3,9 +3,8 @@
 ## Register Overview
 
 The APU has exactly two general-purpose 8-bit registers, X and Y, plus several
-special-purpose registers. (The emulator happens to allocate a 256-entry array
-for them; see "The 7-bit destination field" below. Only the first two entries
-are registers.)
+special-purpose registers. (The emulator allocates a 256-entry array; entries
+above the first two are only debug scratch slots, see "R2-R127" below.)
 
 ### General Purpose Registers
 - **R0 (X)** (8-bit) - Primary accumulator/index register
@@ -73,14 +72,27 @@ BEQ X, Y, $50     ; Branch to [RP:$50] if X == Y
 
 ---
 
-### The 7-bit destination field (not extra registers)
+### R2-R127: Debug Scratch Slots (not real registers)
 
-**Purpose:** None. There are only two registers. The result field of
-NOR/AND/ADD/SUB/ADC/SBC is 7 bits wide as an artifact of the encoding, and
-`apuasm` will accept names up to R127 there, but values 2-127 only store the
-result in an internal array slot that no instruction can read back. They are
-not registers and cannot hold anything usable. Write results to X, Y, or a
-memory byte ($DP:$YY), and use `PUX`/`PUY` or a RAM scratch page to spill values.
+**Purpose:** Debugging only. The APU has exactly two registers, X and Y. The
+result field of NOR/AND/ADD/SUB/ADC/SBC is 7 bits wide, so those instructions
+can name a result "register" R2-R127; the value is stored in a slot that a
+debugger can inspect (`APU::getRegister`, and `bin/debugger`'s `apu` command,
+which shows R0-R7), but **no instruction can read it back**, so a running
+program can never use it.
+
+`apuasm` accepts these names only as the result register of those six
+instructions, and prints a LOUD multi-line warning every time one is used:
+```
+add x, y, r9      ; WARNING: R9 IS NOT A REAL REGISTER! (assembles, but unusable)
+```
+- `R128` and above is an error (the 7-bit field would silently wrap to R0-R127).
+- R2 and above anywhere else (a source operand, `XOR`/`CRB`/`LDA`/`STA`/`MOV`
+  and so on) is an error, because those fields are 1 bit and the register
+  would otherwise be silently turned into X or Y.
+
+Keep real data in X, Y and memory ($DP:$YY), and use `PUX`/`PUY` or a RAM
+scratch page to spill values.
 
 ---
 

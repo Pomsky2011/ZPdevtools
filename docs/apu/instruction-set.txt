@@ -12,10 +12,11 @@ Bit:  15  14  13  12  11 | 10   9   8   7   6   5   4   3   2   1   0
 Register operands: bit 10 = first register (X=0, Y=1), bit 9 = second register (X=0, Y=1)
 
 There are two registers, X and Y, and every register operand is X or Y.
-NOR/AND/ADD/SUB/ADC/SBC have a 7-bit destination field in their encoding, but
-values above 1 do not name registers: they write to a slot nothing can read
-back, so the destination is always X, Y, or a memory byte. XOR and CRB have a
-1-bit destination (X or Y).
+NOR/AND/ADD/SUB/ADC/SBC have a 7-bit destination field in their encoding; values
+above 1 (R2-R127) are debug scratch slots that nothing can read back, so for
+real work the destination is X, Y, or a memory byte. apuasm accepts R2-R127
+there with a loud warning and rejects them everywhere else (see registers.txt).
+XOR and CRB have a 1-bit destination (X or Y).
 
 ## Instruction Categories
 
@@ -144,7 +145,7 @@ The 2-arg form (SDP b, $XX) sets byte b of the data pointer:
 ```
 Opcode:  00100
 Encoding: 00100 X Y 0 ZZZZZZZZ   (result → memory $DPZZ)
-          00100 X Y 1 0 ZZZZZZZ   (result → register Z; only X/Y are real, see above)
+          00100 X Y 1 0 ZZZZZZZ   (result → register Z; R2-R127 = debug scratch, see above)
 Syntax:   NOR X, Y, $ZZ
           NOR X, Y, Z
 Cycles:   4

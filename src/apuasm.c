@@ -40,9 +40,30 @@ static uint16_t db_pending_byte = 0;
 static char* tokens[MAX_TOKENS];
 static int token_count = 0;
 
+static int current_line_num = 0;
+static int warning_count = 0;
+static int final_pass = 0;   /* set for pass 2 so each warning prints once */
+
 void error(const char* msg, int line) {
     fprintf(stderr, "Error on line %d: %s\n", line, msg);
     exit(1);
+}
+
+/* R2-R127 as an ALU destination: accepted, but nothing can read the result
+ * back, so shout about it - it is easy to mistake for a real register. */
+static void warn_scratch_register(int reg, int line) {
+    if (!final_pass) return;
+    warning_count++;
+    fprintf(stderr,
+        "\n"
+        "*********************************************************************\n"
+        "*** WARNING (line %d): R%d IS NOT A REAL REGISTER!\n"
+        "*** The APU has exactly TWO registers: X and Y.\n"
+        "*** R2-R127 are DEBUG SCRATCH slots only: the result is stored where a\n"
+        "*** debugger can inspect it, but NO INSTRUCTION CAN READ IT BACK, so a\n"
+        "*** program can never use the value. Write to X, Y or memory instead.\n"
+        "*********************************************************************\n"
+        "\n", line, reg);
 }
 
 void trim(char* str) {
@@ -148,7 +169,7 @@ int resolve_relative_distance(const char* tok, int* is_label) {
     return parse_number(tok);
 }
 
-int parse_register(const char* str) {
+static int parse_register_raw(const char* str) {
     if (str[0] == 'R' || str[0] == 'r') {
         return parse_number(str + 1);
     } else if (strcmp(str, "X") == 0 || strcmp(str, "x") == 0) {
@@ -157,6 +178,35 @@ int parse_register(const char* str) {
         return 1;
     }
     return parse_number(str);
+}
+
+/* Register operand in a 1-bit field (every source, and every destination
+ * except the ALU result field): only X (R0) and Y (R1) can be encoded. Anything
+ * else used to be silently masked with "& 1" into X or Y - reject it. */
+int parse_register(const char* str) {
+    int reg = parse_register_raw(str);
+    if (reg < 0 || reg > 1) {
+        char msg[200];
+        sprintf(msg, "register '%s' cannot be used here: the APU only has X and Y "
+                     "(R2-R127 are accepted only as the result register of "
+                     "NOR/AND/ADD/SUB/ADC/SBC, as debug scratch)", str);
+        error(msg, current_line_num);
+    }
+    return reg;
+}
+
+/* Result register of NOR/AND/ADD/SUB/ADC/SBC: a 7-bit field in the encoding.
+ * R0/R1 are X/Y; R2-R127 are accepted with a loud warning (see above); anything
+ * wider would silently wrap through the 7-bit mask, so it is an error. */
+int parse_dest_register(const char* str) {
+    int reg = parse_register_raw(str);
+    if (reg < 0 || reg > 127) {
+        char msg[120];
+        sprintf(msg, "register '%s' is out of range: R0-R127 only (and only X/Y are real)", str);
+        error(msg, current_line_num);
+    }
+    if (reg > 1) warn_scratch_register(reg, current_line_num);
+    return reg;
 }
 
 void emit_instruction(uint16_t inst) {
@@ -186,6 +236,8 @@ void assemble_line(char* line, int line_num) {
     const char* mnemonic;
     char upper_mnemonic[64];
     int i;
+
+    current_line_num = line_num;
 
     /* Remove comments */
     comment = strchr(line, ';');
@@ -364,7 +416,7 @@ void assemble_line(char* line, int line_num) {
                 int offset = parse_number(tokens[3]);
                 emit_instruction(encode_instruction(0x04, ((rx & 1) << 10) | ((ry & 1) << 9) | (offset & 0xFF)));
             } else {
-                int rz = parse_register(tokens[3]);
+                int rz = parse_dest_register(tokens[3]);
                 emit_instruction(encode_instruction(0x04, ((rx & 1) << 10) | ((ry & 1) << 9) | 0x100 | (rz & 0x7F)));
             }
         }
@@ -378,7 +430,7 @@ void assemble_line(char* line, int line_num) {
                 int offset = parse_number(tokens[3]);
                 emit_instruction(encode_instruction(0x05, ((rx & 1) << 10) | ((ry & 1) << 9) | (offset & 0xFF)));
             } else {
-                int rz = parse_register(tokens[3]);
+                int rz = parse_dest_register(tokens[3]);
                 emit_instruction(encode_instruction(0x05, ((rx & 1) << 10) | ((ry & 1) << 9) | 0x100 | (rz & 0x7F)));
             }
         }
@@ -392,7 +444,7 @@ void assemble_line(char* line, int line_num) {
                 int offset = parse_number(tokens[3]);
                 emit_instruction(encode_instruction(0x06, ((rx & 1) << 10) | ((ry & 1) << 9) | (offset & 0xFF)));
             } else {
-                int rz = parse_register(tokens[3]);
+                int rz = parse_dest_register(tokens[3]);
                 emit_instruction(encode_instruction(0x06, ((rx & 1) << 10) | ((ry & 1) << 9) | 0x100 | (rz & 0x7F)));
             }
         }
@@ -406,7 +458,7 @@ void assemble_line(char* line, int line_num) {
                 int offset = parse_number(tokens[3]);
                 emit_instruction(encode_instruction(0x07, ((rx & 1) << 10) | ((ry & 1) << 9) | (offset & 0xFF)));
             } else {
-                int rz = parse_register(tokens[3]);
+                int rz = parse_dest_register(tokens[3]);
                 emit_instruction(encode_instruction(0x07, ((rx & 1) << 10) | ((ry & 1) << 9) | 0x100 | (rz & 0x7F)));
             }
         }
@@ -544,7 +596,7 @@ void assemble_line(char* line, int line_num) {
                 int offset = parse_number(tokens[3]);
                 emit_instruction(encode_instruction(0x10, ((rx & 1) << 10) | ((ry & 1) << 9) | (offset & 0xFF)));
             } else {
-                int rz = parse_register(tokens[3]);
+                int rz = parse_dest_register(tokens[3]);
                 emit_instruction(encode_instruction(0x10, ((rx & 1) << 10) | ((ry & 1) << 9) | 0x100 | (rz & 0x7F)));
             }
         }
@@ -558,7 +610,7 @@ void assemble_line(char* line, int line_num) {
                 int offset = parse_number(tokens[3]);
                 emit_instruction(encode_instruction(0x11, ((rx & 1) << 10) | ((ry & 1) << 9) | (offset & 0xFF)));
             } else {
-                int rz = parse_register(tokens[3]);
+                int rz = parse_dest_register(tokens[3]);
                 emit_instruction(encode_instruction(0x11, ((rx & 1) << 10) | ((ry & 1) << 9) | 0x100 | (rz & 0x7F)));
             }
         }
@@ -830,6 +882,7 @@ int main(int argc, char* argv[]) {
      * condition (origin_set in particular - left set, pass 2 must rediscover
      * the first .ORG the same way pass 1 did instead of treating it as a
      * mid-file jump and padding from address 0). */
+    final_pass = 1;
     current_address = 0;
     instruction_count = 0;
     origin_set = 0;
@@ -875,6 +928,9 @@ int main(int argc, char* argv[]) {
     printf("Assembled %ld instructions (%ld bytes) to %s\n",
            instruction_count, instruction_count * 2, output_file);
     printf("Labels defined: %d\n", label_count);
+    if (warning_count > 0) {
+        printf("*** %d SCRATCH-REGISTER WARNING(S) ABOVE: R2-R127 results can never be read back ***\n", warning_count);
+    }
 
     free(instructions);
     return 0;

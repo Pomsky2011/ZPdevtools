@@ -402,7 +402,7 @@ loop:
 
 #### Registers
 - `X`, `Y` - The two usable registers (aliases for R0, R1)
-- There are only two registers. `R2` to `R127` are accepted as ALU destination names but are not registers: nothing can read them back, so keep data in X, Y and memory
+- There are only two registers. `R2` to `R127` are accepted as the result register of NOR/AND/ADD/SUB/ADC/SBC with a loud warning: they are debug scratch slots a debugger can see, but nothing can read them back. Anywhere else, a register above Y is an error
 - Special registers: `PC` (Program Counter), `SP` (Stack Pointer), `RP` (ROM Page), `DP` (Data Page), `DB` (Data Byte)
 
 #### Immediate Values
