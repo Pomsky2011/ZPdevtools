@@ -41,11 +41,15 @@ static char* tokens[MAX_TOKENS];
 static int token_count = 0;
 
 static int current_line_num = 0;
+static const char* current_file = "";   /* file the line being assembled came from (.include aware) */
 static int warning_count = 0;
 static int final_pass = 0;   /* set for pass 2 so each warning prints once */
 
 void error(const char* msg, int line) {
-    fprintf(stderr, "Error on line %d: %s\n", line, msg);
+    if (current_file[0])
+        fprintf(stderr, "Error in %s on line %d: %s\n", current_file, line, msg);
+    else
+        fprintf(stderr, "Error on line %d: %s\n", line, msg);
     exit(1);
 }
 
@@ -151,6 +155,29 @@ int resolve_address(const char* tok) {
     return parse_number(tok);
 }
 
+/* RP lint. JMS/JSR/JZ/BEQ/BNE/BLT/BGT jump to (RP<<8)|low-byte-of-label, so a
+ * label outside the page RP currently names is a silent jump to the wrong
+ * place. expect_rp tracks the page the code is *meant* to run under: every
+ * SRP sets it, and `.rp $XX` declares it at the top of a routine (use it where
+ * control arrives by a jump rather than by falling through an SRP). -1 means
+ * unknown (no check). Only the final pass checks, once every label is known. */
+static int expect_rp = -1;
+
+int resolve_rp_address(const char* tok) {
+    int lbl = find_label(tok);
+    if (lbl >= 0) {
+        if (final_pass && expect_rp >= 0 && ((lbl >> 8) & 0xFF) != expect_rp) {
+            char msg[200];
+            sprintf(msg, "label '%s' is in page $%02X but RP is $%02X here "
+                         "(SRP $%02X first, or fix the .rp declaration)",
+                    tok, (lbl >> 8) & 0xFF, expect_rp, (lbl >> 8) & 0xFF);
+            error(msg, current_line_num);
+        }
+        return lbl;
+    }
+    return parse_number(tok);
+}
+
 /* Resolve a relative-branch operand (CME/CMN/CMG/CML, and JMP's bare/2-arg
  * relative form). If `tok` names a known label, compute the signed
  * word-distance from the instruction currently being assembled to that
@@ -231,6 +258,8 @@ void flush_pending_byte(void) {
     }
 }
 
+static void assemble_include(const char* name, int line_num);
+
 void assemble_line(char* line, int line_num) {
     char* comment;
     const char* mnemonic;
@@ -297,9 +326,22 @@ void assemble_line(char* line, int line_num) {
         }
         return;
     }
+    else if (strcmp(upper_mnemonic, ".RP") == 0) {
+        /* .rp $XX: declare the page RP holds from here on (see resolve_rp_address) */
+        if (token_count >= 2) expect_rp = parse_number(tokens[1]) & 0xFF;
+        return;
+    }
+    else if (strcmp(upper_mnemonic, ".INCLUDE") == 0) {
+        if (token_count >= 2) assemble_include(tokens[1], line_num);
+        return;
+    }
     else if (strcmp(upper_mnemonic, ".DB") == 0 || strcmp(upper_mnemonic, ".BYTE") == 0) {
+        /* A value may name a label: it becomes the label's low byte, which is
+         * how a jump table of handler offsets is built (all handlers in one
+         * page, dispatched with JMX once RP-style Y holds that page). */
         for (i = 1; i < token_count; i++) {
-            int val = parse_number(tokens[i]) & 0xFF;
+            int lbl = find_label(tokens[i]);
+            int val = (lbl >= 0 ? lbl : parse_number(tokens[i])) & 0xFF;
             if (!db_pending) {
                 db_pending_byte = (uint16_t)val;
                 db_pending = 1;
@@ -372,13 +414,14 @@ void assemble_line(char* line, int line_num) {
         } else if (token_count >= 3) {
             /* jz X, $ZZ — mode defaults to RP */
             int rx   = parse_register(tokens[1]);
-            int addr = resolve_address(tokens[2]);
+            int addr = resolve_rp_address(tokens[2]);
             emit_instruction(encode_instruction(0x02, 0x100 | ((rx&1)<<10) | 0x200 | (addr&0xFF)));
         }
     }
     else if (strcmp(upper_mnemonic, "SRP") == 0) {
         if (token_count >= 2) {
             int page = parse_number(tokens[1]);
+            expect_rp = page & 0xFF;
             emit_instruction(encode_instruction(0x03, page & 0xFF));
         }
     }
@@ -659,7 +702,7 @@ void assemble_line(char* line, int line_num) {
         if (token_count >= 4) {
             int rx = parse_register(tokens[1]);
             int ry = parse_register(tokens[2]);
-            int offset = resolve_address(tokens[3]);
+            int offset = resolve_rp_address(tokens[3]);
             uint16_t operand = ((rx & 1) << 10) | ((ry & 1) << 9) | (offset & 0xFF);
             emit_instruction(encode_instruction(0x12, operand));
         }
@@ -668,7 +711,7 @@ void assemble_line(char* line, int line_num) {
         if (token_count >= 4) {
             int rx = parse_register(tokens[1]);
             int ry = parse_register(tokens[2]);
-            int offset = resolve_address(tokens[3]);
+            int offset = resolve_rp_address(tokens[3]);
             uint16_t operand = ((rx & 1) << 10) | ((ry & 1) << 9) | 0x100 | (offset & 0xFF);
             emit_instruction(encode_instruction(0x12, operand));
         }
@@ -677,7 +720,7 @@ void assemble_line(char* line, int line_num) {
         if (token_count >= 4) {
             int rx = parse_register(tokens[1]);
             int ry = parse_register(tokens[2]);
-            int offset = resolve_address(tokens[3]);
+            int offset = resolve_rp_address(tokens[3]);
             uint16_t operand = ((rx & 1) << 10) | ((ry & 1) << 9) | (offset & 0xFF);
             emit_instruction(encode_instruction(0x13, operand));
         }
@@ -686,7 +729,7 @@ void assemble_line(char* line, int line_num) {
         if (token_count >= 4) {
             int rx = parse_register(tokens[1]);
             int ry = parse_register(tokens[2]);
-            int offset = resolve_address(tokens[3]);
+            int offset = resolve_rp_address(tokens[3]);
             uint16_t operand = ((rx & 1) << 10) | ((ry & 1) << 9) | 0x100 | (offset & 0xFF);
             emit_instruction(encode_instruction(0x13, operand));
         }
@@ -699,7 +742,7 @@ void assemble_line(char* line, int line_num) {
     }
     else if (strcmp(upper_mnemonic, "JMS") == 0) {
         if (token_count >= 2) {
-            int addr = resolve_address(tokens[1]);
+            int addr = resolve_rp_address(tokens[1]);
             emit_instruction(encode_instruction(0x15, addr & 0xFF));
         }
     }
@@ -708,7 +751,7 @@ void assemble_line(char* line, int line_num) {
     }
     else if (strcmp(upper_mnemonic, "JSR") == 0) {
         if (token_count >= 2) {
-            int addr = resolve_address(tokens[1]);
+            int addr = resolve_rp_address(tokens[1]);
             emit_instruction(encode_instruction(0x15, 0x200 | (addr & 0xFF)));
         }
     }
@@ -809,15 +852,68 @@ void assemble_line(char* line, int line_num) {
     }
 }
 
+/* Assemble every line of one file; .include recurses here. The directory of the
+ * including file is searched, so `.include "engine.uas"` finds a sibling. */
+static int include_depth = 0;
+
+static void assemble_file(const char* path) {
+    FILE* fp = fopen(path, "r");
+    char line[512];
+    int line_num = 0;
+    const char* saved_file = current_file;
+    int saved_line = current_line_num;
+
+    if (!fp) {
+        fprintf(stderr, "Cannot open input file: %s\n", path);
+        exit(1);
+    }
+    current_file = path;
+    while (fgets(line, sizeof(line), fp)) {
+        line_num++;
+        assemble_line(line, line_num);
+    }
+    fclose(fp);
+    current_file = saved_file;
+    current_line_num = saved_line;
+}
+
+static void assemble_include(const char* name, int line_num) {
+    char clean[256], path[512];
+    size_t n;
+    const char* slash;
+
+    /* strip the quotes: .include "file" */
+    strncpy(clean, name, 255);
+    clean[255] = '\0';
+    n = strlen(clean);
+    if (n >= 2 && clean[0] == '"' && clean[n - 1] == '"') {
+        memmove(clean, clean + 1, n - 2);
+        clean[n - 2] = '\0';
+    }
+    if (include_depth >= 8) error(".include nested too deeply", line_num);
+
+    slash = strrchr(current_file, '/');
+    if (slash && clean[0] != '/') {
+        size_t dir = (size_t)(slash - current_file) + 1;
+        if (dir > 250) dir = 250;
+        memcpy(path, current_file, dir);
+        strncpy(path + dir, clean, sizeof(path) - dir - 1);
+        path[sizeof(path) - 1] = '\0';
+    } else {
+        strncpy(path, clean, sizeof(path) - 1);
+        path[sizeof(path) - 1] = '\0';
+    }
+    include_depth++;
+    assemble_file(path);
+    include_depth--;
+}
+
 int main(int argc, char* argv[]) {
     const char* input_file;
     const char* output_file;
     char default_output[256];
     char* dot;
-    FILE* fp;
     FILE* out;
-    char line[512];
-    int line_num;
     int i;
     uint16_t inst;
     uint8_t bytes[2];
@@ -854,22 +950,8 @@ int main(int argc, char* argv[]) {
      * fall back to treating it as a literal (usually 0), but that's fine
      * since only current_address's advancement and the label table from
      * this pass are kept. */
-    fp = fopen(input_file, "r");
-    if (!fp) {
-        fprintf(stderr, "Cannot open input file: %s\n", input_file);
-        free(instructions);
-        return 1;
-    }
-
-    line_num = 0;
-
-    while (fgets(line, sizeof(line), fp)) {
-        line_num++;
-        assemble_line(line, line_num);
-    }
+    assemble_file(input_file);
     flush_pending_byte();
-
-    fclose(fp);
 
     /* Pass 2: re-assemble from the top of the file, now that every label
      * (forward or backward) is already in the table from pass 1, so every
@@ -889,23 +971,10 @@ int main(int argc, char* argv[]) {
     origin_base = 0;
     db_pending = 0;
     db_pending_byte = 0;
+    expect_rp = -1;
 
-    fp = fopen(input_file, "r");
-    if (!fp) {
-        fprintf(stderr, "Cannot open input file: %s\n", input_file);
-        free(instructions);
-        return 1;
-    }
-
-    line_num = 0;
-
-    while (fgets(line, sizeof(line), fp)) {
-        line_num++;
-        assemble_line(line, line_num);
-    }
+    assemble_file(input_file);
     flush_pending_byte();
-
-    fclose(fp);
 
     /* Write output */
     out = fopen(output_file, "wb");

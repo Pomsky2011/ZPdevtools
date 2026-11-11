@@ -60,6 +60,22 @@ differs from the one already set, so write the low byte first.
 
 ---
 
+### Assembler directives (apuasm)
+
+    .org $XXXX        pad with zero words up to this address (never backward)
+    .db a, b, ...     bytes, packed two to a word; a name that is a label
+                      becomes that label's low byte (a jump table of handler
+                      offsets: `.db handler_a, handler_b`)
+    .include "f.uas"  assemble another file here (path is relative to the
+                      including file); labels are shared across files
+    .rp $XX           declare which page RP holds from here on
+
+RP lint: `JMS`, `JSR`, `JZ`, `BEQ`, `BNE`, `BLT` and `BGT` jump to
+(RP, low byte of the label). apuasm tracks RP (every `SRP` sets it, `.rp`
+declares it where control arrives by a jump) and refuses a jump whose label
+lies in a different page, so a missed `SRP` is a build error instead of a jump
+to the wrong place. Code that never uses `SRP` or `.rp` is not checked.
+
 ## Example 1: Playing a Single Sample
 
 Plays a 12-sample sine wave on channel 0 at about 440 Hz. A one-block sample
