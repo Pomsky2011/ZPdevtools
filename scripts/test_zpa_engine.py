@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Tests for the APU BIOS sequencer engine (ZPbootROM/apu/internalBIOS/engine.uas).
+"""Tests for the APU BIOS sequencer engines: the assembly BIOS (ZPbootROM
+apu/internalBIOS/engine.uas, "LLE") and the emulator's built-in C++ BIOS ("HLE").
 
 Every case builds a ZPA pack, runs it through the zpsnd reference interpreter
-(the golden behaviour, docs/apu/zpa.txt) and through the real BIOS on the real
-APU core (ZeroPoint's test_zpa_engine harness), and requires the MMP register
+(the golden behaviour, docs/apu/zpa.txt) and through both BIOSes on the real APU
+core (ZeroPoint's test_zpa_engine harness), and requires the MMP register
 writes to be identical, tick for tick. Scores are hand-encoded here so they can
 exercise what the baker never emits (clamping, deep REP nesting, odd ops).
 
@@ -89,11 +90,13 @@ class EngineTests(unittest.TestCase):
         path = os.path.join(self.tmp, "t.zpa")
         with open(path, "wb") as f:
             f.write(pack_bytes)
-        args = [HARNESS, self.bios, path, str(ticks)] + ["%d=%d" % kv for kv in sorted((mailbox or {}).items())]
-        r = subprocess.run(args, capture_output=True, text=True, timeout=120)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        got = r.stdout.splitlines()
-        self.assertEqual(want, got, "engine trace differs from the reference (%d vs %d writes)" % (len(want), len(got)))
+        mail = ["%d=%d" % kv for kv in sorted((mailbox or {}).items())]
+        for name, bios in (("LLE (assembly BIOS)", self.bios), ("HLE (built-in BIOS)", "--hle")):
+            r = subprocess.run([HARNESS, bios, path, str(ticks)] + mail, capture_output=True, text=True, timeout=120)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            got = r.stdout.splitlines()
+            self.assertEqual(want, got, "%s trace differs from the reference (%d vs %d writes)" %
+                             (name, len(want), len(got)))
         return got
 
     # -- ops ------------------------------------------------------------
