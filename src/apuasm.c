@@ -335,13 +335,16 @@ void assemble_line(char* line, int line_num) {
         if (token_count >= 2) assemble_include(tokens[1], line_num);
         return;
     }
-    else if (strcmp(upper_mnemonic, ".DB") == 0 || strcmp(upper_mnemonic, ".BYTE") == 0) {
-        /* A value may name a label: it becomes the label's low byte, which is
-         * how a jump table of handler offsets is built (all handlers in one
-         * page, dispatched with JMX once RP-style Y holds that page). */
+    else if (strcmp(upper_mnemonic, ".DB") == 0 || strcmp(upper_mnemonic, ".BYTE") == 0 ||
+             strcmp(upper_mnemonic, ".DBH") == 0) {
+        /* A value may name a label: .db gives its low byte and .dbh its high
+         * byte, which is how a jump table is built (low-byte table + page
+         * table, dispatched with JMX/JSX where Y:X is the target). */
+        int high = (upper_mnemonic[3] == 'H');
         for (i = 1; i < token_count; i++) {
             int lbl = find_label(tokens[i]);
-            int val = (lbl >= 0 ? lbl : parse_number(tokens[i])) & 0xFF;
+            int full = (lbl >= 0 ? lbl : parse_number(tokens[i]));
+            int val = (high && lbl >= 0 ? (full >> 8) : full) & 0xFF;
             if (!db_pending) {
                 db_pending_byte = (uint16_t)val;
                 db_pending = 1;
