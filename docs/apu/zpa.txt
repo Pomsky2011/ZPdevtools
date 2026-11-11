@@ -7,14 +7,15 @@ implemented and tested (ZeroPoint `tools/test_mmp.cpp`).
 ## Goal
 
 The CPU Boot ROM starts the APU and uploads a sound pack. The APU BIOS plays it:
-thunder, an electric-guitar riff that LOOPS until the CPU reports the signature
-check result, then a charge-up (verified) or a failure sting (rejected). When the
+thunder, then a charge-up that keeps playing until the CPU reports the signature
+check result, then a release (verified) or a failure sting (rejected). When the
 score ends the BIOS goes back to waiting for a program, so a cartridge can load its
-own APU program at any time.
+own APU program at any time. The electric-guitar riff is deferred: version 1 is
+thunder + charge-up only (the format and engine are riff-ready, the notes are not).
 
 Decisions already made:
 - The sequencer engine lives in the BIOS (not in the uploaded data).
-- The charge-up is held until the CPU says the verify finished.
+- The charge-up plays (loops/holds) until the CPU says the verify finished.
 - The Boot ROM does NOT wait for the jingle; it hands off as soon as verification
   passes, and a cartridge may replace the APU program immediately.
 - The emulator gets a default HLE (high-level-emulated) APU BIOS, used whenever no
@@ -68,12 +69,12 @@ Boot ROM needs no parser, only three DMA copies:
     score       the event stream below, DMA'd to $3020
 
 The sound budget (all resident in SST, no streaming needed):
-- guitar: one note at ~16 kHz, attack plus a ~512-sample sustain loop (STL loop
-  word), repitched for the riff; a power chord uses two channels
+- guitar (deferred with the riff): one note at ~16 kHz, attack plus a ~512-sample
+  sustain loop (STL loop word), repitched; a power chord uses two channels
 - thunder: a short noise crack plus a low-passed rumble loop with a crossfaded seam
 - charge-up and failure sting: a 64-sample saw/sine cycle with pitch and volume
   slides on 2-3 detuned channels
-- total about 7k samples, about 9 KB baked
+- total without the guitar: a few thousand samples (the riff will add ~2 KB)
 
 Source samples must be mono, 8-bit signed, resampled by the tool.
 
@@ -104,19 +105,24 @@ A score is a sequence of events. Each event is `delta` then `op` then its argume
     $14  JEQ         val, off16                  jump if the mailbox byte == val
     $15  WAIT        -                           stall until the mailbox byte is non-zero
 
-The looping ops are what let the riff repeat for as long as verification takes:
+The looping ops are what keep the charge-up playing for as long as verification takes
+(about 4 s for a small ROM, longer for a big one):
 
     ; intro
     NOTE thunder crack ...  ; NOTE rumble loop ...
-    ; riff section
-    L1: ... riff notes ...
-        JZ   L1             ; mailbox still 0: play the riff again
+    ; charge-up: ramp up once, then hold at the top
+    PITCH/VOL slides ... (rising over ~1.5 s)
+    HOLD: ... a short held segment (slow shimmer slides) ...
+        JZ   HOLD           ; mailbox still 0: keep charging
         JEQ  2, FAIL        ; mailbox == 2: signature rejected
-        ... charge-up slides ...   ; mailbox == 1: charge up
-        NOTE thunder crack ...
+        ... release: final thunder crack, charge-up channels OFF ...
+        END                 ; mailbox == 1
+    FAIL: ... failure sting (falling, detuned) ...
         END
-    FAIL: ... failure sting ...
-        END
+
+The ramp plays once; only the hold segment repeats, so the charge-up never restarts
+from the bottom while it waits. (If you would rather have the whole sweep repeat, put
+the label before the ramp instead; it is one label's difference in the score.)
 
 A jump is only checked at event boundaries, so the loop point is musically clean.
 
@@ -156,7 +162,9 @@ after a rejected ROM, and the APU back in `wait_for_header` afterward.
 
 ## Open items
 
-- The riff notes and the thunder/guitar source audio (licensing for anything from
-  Freesound before it goes in a public repo).
+- The guitar riff (notes and source audio) is deferred. Thunder source audio and the
+  licensing of anything from Freesound before it goes in a public repo.
+- What the release (verified) sounds like: currently a final thunder crack as the
+  charge-up cuts off.
 - Exact tick rate if 120 Hz turns out too coarse for the riff.
 - Streaming of longer samples (reserved op `$20 LOADSEG`, not designed).
