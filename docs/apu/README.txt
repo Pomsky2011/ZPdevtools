@@ -49,7 +49,7 @@ Detailed memory layout, region descriptions, and access patterns.
 Register descriptions, usage conventions, and best practices.
 
 **Contents:**
-- General purpose registers (X, Y; R2-R127 are write-only)
+- General purpose registers (just X and Y)
 - Special purpose registers (PC, SP, RP, DP, DB, FLAGS; BF is reserved)
 - Function calling conventions
 - Stack management

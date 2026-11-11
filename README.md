@@ -402,7 +402,7 @@ loop:
 
 #### Registers
 - `X`, `Y` - The two usable registers (aliases for R0, R1)
-- `R2` to `R127` - Accepted as ALU destinations but write-only: nothing can read them back, so keep data in X, Y and memory
+- There are only two registers. `R2` to `R127` are accepted as ALU destination names but are not registers: nothing can read them back, so keep data in X, Y and memory
 - Special registers: `PC` (Program Counter), `SP` (Stack Pointer), `RP` (ROM Page), `DP` (Data Page), `DB` (Data Byte)
 
 #### Immediate Values

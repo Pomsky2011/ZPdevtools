@@ -11,10 +11,11 @@ Bit:  15  14  13  12  11 | 10   9   8   7   6   5   4   3   2   1   0
 
 Register operands: bit 10 = first register (X=0, Y=1), bit 9 = second register (X=0, Y=1)
 
-Source operands are always X or Y. NOR/AND/ADD/SUB/ADC/SBC can write their
-result to a 7-bit destination register field (R0-R127), but only R0 (X) and
-R1 (Y) can be read by any instruction, so in practice the destination is X or
-Y, or a memory byte. XOR and CRB have a 1-bit destination (X or Y).
+There are two registers, X and Y, and every register operand is X or Y.
+NOR/AND/ADD/SUB/ADC/SBC have a 7-bit destination field in their encoding, but
+values above 1 do not name registers: they write to a slot nothing can read
+back, so the destination is always X, Y, or a memory byte. XOR and CRB have a
+1-bit destination (X or Y).
 
 ## Instruction Categories
 
@@ -143,7 +144,7 @@ The 2-arg form (SDP b, $XX) sets byte b of the data pointer:
 ```
 Opcode:  00100
 Encoding: 00100 X Y 0 ZZZZZZZZ   (result → memory $DPZZ)
-          00100 X Y 1 0 ZZZZZZZ   (result → register Z, R0-R127)
+          00100 X Y 1 0 ZZZZZZZ   (result → register Z; only X/Y are real, see above)
 Syntax:   NOR X, Y, $ZZ
           NOR X, Y, Z
 Cycles:   4

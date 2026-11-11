@@ -2,18 +2,19 @@
 
 ## Register Overview
 
-The APU has two usable 8-bit general-purpose registers, X and Y, plus several
-special-purpose registers. (The core allocates a 256-entry register array, but
-see "R2-R127" below for why only the first two matter.)
+The APU has exactly two general-purpose 8-bit registers, X and Y, plus several
+special-purpose registers. (The emulator happens to allocate a 256-entry array
+for them; see "The 7-bit destination field" below. Only the first two entries
+are registers.)
 
 ### General Purpose Registers
 - **R0 (X)** (8-bit) - Primary accumulator/index register
 - **R1 (Y)** (8-bit) - Secondary accumulator/index register
-- **R2-R127** (8-bit each) - Write-only scratch (see below); R128-R255 cannot be addressed at all
 
-Note: Every instruction that reads a register (NOR, AND, ADD, SUB, ADC, SBC, XOR,
-CRB, STA, MOV, comparisons, ...) encodes it in 1 bit (0=R0/X, 1=R1/Y). Only the
-result of NOR/AND/ADD/SUB/ADC/SBC has a wider (7-bit) destination field.
+Note: Every instruction that reads or writes a register (NOR, AND, ADD, SUB, ADC,
+SBC, XOR, CRB, STA, MOV, comparisons, ...) encodes it in 1 bit (0=R0/X, 1=R1/Y),
+with one exception: the result field of NOR/AND/ADD/SUB/ADC/SBC is 7 bits wide
+(see below).
 
 ### Special Purpose Registers
 - **PC** (Program Counter) - 16-bit, tracks current instruction address
@@ -72,16 +73,14 @@ BEQ X, Y, $50     ; Branch to [RP:$50] if X == Y
 
 ---
 
-### R2-R127 Write-Only Scratch Registers
+### The 7-bit destination field (not extra registers)
 
-**Purpose:** None in practice. The result field of NOR/AND/ADD/SUB/ADC/SBC is 7
-bits wide, so those instructions can write R2-R127, but no instruction can read
-anything except R0 (X) and R1 (Y) - there is no load, move or ALU source form
-for the others. Keep your data in X, Y and memory ($DP:$YY), and use
-`PUX`/`PUY` or a RAM scratch page to spill values.
-
-R128-R255 exist in the core's register array but cannot be named by any
-instruction.
+**Purpose:** None. There are only two registers. The result field of
+NOR/AND/ADD/SUB/ADC/SBC is 7 bits wide as an artifact of the encoding, and
+`apuasm` will accept names up to R127 there, but values 2-127 only store the
+result in an internal array slot that no instruction can read back. They are
+not registers and cannot hold anything usable. Write results to X, Y, or a
+memory byte ($DP:$YY), and use `PUX`/`PUY` or a RAM scratch page to spill values.
 
 ---
 
