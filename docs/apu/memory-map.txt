@@ -183,8 +183,8 @@ Offset  Size  Description
 
 **Loop Words Address:**
 - Points to the sample number where looping starts
-- If 0, sample plays once and stops
-- If non-zero, jumps back when reaching end
+- If 0, the whole sample loops (use the Z bit for a one-shot)
+- If non-zero, jumps back to that sample when reaching the end
 
 **Example:**
 ```
@@ -244,9 +244,10 @@ Field:   X  X  Y  L  V  U  T  S
 XX = Amount of Loops (0-255)
 Y  = Sample to Start Looping At (0-15, within current block)
 L  = Loop Configuration (4 bits):
-     - Bit 0 (Z): Loop from here to end once (0=no, 1=yes)
-     - Bit 1 (W): Final block in sector (0=more blocks, 1=final)
-     - Bits 2-3: Reserved (0)
+     - Bit 3 (Z): Play to the end once, then stop (0=loop, 1=one-shot);
+                  only honoured on the final block
+     - Bit 2 (W): Final block in sector (0=more blocks, 1=final)
+     - Bits 0-1: Reserved (0)
 V  = Sample for Clamping One (0-15)
 U  = Sample for Clamping Two (0-15)
 T  = Clamping One Amount (0-15, ±8 PCM values)

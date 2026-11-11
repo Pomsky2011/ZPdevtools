@@ -55,15 +55,26 @@ Field:   [X] [X] [Y] [L] [V] [U] [T] [S]
 **L (Nybble 3): Loop Configuration**
 - 4 bits: `ZW00` (bits 3,2,1,0)
 
-**Bit Z (Bit 3 of nybble L):**
+**Bit Z (Bit 3 of nybble L, value 0x08):**
 - 0 = Standard looping behavior
-- 1 = Loop from here to end of sector once, then stop
+- 1 = Play to the end of the sector once, then stop (a one-shot)
+- Only honoured on the final block of the sector (the one with W set)
+- When the channel stops it is disabled and its STL register reads as
+  unchanged, but writing the same STL address again retriggers it
 
-**Bit W (Bit 2 of nybble L):**
+**Bit W (Bit 2 of nybble L, value 0x04):**
 - 0 = More blocks follow in this sector
 - 1 = This is the final block in the sector
 
 **Bits 1-0:** Reserved (set to 0)
+
+In header byte 1 the nybbles pack as `(Y << 4) | L`, so a final looping
+block has byte 1 = `0x04` (with Y=0) and a final one-shot block has
+byte 1 = `0x0C`. Byte 0 is XX; bytes 2-3 are `VU` and `TS`.
+
+**Implementation status:** the MMP currently honours W, Z and the STL loop
+word (below). XX, Y and the V/U/T/S clamping fields are parsed by nothing yet;
+write them as zero.
 
 **V (Nybble 4): Sample for Clamping One**
 - 4-bit value (0-15)
@@ -193,8 +204,10 @@ $CFE0 = Last complete block (block 1023)
 16-bit value specifying where to loop back to within the sample.
 
 **Interpretation:**
-- 0 = No looping, play once and stop
+- 0 = Loop the whole sample (wrap back to sample 0)
 - Non-zero = Sample number to jump back to when reaching end
+- A value at or past the end of the sector is treated as 0
+- To play once instead of looping, set the Z bit on the final block
 
 **Note:** This is a sample number, not a byte address.
 
@@ -202,7 +215,7 @@ $CFE0 = Last complete block (block 1023)
 ```
 If sample has 48 samples total (4 blocks × 12 samples):
   Loop Words Address = 12 → Loop back to sample 12 (second block)
-  Loop Words Address = 0  → Play once, don't loop
+  Loop Words Address = 0  → Loop the whole sample (set Z for play-once)
 ```
 
 ### STL Entry Example
@@ -227,7 +240,7 @@ SST Block at $9000:
   Header:
     XX = 255  (loop forever)
     Y  = 0    (loop from sample 0)
-    L  = 0010 (W=1, final block; Z=0, normal loop)
+    L  = 0100 (W=1, final block; Z=0, normal loop)
     V  = 0    (no clamping one)
     U  = 0    (no clamping two)
     T  = 0    (no adjustment)
@@ -254,7 +267,7 @@ Block 2 at $9110:
   Samples: [decay samples, 12-23]
 
 Block 3 at $9120:
-  Header: XX=255, Y=0, L=0010 (final block, loop forever), V=0, U=0, T=0, S=0
+  Header: XX=255, Y=0, L=0100 (final block, loop forever), V=0, U=0, T=0, S=0
   Samples: [sustain loop samples, 24-35]
 
 STL Entry at $7010:
@@ -273,7 +286,7 @@ SST Block at $9200:
   Header:
     XX = 10   (loop 10 times)
     Y  = 0    (loop from beginning)
-    L  = 0010 (final block)
+    L  = 0100 (final block)
     V  = 4    (clamp at sample 4)
     U  = 8    (clamp at sample 8)
     T  = 3    (add 24 at sample 4)
@@ -363,7 +376,7 @@ WRL 0x00      ; (high byte of XX + low nybble of Y)
 ; Note: Actual nybble packing may vary, this is conceptual
 
 SDB $01
-WRH 0x00      ; Y=0, L=0010 (final block, loop from 0)
+WRH 0x00      ; Y=0, L=0100 (final block, loop from 0)
 WRL 0x00      ; V=0, U=0, T=0, S=0
 
 ; Write sample data (12 bytes, sine wave approximation)

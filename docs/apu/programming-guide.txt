@@ -89,15 +89,13 @@ write_sine_sample:
   SDP $90          ; SST region ($9000)
   SBF 0
 
-  ; Write header at $9000: XX=$FFFF (loop forever), L=$02 (final/loop)
-  SBF 1
-  LDA X, $FF
-  STA X, $00       ; high byte of XX
+  ; Write header at $9000. Byte 0 = XX, byte 1 = (Y << 4) | L with
+  ; L = ZW00, so $04 = final block (W), looping the whole sample (Z=0).
   SBF 0
   LDA X, $FF
-  STA X, $01       ; low byte of XX
-  LDA X, $02
-  STA X, $02       ; L = final block, loop from start
+  STA X, $00       ; XX (not used by the MMP yet)
+  LDA X, $04
+  STA X, $01       ; Y=0, L = W (final block, loop from start)
 
   ; Write 12 sine wave samples (approximate, unsigned 8-bit)
   LDA X, 0

@@ -171,6 +171,8 @@ Channel 15: $006E-$006F
 - Write STL address to start playback (resets sample position)
 - Write $0000 to stop playback
 - Writing the same STL address again does NOT reset position (no-op)
+- Exception: a one-shot sample (Z bit, see sst.txt) disables its channel when it
+  finishes, after which writing the same STL address starts it again
 - Change STL address to switch samples mid-playback
 
 **Example:**
