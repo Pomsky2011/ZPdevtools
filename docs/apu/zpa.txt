@@ -1,0 +1,162 @@
+# ZPA: APU Sound Pack and BIOS Sequencer (design, not yet implemented)
+
+STATUS: design only. Nothing in this file exists in the BIOS, the emulator or a
+tool yet. It builds on the MMP/SST behaviour in mmp.txt and sst.txt, which is
+implemented and tested (ZeroPoint `tools/test_mmp.cpp`).
+
+## Goal
+
+The CPU Boot ROM starts the APU and uploads a sound pack. The APU BIOS plays it:
+thunder, an electric-guitar riff that LOOPS until the CPU reports the signature
+check result, then a charge-up (verified) or a failure sting (rejected). When the
+score ends the BIOS goes back to waiting for a program, so a cartridge can load its
+own APU program at any time.
+
+Decisions already made:
+- The sequencer engine lives in the BIOS (not in the uploaded data).
+- The charge-up is held until the CPU says the verify finished.
+- The Boot ROM does NOT wait for the jingle; it hands off as soon as verification
+  passes, and a cartridge may replace the APU program immediately.
+- The emulator gets a default HLE (high-level-emulated) APU BIOS, used whenever no
+  BIOS image is loaded. A real BIOS image (`--apu-bios`) still runs as LLE.
+
+## Constraints that shape it (all from the current core)
+
+- SST holds 12,288 8-bit samples (256 ms at the 48 kHz native rate), so samples
+  are stored at low rates and pitched up, with loop points for sustain.
+- No hardware envelopes: volume/pitch/pan are changed by the engine as "slides".
+- No APU timer: LLE timing is cycle-counted stalls. The engine tick is 120 Hz =
+  4,250,710 / 120 = 35,422.6 APU cycles.
+- ARAM $3000-$6FFF (16 KiB) is where the BIOS looks for a header (see below);
+  engine state lives in General RAM ($0200-$07FF); $1000 is the CPU mailbox.
+- BIOS space: $8000-$8EFF (the sine table owns $8F00). The current handoff code uses
+  86 bytes, leaving about 3.7 KB (1,877 instructions) for the engine.
+
+## Upload protocol (Boot ROM -> APU)
+
+1. The Boot ROM already halts the APU at init (`APUCTRL = $02`).
+2. DMA the STL image to `$A0:7000` and the SST image to `$A0:9000` (bank `$A0` is the
+   APU window; plain memory writes).
+3. DMA the score image to `$A0:3020`, then write the 32-byte header at `$A0:3000`
+   last (magic byte last of all, so a half-written pack is never seen).
+4. Write `$00` to the mailbox (`$A0:1000`) and `$04` to `APUCTRL` (resume).
+5. The BIOS sees the header, checks the checksum, and starts the engine.
+6. When verification finishes the Boot ROM writes `$01` (passed) or `$02` (failed)
+   to `$A0:1000`, then continues. On pass it jumps to the cartridge immediately.
+
+Header at `$3000` (extends the existing program header; byte 0 selects the type):
+
+    $3000      magic: $0A = APU program (jump to the entry point, as today)
+                      $0B = ZPA score (play it with the BIOS engine)
+    $3004-05   $0A: entry point.  $0B: address of the first event (normally $3020)
+    $301F      8-bit wrapping sum of $3020-$5FFF (same as today)
+
+The BIOS ZEROES the magic byte as soon as it has accepted a header, before running
+anything. Otherwise a program (or the engine) that returns to the BIOS would find the
+same valid header and run again forever. It then idles in the existing
+`wait_for_header` loop until a new header appears: "loop in the BIOS until a new
+program is loaded".
+
+## Pack contents (built offline by a `zpsnd` tool, baked into the Boot ROM)
+
+The tool turns WAV files plus a text score into three ready-to-copy images, so the
+Boot ROM needs no parser, only three DMA copies:
+
+    STL image   N entries x 4 bytes, DMA'd to $7000
+    SST image   16-byte blocks in the native format (W/Z flags, loop words already
+                correct), DMA'd to $9000
+    score       the event stream below, DMA'd to $3020
+
+The sound budget (all resident in SST, no streaming needed):
+- guitar: one note at ~16 kHz, attack plus a ~512-sample sustain loop (STL loop
+  word), repitched for the riff; a power chord uses two channels
+- thunder: a short noise crack plus a low-passed rumble loop with a crossfaded seam
+- charge-up and failure sting: a 64-sample saw/sine cycle with pitch and volume
+  slides on 2-3 detuned channels
+- total about 7k samples, about 9 KB baked
+
+Source samples must be mono, 8-bit signed, resampled by the tool.
+
+## Score event stream
+
+A score is a sequence of events. Each event is `delta` then `op` then its arguments.
+
+    delta   ticks to wait before this event: 0-127 as one byte; $80|hi, lo = up to
+            32,767 ticks (two bytes)
+    op      one byte
+    args    big-endian 16-bit values; slide deltas are precomputed by the tool, so
+            the engine never divides
+
+    op   name        args                        effect
+    $00  END         -                           silence all channels, return to the BIOS idle loop
+    $01  NOTE        ch, stl, pitch16, vol, pan  stop slides on ch, set pitch/vol/pan, write STL
+                                                 address $7000 + stl*4 (retriggers)
+    $02  PITCH       ch, delta16, ticks          add signed delta16 to the pitch each tick for `ticks` ticks
+    $03  VOL         ch, delta16 (8.8), ticks    same, on volume (8.8 fixed point, clamped 0-255)
+    $04  PAN         ch, delta16 (8.8), ticks    same, on pan
+    $05  OFF         ch                          write STL address 0 (stop; also ends a one-shot early)
+    $06  SET         ch, pitch16, vol, pan       change values without retriggering the sample
+    $07  POST        byte                        write byte to the status register $1800
+    $10  MARK        -                           loop target for REP (nest depth 4)
+    $11  REP         count                       jump back to the matching MARK `count` times
+    $12  JUMP        off16                       jump to a score offset (infinite loops)
+    $13  JZ          off16                       jump if the mailbox byte ($1000) == 0
+    $14  JEQ         val, off16                  jump if the mailbox byte == val
+    $15  WAIT        -                           stall until the mailbox byte is non-zero
+
+The looping ops are what let the riff repeat for as long as verification takes:
+
+    ; intro
+    NOTE thunder crack ...  ; NOTE rumble loop ...
+    ; riff section
+    L1: ... riff notes ...
+        JZ   L1             ; mailbox still 0: play the riff again
+        JEQ  2, FAIL        ; mailbox == 2: signature rejected
+        ... charge-up slides ...   ; mailbox == 1: charge up
+        NOTE thunder crack ...
+        END
+    FAIL: ... failure sting ...
+        END
+
+A jump is only checked at event boundaries, so the loop point is musically clean.
+
+## Engine tick (LLE)
+
+Per tick: (1) run every event whose delta has elapsed, (2) advance all 16 channels'
+slides (fixed cost, zero deltas where idle), (3) write changed values to the MMP
+registers (STAX with DP = $00 turns a channel number into a register offset), (4)
+stall to 35,423 cycles. Event cost varies by under 1% of a tick, so tempo is stable
+without a clock. The stall is calibrated against the emulator's cycle counts.
+
+Engine RAM ($0200-$07FF): score pointer, tick/delta counter, REP stack, and per-channel
+slide state as 16-byte planar tables (pitch lo/hi, pitch delta lo/hi, pitch ticks, vol
+8.8, vol delta, vol ticks, pan 8.8, pan delta, pan ticks).
+
+## HLE BIOS (emulator default when no APU BIOS image is loaded)
+
+A native C++ implementation of exactly the BIOS contract above, so the jingle plays
+with no `--apu-bios` file:
+- header wait, checksum check, magic-zeroing, and `$0A` program handoff
+- the engine, ticking on APU cycles at exactly 4,250,710 / 120 (fractional
+  accumulation, so there is no drift)
+- the mailbox ($1000) and status ($1800) protocol
+- charges the same cycles the real BIOS would for the checksum scan, so timing
+  matches
+
+The LLE BIOS (this file's assembly) and the HLE must give the same audible result.
+Test: run the same pack under both and compare the MMP register trace (pitch, volume,
+pan, STL) at every tick.
+
+## Boot ROM test plan
+
+A headless harness (like `tools/test_boot_rom.cpp`) boots a signed ROM through
+ZPbootROM with the pack, captures the audio buffer, and checks: non-silence within a
+fixed time, riff looping while the mailbox is 0, charge-up after a pass, failure sting
+after a rejected ROM, and the APU back in `wait_for_header` afterward.
+
+## Open items
+
+- The riff notes and the thunder/guitar source audio (licensing for anything from
+  Freesound before it goes in a public repo).
+- Exact tick rate if 120 Hz turns out too coarse for the riff.
+- Streaming of longer samples (reserved op `$20 LOADSEG`, not designed).
