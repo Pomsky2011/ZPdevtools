@@ -82,6 +82,10 @@ struct FnLower {
   int frameSize = 0;                   // total frame bytes (word aligned)
   int labelCounter = 0;
   int spDelta = 0;                     // extra bytes currently pushed (call setup)
+  int nRegArgs = 0;                    // register arguments pushed by the prologue (PHY/PHX/PHA)
+  int extraSize = 0;                   // frame bytes the prologue allocates below those pushes
+  int scratch0 = 0, scratch1 = 0, scratch2 = 0;   // frame slots standing in for memory temporaries
+  int saveD = 0;                       // frame slot holding D across a load/store through a pointer
   std::string fnName;
 
   FnLower(Function &Fn, const DataLayout &Layout) : F(Fn), DL(Layout) {
@@ -95,13 +99,25 @@ struct FnLower {
   // Byte size of a value when materialized in a 16-bit slot.
   int valueWords() const { return 2; }
 
-  // Assign a frame slot to every argument, alloca (its storage), and
-  // value-producing instruction.  Returns total frame size.
+  // The frame is [S+1 .. S+frameSize] once the prologue has run (S points at the next free byte, so the top of the
+  // stack is S+1, not S+0), lowest address first:  extra area (allocas, temporaries, copies of stack arguments),
+  // then the register arguments the prologue pushed (arg0 lowest).  A slot offset is a byte offset from S+1.
+  //
+  // Operand for "off,S": the slot plus the 1 that S points below the stack top, plus whatever call setup has pushed.
+  int sp(int slotOff) const { return slotOff + 1 + spDelta; }
+
+  // Assign a frame slot to every alloca (its storage) and value-producing instruction, then the arguments.
   void assignSlots() {
     int off = 0;
+    scratch0 = off; off += 2;
+    scratch1 = off; off += 2;
+    scratch2 = off; off += 2;
+    saveD = off;    off += 2;
     for (Argument &A : F.args()) {
-      slot[&A] = off;
-      off += 2;
+      if (A.getArgNo() >= 3) {   // stack arguments are copied into the frame by the prologue
+        slot[&A] = off;
+        off += 2;
+      }
     }
     for (BasicBlock &BB : F) {
       for (Instruction &I : BB) {
@@ -122,7 +138,12 @@ struct FnLower {
         }
       }
     }
-    frameSize = roundWord(off);
+    extraSize = roundWord(off);
+    nRegArgs = F.arg_size() < 3 ? (int)F.arg_size() : 3;
+    for (Argument &A : F.args())
+      if (A.getArgNo() < 3)
+        slot[&A] = extraSize + 2 * (int)A.getArgNo();
+    frameSize = extraSize + 2 * nRegArgs;
   }
 
   bool hasSlot(const Value *V) const { return slot.count(V) != 0; }
@@ -150,12 +171,10 @@ struct FnLower {
     }
     if (auto *AI = dyn_cast<AllocaInst>(V)) {
       // The value of an alloca is the address of its storage: S + off.
-      int off = slotOf(AI) + spDelta;
+      int off = sp(slotOf(AI));
       emit("    TSC\n");
-      if (off != 0) {
-        emit("    CLC\n");
-        emit("    ADC #$%04X\n", off & 0xFFFF);
-      }
+      emit("    CLC\n");
+      emit("    ADC #$%04X\n", off & 0xFFFF);
       return;
     }
     if (auto *CE = dyn_cast<ConstantExpr>(V)) {
@@ -181,7 +200,7 @@ struct FnLower {
       return;
     }
     if (hasSlot(V)) {
-      emit("    LDA %d,S\n", slotOf(V) + spDelta);
+      emit("    LDA %d,S\n", sp(slotOf(V)));
       return;
     }
     backendError("cannot load operand in " + fnName);
@@ -192,18 +211,16 @@ struct FnLower {
   void storeAToResult(Instruction *I) {
     if (I->getType()->isVoidTy())
       return;
-    emit("    STA %d,S\n", slotOf(I) + spDelta);
+    emit("    STA %d,S\n", sp(slotOf(I)));
   }
 
   // Compute the effective address of a pointer operand into A.
   void addressToA(Value *Ptr) {
     if (auto *AI = dyn_cast<AllocaInst>(Ptr->stripPointerCasts())) {
-      int off = slotOf(AI) + spDelta;
+      int off = sp(slotOf(AI));
       emit("    TSC\n");
-      if (off != 0) {
-        emit("    CLC\n");
-        emit("    ADC #$%04X\n", off & 0xFFFF);
-      }
+      emit("    CLC\n");
+      emit("    ADC #$%04X\n", off & 0xFFFF);
       return;
     }
     loadToA(Ptr); // already an address-valued operand
@@ -219,11 +236,18 @@ struct FnLower {
   void lowerLoad(LoadInst *LI) {
     Value *Ptr = LI->getPointerOperand();
     if (auto *AI = dyn_cast<AllocaInst>(Ptr->stripPointerCasts())) {
-      emit("    LDA %d,S\n", slotOf(AI) + spDelta);
+      emit("    LDA %d,S\n", sp(slotOf(AI)));
     } else {
+      // Direct page is the only register-indirect mode, so D is borrowed as the pointer and put back after.
+      emit("    TDC\n");
+      emit("    STA %d,S\n", sp(saveD));
       addressToA(Ptr);
       emit("    TCD          ; DP = pointer\n");
       emit("    LDA $00      ; load through pointer\n");
+      emit("    TAY\n");
+      emit("    LDA %d,S\n", sp(saveD));
+      emit("    TCD          ; restore D\n");
+      emit("    TYA\n");
     }
     storeAToResult(LI);
   }
@@ -233,15 +257,38 @@ struct FnLower {
     Value *Ptr = SI->getPointerOperand();
     if (auto *AI = dyn_cast<AllocaInst>(Ptr->stripPointerCasts())) {
       loadToA(Val);
-      emit("    STA %d,S\n", slotOf(AI) + spDelta);
+      emit("    STA %d,S\n", sp(slotOf(AI)));
     } else {
       loadToA(Val);
-      emit("    STA t0\n");
+      emit("    STA %d,S\n", sp(scratch0));
+      emit("    TDC\n");
+      emit("    STA %d,S\n", sp(saveD));
       addressToA(Ptr);
       emit("    TCD          ; DP = pointer\n");
-      emit("    LDA t0\n");
+      emit("    LDA %d,S\n", sp(scratch0));
       emit("    STA $00      ; store through pointer\n");
+      emit("    LDA %d,S\n", sp(saveD));
+      emit("    TCD          ; restore D\n");
     }
+  }
+
+  // The right-hand operand of an ALU instruction: "#imm", "n,S" for a value that lives in a slot, or (anything else,
+  // e.g. an address) the value parked in scratch0 first.  loadToA of the left operand comes after this.
+  std::string aluOperand(Value *V) {
+    V = V->stripPointerCastsSameRepresentation();
+    char buf[48];
+    if (auto *CI = dyn_cast<ConstantInt>(V)) {
+      snprintf(buf, sizeof buf, "#$%04X", (unsigned)(CI->getZExtValue() & 0xFFFF));
+      return buf;
+    }
+    if (hasSlot(V) && !isa<AllocaInst>(V)) {
+      snprintf(buf, sizeof buf, "%d,S", sp(slotOf(V)));
+      return buf;
+    }
+    loadToA(V);
+    emit("    STA %d,S\n", sp(scratch0));
+    snprintf(buf, sizeof buf, "%d,S", sp(scratch0));
+    return buf;
   }
 
   void lowerBinary(BinaryOperator *BO) {
@@ -252,41 +299,37 @@ struct FnLower {
     case Instruction::Sub:
     case Instruction::And:
     case Instruction::Or:
-    case Instruction::Xor:
-      loadToA(rhs);
-      emit("    STA t0\n");
+    case Instruction::Xor: {
+      std::string r = aluOperand(rhs);
       loadToA(lhs);
-      if (op == Instruction::Add) { emit("    CLC\n"); emit("    ADC t0\n"); }
-      else if (op == Instruction::Sub) { emit("    SEC\n"); emit("    SBC t0\n"); }
-      else if (op == Instruction::And) emit("    AND t0\n");
-      else if (op == Instruction::Or)  emit("    ORA t0\n");
-      else emit("    EOR t0\n");
+      if (op == Instruction::Add) { emit("    CLC\n"); emit("    ADC %s\n", r.c_str()); }
+      else if (op == Instruction::Sub) { emit("    SEC\n"); emit("    SBC %s\n", r.c_str()); }
+      else if (op == Instruction::And) emit("    AND %s\n", r.c_str());
+      else if (op == Instruction::Or)  emit("    ORA %s\n", r.c_str());
+      else if (r[0] == '#') emit("    EOR %s\n", r.c_str());
+      else emit("    XOR %s\n", r.c_str());   // the stack-relative form is spelled XOR
       break;
-    case Instruction::Mul:
-      loadToA(rhs);
-      emit("    TAX\n");
+    }
+    case Instruction::Mul: {
+      // MUL takes a memory operand (there is no register form): A = low word of A * operand.
+      std::string r = aluOperand(rhs);
       loadToA(lhs);
-      emit("    MUL X\n");
+      emit("    MUL %s\n", r.c_str());
+      break;
+    }
+    case Instruction::UDiv:
+    case Instruction::URem:
+      // DIV X,Y: X / Y -> quotient in A, remainder in X.
+      loadToA(rhs);
+      emit("    TAY\n");
+      loadToA(lhs);
+      emit("    TAX\n");
+      emit("    DIV X,Y\n");
+      if (op == Instruction::URem) emit("    TXA\n");
       break;
     case Instruction::SDiv:
-    case Instruction::UDiv:
-      loadToA(rhs);
-      emit("    TAX\n");
-      loadToA(lhs);
-      emit("    DIV X\n");
-      break;
     case Instruction::SRem:
-    case Instruction::URem:
-      loadToA(rhs);
-      emit("    TAX\n");
-      loadToA(lhs);
-      emit("    STA t1\n");
-      emit("    DIV X\n");
-      emit("    MUL X\n");
-      emit("    STA t0\n");
-      emit("    LDA t1\n");
-      emit("    SEC\n");
-      emit("    SBC t0\n");
+      lowerSignedDivRem(op == Instruction::SRem, lhs, rhs);
       break;
     case Instruction::Shl:
     case Instruction::LShr:
@@ -301,7 +344,12 @@ struct FnLower {
       emit(".L%s_%d:\n", fnName.c_str(), loop);
       emit("    DEX\n");
       emit("    BEQ .L%s_%d\n", fnName.c_str(), done);
-      emit("    %s\n", op == Instruction::Shl ? "ASL A" : "LSR A");
+      if (op == Instruction::AShr) {
+        emit("    CMP #$8000   ; C = sign bit, rotated back in below\n");
+        emit("    ROR A\n");
+      } else {
+        emit("    %s\n", op == Instruction::Shl ? "ASL A" : "LSR A");
+      }
       emit("    BRA .L%s_%d\n", fnName.c_str(), loop);
       emit(".L%s_%d:\n", fnName.c_str(), done);
       break;
@@ -314,47 +362,104 @@ struct FnLower {
     storeAToResult(BO);
   }
 
+  // A = |A| (16-bit two's complement).
+  void emitAbs() {
+    int neg = newLabel(), done = newLabel();
+    emit("    BMI .L%s_%d\n", fnName.c_str(), neg);
+    emit("    BRA .L%s_%d\n", fnName.c_str(), done);
+    emit(".L%s_%d:\n", fnName.c_str(), neg);
+    emit("    EOR #$FFFF\n");
+    emit("    INC A\n");
+    emit(".L%s_%d:\n", fnName.c_str(), done);
+  }
+
+  // Signed 16-bit divide / remainder on top of the unsigned DIV: divide the magnitudes, then negate the result when
+  // its sign calls for it - the quotient is negative when the operand signs differ, the remainder takes the
+  // dividend's sign (C99).
+  void lowerSignedDivRem(bool rem, Value *lhs, Value *rhs) {
+    const int s0 = sp(scratch0), s1 = sp(scratch1), s2 = sp(scratch2);
+    loadToA(lhs);
+    emit("    STA %d,S      ; dividend\n", s0);
+    loadToA(rhs);
+    emit("    STA %d,S      ; divisor\n", s1);
+    emit("    LDA %d,S\n", s0);
+    if (!rem) emit("    XOR %d,S      ; bit 15 = signs differ\n", s1);
+    emit("    STA %d,S      ; sign of the result in bit 15\n", s2);
+    emit("    LDA %d,S\n", s1);
+    emitAbs();
+    emit("    TAY            ; Y = |divisor|\n");
+    emit("    LDA %d,S\n", s0);
+    emitAbs();
+    emit("    TAX            ; X = |dividend|\n");
+    emit("    DIV X,Y\n");
+    if (rem) emit("    TXA\n");
+    emit("    STA %d,S\n", s0);
+    emit("    LDA %d,S\n", s2);
+    int neg = newLabel(), pos = newLabel(), done = newLabel();
+    emit("    BMI .L%s_%d\n", fnName.c_str(), neg);
+    emit("    BRA .L%s_%d\n", fnName.c_str(), pos);
+    emit(".L%s_%d:\n", fnName.c_str(), neg);
+    emit("    LDA %d,S\n", s0);
+    emit("    EOR #$FFFF\n");
+    emit("    INC A\n");
+    emit("    BRA .L%s_%d\n", fnName.c_str(), done);
+    emit(".L%s_%d:\n", fnName.c_str(), pos);
+    emit("    LDA %d,S\n", s0);
+    emit(".L%s_%d:\n", fnName.c_str(), done);
+  }
+
   void bra(const char *op, int label) {
     emit("    %s .L%s_%d\n", op, fnName.c_str(), label);
   }
   void deflabel(int label) { emit(".L%s_%d:\n", fnName.c_str(), label); }
 
-  // The DEF88186 assembler only provides BEQ, BMI, BGE, BCC, BCS, BVS, BRA
-  // (no BNE / BPL). Comparisons are synthesized from that set. Signed relations
-  // use BGE (N==V, overflow-correct); unsigned use the carry (BCS = "unsigned
-  // >=", BCC = "unsigned <"). Each predicate is expressed as a small list of
-  // conditional branches (to the true or false result) plus a default result.
+  // Branches the CPU really has: BEQ (Z), BMI (N), BVS (V), BCS (C) and BRA; cpuasm synthesizes BNE/BPL/BVC/BCC from
+  // them. BGE is only an alias for BCS (unsigned >=), so it cannot be used for signed compares.
+  //
+  // Unsigned relations come straight from CMP's carry (C = lhs >= rhs). Signed ones need the overflow flag, which
+  // CMP does not set but SBC does: after SEC/SBC, lhs < rhs exactly when N != V.
   void lowerICmp(ICmpInst *CI) {
     Value *lhs = CI->getOperand(0), *rhs = CI->getOperand(1);
-    loadToA(rhs);
-    emit("    STA t0\n");
+    const CmpInst::Predicate pr = CI->getPredicate();
+    const bool sgn = CI->isSigned();
+    std::string r = aluOperand(rhs);
     loadToA(lhs);
-    emit("    CMP t0        ; flags for lhs - rhs\n");
+    if (sgn && pr != CmpInst::ICMP_EQ && pr != CmpInst::ICMP_NE) {
+      emit("    SEC\n");
+      emit("    SBC %s        ; lhs - rhs: N != V means lhs < rhs\n", r.c_str());
+    } else {
+      emit("    CMP %s        ; flags for lhs - rhs\n", r.c_str());
+    }
 
-    const char *ge = CI->isSigned() ? "BGE" : "BCS"; // "lhs >= rhs"
-    struct Br { const char *op; bool toTrue; };
-    std::vector<Br> seq;
-    bool dfltTrue;
-    switch (CI->getPredicate()) {
-    case CmpInst::ICMP_EQ:  seq = {{"BEQ", true}};  dfltTrue = false; break;
-    case CmpInst::ICMP_NE:  seq = {{"BEQ", false}}; dfltTrue = true;  break;
-    case CmpInst::ICMP_SGE:
-    case CmpInst::ICMP_UGE: seq = {{ge, true}};     dfltTrue = false; break;
-    case CmpInst::ICMP_SLT:
-    case CmpInst::ICMP_ULT: seq = {{ge, false}};    dfltTrue = true;  break;
-    case CmpInst::ICMP_SGT:
-    case CmpInst::ICMP_UGT: seq = {{"BEQ", false}, {ge, true}};  dfltTrue = false; break;
-    case CmpInst::ICMP_SLE:
-    case CmpInst::ICMP_ULE: seq = {{"BEQ", true}, {ge, false}};  dfltTrue = true;  break;
+    int trueL = newLabel(), falseL = newLabel(), doneL = newLabel();
+    auto jump = [&](const char *op, int label) { bra(op, label); };
+    // "N != V" / "N == V" as branches to the true or false label.
+    auto signedLess = [&](bool lessIsTrue) {
+      int ovf = newLabel();
+      jump("BVS", ovf);
+      jump("BMI", lessIsTrue ? trueL : falseL);    // no overflow: N set means less
+      jump("BRA", lessIsTrue ? falseL : trueL);
+      deflabel(ovf);
+      jump("BMI", lessIsTrue ? falseL : trueL);    // overflow: N set means N == V, so not less
+      jump("BRA", lessIsTrue ? trueL : falseL);
+    };
+
+    switch (pr) {
+    case CmpInst::ICMP_EQ:  jump("BEQ", trueL); jump("BRA", falseL); break;
+    case CmpInst::ICMP_NE:  jump("BEQ", falseL); jump("BRA", trueL); break;
+    case CmpInst::ICMP_UGE: jump("BCS", trueL); jump("BRA", falseL); break;
+    case CmpInst::ICMP_ULT: jump("BCS", falseL); jump("BRA", trueL); break;
+    case CmpInst::ICMP_UGT: jump("BEQ", falseL); jump("BCS", trueL); jump("BRA", falseL); break;
+    case CmpInst::ICMP_ULE: jump("BEQ", trueL); jump("BCS", falseL); jump("BRA", trueL); break;
+    case CmpInst::ICMP_SLT: signedLess(true); break;
+    case CmpInst::ICMP_SGE: signedLess(false); break;
+    case CmpInst::ICMP_SGT: jump("BEQ", falseL); signedLess(false); break;
+    case CmpInst::ICMP_SLE: jump("BEQ", trueL); signedLess(true); break;
     default:
       backendError("unsupported icmp predicate in " + fnName);
       return;
     }
 
-    int trueL = newLabel(), falseL = newLabel(), doneL = newLabel();
-    for (auto &b : seq)
-      bra(b.op, b.toTrue ? trueL : falseL);
-    bra("BRA", dfltTrue ? trueL : falseL);
     deflabel(trueL);
     emit("    LDA #$0001\n");
     bra("BRA", doneL);
@@ -367,7 +472,7 @@ struct FnLower {
   void lowerGEP(GetElementPtrInst *GEP) {
     // result = base + sum(index_i * stride_i)
     addressToA(GEP->getPointerOperand());
-    emit("    STA t1       ; gep base\n");
+    emit("    STA %d,S     ; gep base\n", sp(scratch1));
     int constOff = 0;
     std::vector<std::pair<Value *, int>> varTerms;
     gep_type_iterator GTI = gep_type_begin(GEP);
@@ -388,18 +493,13 @@ struct FnLower {
     }
     for (auto &term : varTerms) {
       loadToA(term.first);
-      if (term.second != 1) {
-        emit("    STA t0\n");           // idx
-        emit("    LDA #$%04X\n", term.second & 0xFFFF);
-        emit("    TAX\n");
-        emit("    LDA t0\n");
-        emit("    MUL X            ; idx * stride\n");
-      }
+      if (term.second != 1)
+        emit("    MUL #$%04X       ; idx * stride\n", term.second & 0xFFFF);
       emit("    CLC\n");
-      emit("    ADC t1\n");
-      emit("    STA t1\n");
+      emit("    ADC %d,S\n", sp(scratch1));
+      emit("    STA %d,S\n", sp(scratch1));
     }
-    emit("    LDA t1\n");
+    emit("    LDA %d,S\n", sp(scratch1));
     if (constOff) {
       emit("    CLC\n");
       emit("    ADC #$%04X       ; + const field offset\n", constOff & 0xFFFF);
@@ -457,7 +557,7 @@ struct FnLower {
     for (const PHINode &phi : succ->phis()) {
       Value *in = phi.getIncomingValueForBlock(pred);
       loadToA(in);
-      emit("    STA %d,S     ; phi\n", slotOf(&phi));
+      emit("    STA %d,S     ; phi\n", sp(slotOf(&phi)));
     }
   }
 
@@ -492,13 +592,19 @@ struct FnLower {
     emit("    BRA %s\n", edgeTarget(cur, BI->getSuccessor(0)).c_str());
   }
 
+  // S += n without touching X or A: A is parked in Y (free: caller-saved, and no result lives in it).
+  void emitPopBytes(int n) {
+    emit("    TAY\n");
+    emit("    TSC\n");
+    emit("    CLC\n");
+    emit("    ADC #$%04X\n", n & 0xFFFF);
+    emit("    TCS\n");
+    emit("    TYA\n");
+  }
+
   void emitEpilogue() {
-    if (frameSize) {
-      emit("    TSC\n");
-      emit("    CLC\n");
-      emit("    ADC #$%04X\n", frameSize & 0xFFFF);
-      emit("    TCS\n");
-    }
+    if (frameSize)
+      emitPopBytes(frameSize);
     emit("    RTS\n");
   }
 
@@ -555,16 +661,11 @@ struct FnLower {
       emit("    JSR (icall_target,X)\n");
     }
 
-    if (nStack) {
-      emit("    TSC\n");
-      emit("    CLC\n");
-      emit("    ADC #$%04X   ; pop %u stack arg(s)\n", (nStack * 2) & 0xFFFF,
-           nStack);
-      emit("    TCS\n");
-    }
     spDelta = 0;
+    if (nStack)
+      emitPopBytes((int)nStack * 2);   // keeps the result in A
     if (!CI->getType()->isVoidTy())
-      emit("    STA %d,S\n", slotOf(CI));
+      emit("    STA %d,S\n", sp(slotOf(CI)));
   }
 
   void lowerInstruction(Instruction *I) {
@@ -618,24 +719,23 @@ struct FnLower {
     emit("\n; Function: %s\n", fnName.c_str());
     emit("%s:\n", fnName.c_str());
     emit("    REP #$30        ; 16-bit A, X, Y\n");
-    if (frameSize) {
+    // Pushing the register arguments both spills them and starts the frame; only then is A free for TSC/SBC/TCS
+    // (allocating first used to destroy arg0).
+    if (nRegArgs >= 3) emit("    PHY          ; arg2\n");
+    if (nRegArgs >= 2) emit("    PHX          ; arg1\n");
+    if (nRegArgs >= 1) emit("    PHA          ; arg0\n");
+    if (extraSize) {
       emit("    TSC\n");
       emit("    SEC\n");
-      emit("    SBC #$%04X\n", frameSize & 0xFFFF);
+      emit("    SBC #$%04X\n", extraSize & 0xFFFF);
       emit("    TCS\n");
     }
-    // Spill incoming register/stack arguments into their frame slots.
-    unsigned ai = 0;
+    // Copy stack arguments (5th onward) into frame slots: [S+frameSize+1..2] is the return address, so the first
+    // stack argument is at S+frameSize+3.
     for (Argument &A : F.args()) {
-      if (ai == 0) emit("    STA %d,S     ; arg0\n", slotOf(&A));
-      else if (ai == 1) { emit("    TXA\n"); emit("    STA %d,S     ; arg1\n", slotOf(&A)); }
-      else if (ai == 2) { emit("    TYA\n"); emit("    STA %d,S     ; arg2\n", slotOf(&A)); }
-      else {
-        int srcOff = frameSize + 2 + (int)(ai - 3) * 2; // above return addr
-        emit("    LDA %d,S     ; arg%u (stack)\n", srcOff, ai);
-        emit("    STA %d,S\n", slotOf(&A));
-      }
-      ++ai;
+      if (A.getArgNo() < 3) continue;
+      emit("    LDA %d,S     ; arg%u (stack)\n", frameSize + 3 + (int)(A.getArgNo() - 3) * 2, A.getArgNo());
+      emit("    STA %d,S\n", sp(slotOf(&A)));
     }
 
     for (BasicBlock &BB : F) {
@@ -717,8 +817,6 @@ static void emitModule(Module &M) {
   emit("; Generated by zpcc (clang/LLVM DEF88186 backend)\n");
   emit("; ZeroPoint Fantasy Console\n\n");
   emit(".data\n");
-  emit("t0: .word 0\n");
-  emit("t1: .word 0\n");
   emit("icall_target: .word 0\n");
   for (GlobalVariable &GV : M.globals())
     emitGlobal(GV, DL);
