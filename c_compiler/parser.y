@@ -387,6 +387,27 @@ function_declaration:
         $$->func_decl.return_modifiers = TS_MODS($1);
         free($2);
     }
+    /* prototypes: a declaration with no body records the signature (return/parameter widths) for calls */
+    | type_specifier IDENTIFIER '(' ')' ';' {
+        $$ = ast_create_func_decl(TS_TYPE($1), $2, NULL, 0, NULL);
+        $$->func_decl.return_modifiers = TS_MODS($1);
+        free($2);
+    }
+    | type_specifier IDENTIFIER '(' parameter_list ')' ';' {
+        $$ = ast_create_func_decl(TS_TYPE($1), $2, $4.items, $4.count, NULL);
+        $$->func_decl.return_modifiers = TS_MODS($1);
+        free($2);
+    }
+    | EXTERN type_specifier IDENTIFIER '(' ')' ';' {
+        $$ = ast_create_func_decl(TS_TYPE($2), $3, NULL, 0, NULL);
+        $$->func_decl.return_modifiers = TS_MODS($2);
+        free($3);
+    }
+    | EXTERN type_specifier IDENTIFIER '(' parameter_list ')' ';' {
+        $$ = ast_create_func_decl(TS_TYPE($2), $3, $5.items, $5.count, NULL);
+        $$->func_decl.return_modifiers = TS_MODS($2);
+        free($3);
+    }
     ;
 
 parameter_list:

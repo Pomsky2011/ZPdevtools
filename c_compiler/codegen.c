@@ -2032,7 +2032,7 @@ void codegen_program(ASTNode* node, FILE* output) {
         ASTNode* decl = node->program.decls[i];
 
         if (decl->type == AST_FUNC_DECL) {
-            codegen_function(decl);
+            if (decl->func_decl.body) codegen_function(decl);   /* a prototype only registers the signature */
         } else if (decl->type == AST_VAR_DECL) {
             // Global variable
             emit("\n; Global variable: %s\n", decl->var_decl.var_name);

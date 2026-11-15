@@ -82,8 +82,19 @@ The loaders are written array-free (sequential register writes rather than a
 | `zp_mmio.asm`    | `zp_peek8` / `zp_poke8`, implemented with absolute-long-indexed access to the RAM/APU/PPU/IO banks. |
 | `zp_cop.asm`     | `zp_cop3` / `zp_cop32` (any `COP` signature, built at run time) plus the typed Boot ROM service wrappers. Needs the real Boot ROM (`--boot`) for `$F0-$FF`. |
 | `zp_dma.asm`     | `zp_dma_load` for hand-written asm (boot ROM, no C runtime). |
+| `zp_long.asm`    | 32-bit runtime for the C compilers (`long` add/sub/mul/div/mod, shifts, bitwise, compares). Link it into any program that does `long` arithmetic. Tested by `ZeroPoint/bin/test_zp_long`. |
 
-The C ABI (shared by both compilers) is 16-bit mode, args in A/X/Y, return in A.
+The C ABI (shared by both compilers) is 16-bit mode: the first three register words (A, X, Y)
+carry the leading arguments - a 32-bit argument takes two (A:X or X:Y, low word first) - and
+the first argument that does not fit, and every later one, is pushed right to left. The result
+is in A, or A:X (low, high) for a 32-bit value. `int` is 16 bits, `long` 32. `S` points at the
+next free stack byte, so the top of the stack is `S+1`. See `docs/cpu/conventions.txt`.
+
+**Compilers.** Both `zpcc` and `def88186cc` are regression-tested by `tests/cc/run.sh`, which
+compiles each test with the host gcc and with both compilers and compares what they record when
+run in the emulator. Known gaps (all three share one cause, the CPU has no register-indirect
+addressing outside bank 0): array indexing, pointer dereference and struct members only reach
+bank $00, and global variables are not supported by `def88186cc`.
 
 ## COP calls — `zp_cop.h`
 
@@ -99,10 +110,9 @@ zpu16 d = zp_hypot(3, 4);                 /* 5     */
 zpu16 r = zp_cop3(0xF5, 0x4240, 0x000F);  /* any signature: A = sig, then the service's A and X */
 ```
 
-Notes: not re-entrant (fixed scratch at `$80:2B00`); from C use `zp_cop3` and the
-typed wrappers, since a 4th argument makes both compilers clobber A when they pop
-it (`zp_cop32` is fine from assembly); `zp_sqrt32(v)` needs 32-bit shifts, so on
-def88186cc call `zp_sqrt(lo, hi)`. Tested by `ZeroPoint/bin/test_zp_cop`.
+Not re-entrant (fixed scratch at `$80:2B00`). `zp_cop32(sig, a, x, y)` takes all of A, X, Y
+(the 4th argument is on the stack) and returns A:X; `zp_cop3(sig, a, x)` is the
+three-register form. Tested by `ZeroPoint/bin/test_zp_cop` and `tests/cc/t06_cop.c`.
 
 ## def88186cc dialect (`ZP_CC_DOS`)
 

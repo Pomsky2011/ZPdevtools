@@ -19,16 +19,10 @@
 ;               A = sig, X = a, Y = x, [S+3] = y (4th argument, pushed by the caller)
 ;       returns A = the COP's A on return, X = its X  (32-bit: A low word, X high word)
 ;
-; C callers: use zp_cop3 (below) or a typed wrapper. A 4-argument call from C works, but both
-; compilers pop the stack argument with an A-clobbering TSC/CLC/ADC/TCS, so its returned A is
-; garbage; from assembly zp_cop32 is fine.
-;
 ; "a", "x" and "y" are the values the service sees in its A, X and Y registers. zp_cop is
 ; the same entry point under another name for callers that only want A (zpu16 in C).
-; The typed wrappers (zp_sin, zp_hypot, ...) are in this file too, not in C: def88186cc moves
-; register-passed arguments wrong (it clobbers A before it reads the first parameter) and drops
-; the high word of a 32-bit one, so a C wrapper like zp_hypot(x, y) would miscompile. Here every
-; register move is explicit. Their C declarations are in include/zeropoint/zp_cop.h.
+; The typed wrappers (zp_sin, zp_hypot, ...) are in this file too: every register move is explicit,
+; and the SDK header only declares them (include/zeropoint/zp_cop.h).
 ;
 ; Why DB is restored here: COP #$FF (verify_chunk) leaves DB at whatever the Boot ROM last
 ; set - DB is not saved across BRK/COP/IRQ and there is no PLB - and the C ABI makes DB
@@ -69,11 +63,8 @@ zp_cop32:
         BRA zc_core
 
 ; ---- generic, three registers: zp_cop3(sig, a, x), y = 0 ----------------------------------
-; For C. A call with a 4th argument pushes it and the caller then pops it with TSC/CLC/ADC/TCS,
-; which destroys the returned A in both zpcc and def88186cc, so zp_cop32's result is garbage
-; from C (it is fine from assembly). zp_cop3 needs no stack argument; Y is 0, which is all the
-; services without a typed wrapper below ever want (SIN/COS/SINCOS/ATAN/SQRT, the reserved
-; $F8-$FE, and the cartridge's own signatures).
+; No stack argument. Y is 0, which is all the services without a typed wrapper below ever want
+; (SIN/COS/SINCOS/ATAN/SQRT, the reserved $F8-$FE, and the cartridge's own signatures).
 zp_cop3:
         PHP
         REP #$30

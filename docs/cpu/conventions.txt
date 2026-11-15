@@ -66,17 +66,23 @@ CALLING CONVENTION
 Standard C-Style Convention:
 -----------------------------
 
-Parameters:
-    - Small parameters (1-4 bytes): Pass in registers
-        - First parameter: A
-        - Second parameter: X
-        - Third parameter: Y
-    - Additional parameters: Pass on stack (right to left)
+Parameters (as implemented by zpcc and def88186cc; int = 16 bits, long = 32 bits):
+    - Register words A, X, Y are handed out in argument order. A 16-bit (or pointer)
+      argument takes one; a 32-bit argument takes two (A:X or X:Y, low word in the
+      first). Once an argument does not fit in the words that are left, it and every
+      later argument go on the stack.
+    - Stack arguments are pushed right to left (so the first one is nearest the return
+      address); a 32-bit one is pushed high word first, so its low word is on top.
+      The caller pops them.
+    - S points at the next FREE byte: the top of the stack is S+1, the return address is
+      the two bytes above the callee's frame, and the first stack argument follows it.
     - Large parameters (>4 bytes): Pass by pointer
 
 Return Values:
     - 8/16-bit values: Return in A
     - 32-bit values: Return in A (low word) and X (high word)
+    - 32-bit arithmetic other than load/store/convert is done by the libzp runtime
+      lib/zp_long.asm (operands in $80:2C00 / $80:2C04, result in A:X)
     - Larger values: Return by pointer (passed as parameter)
     - Error codes: Return in A, with carry flag for success/failure
 

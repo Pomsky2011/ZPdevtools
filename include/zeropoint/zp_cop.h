@@ -33,11 +33,9 @@
 /* Angles are unsigned, 65536 = one full turn, 0 = +x, $4000 = +y (counter-clockwise). */
 
 /* ---- Runtime-provided (libzp: zp_cop.asm) ------------------------------------------- */
-/* All of these are assembly: def88186cc mis-moves register-passed arguments and drops the
- * high word of a 32-bit one, so C wrappers over zp_cop32 would miscompile there.  On
- * def88186cc (no prototypes) the calls resolve through implicit declarations, which only
- * ever see the A register - read a service's X result with zpcc (zp_cop32, zp_sincos) or
- * from assembly. */
+/* All of these are assembly (the register moves are explicit there).  On def88186cc (no
+ * "extern", no prototypes in the SDK headers) an undeclared call is an int in A; the two
+ * that return 32 bits (A:X) are declared further down so it reads both words. */
 #if ZP_HAS_PROTOTYPES
 /* Calls COP #sig with the service's A, X, Y = a, x, y; works for any signature, including
  * the cartridge's own ($00-$EF).  Returns A (low word) and X (high word); a COP that
@@ -45,10 +43,9 @@
  * preserved (including across COP #$FF, which would clobber DB). */
 extern zpu32 zp_cop32(zpu8 sig, zpu16 a, zpu16 x, zpu16 y);
 extern zpu16 zp_cop(zpu8 sig, zpu16 a, zpu16 x, zpu16 y);   /* same call, just A */
-/* Three registers, Y = 0: use this from C.  A 4th argument is pushed, and zpcc and def88186cc
- * both pop it with a TSC/CLC/ADC/TCS that clobbers A, so the result of zp_cop/zp_cop32 is
- * garbage from C (their effects still happen; from assembly they are fine).  Y is only
- * needed by ATAN2/HYPOT/PPU_LOAD, which have wrappers below. */
+/* Three registers, Y = 0: no stack argument.  Y is only needed by ATAN2/HYPOT/PPU_LOAD, which
+ * have wrappers below; zp_cop/zp_cop32 take all of A, X and Y (the 4th argument is passed on
+ * the stack). */
 extern zpu16 zp_cop3(zpu8 sig, zpu16 a, zpu16 x);
 
 /* Boot ROM services. */
@@ -64,12 +61,15 @@ extern void zp_boot_ppu_load(zpu8 bank, zpu16 offset, zpu16 pages);
 /* Asks the Boot ROM to verify data chunk `index` (16384 bytes at codeSize + index*16384).
  * There is no result: an unverified chunk keeps reading as 0xDE/0xAF poison. */
 extern void zp_verify_chunk(zpu16 index);
+#else
+/* def88186cc: prototypes without "extern" (it has no static/const/(void)), so the calls that return a 32-bit value
+ * - result in A:X - know to read both words; everything else is an int in A and needs no declaration. */
+zpu32 zp_cop32(zpu8 sig, zpu16 a, zpu16 x, zpu16 y);
+zpu32 zp_sincos(zpu16 angle);
 #endif
 
 #define ZP_SINCOS_SIN(r)  ((zps16)((r) & 0xFFFFUL))
 #define ZP_SINCOS_COS(r)  ((zps16)(((r) >> 16) & 0xFFFFUL))
-/* zp_sqrt32 splits a 32-bit value: it needs a compiler that shifts a long (zpcc does).  On
- * def88186cc pass the two halves yourself: zp_sqrt(lo, hi). */
 #define zp_sqrt32(v)      zp_sqrt((zpu16)((v) & 0xFFFFUL), (zpu16)(((v) >> 16) & 0xFFFFUL))
 
 #endif /* ZEROPOINT_ZP_COP_H */
