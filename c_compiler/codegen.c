@@ -41,6 +41,8 @@ static void push_loop(int break_label, int continue_label) {
     }
     ctx.loop_stack[ctx.loop_depth].break_label = break_label;
     ctx.loop_stack[ctx.loop_depth].continue_label = continue_label;
+    ctx.loop_stack[ctx.loop_depth].break_depth = ctx.depth;
+    ctx.loop_stack[ctx.loop_depth].continue_depth = ctx.depth;
     ctx.loop_depth++;
 }
 
@@ -102,6 +104,10 @@ static int get_type_size(DataType type, int pointer_level, const char* struct_na
     switch (type) {
         case TYPE_INT:
             return 2;
+        case TYPE_SHORT:
+            return 2;
+        case TYPE_LONG:
+            return 4;
         case TYPE_CHAR:
             return 1;
         case TYPE_BOOL:
@@ -140,6 +146,7 @@ static void add_symbol(const char* name, DataType type, int is_param, int param_
     }
     ctx.symbols[ctx.symbol_count].pointer_level = pointer_level;
     ctx.symbols[ctx.symbol_count].struct_name = struct_name ? strdup(struct_name) : NULL;
+    ctx.symbols[ctx.symbol_count].modifiers = MOD_NONE;
 
     if (is_param) {
         // Parameters are accessed via stack relative addressing
@@ -152,7 +159,7 @@ static void add_symbol(const char* name, DataType type, int is_param, int param_
         if (is_array) {
             // Arrays take multiple slots
             ctx.symbols[ctx.symbol_count].offset = local_var_index * 2;
-            local_var_index += array_size * (elem_size / 2);  // Reserve space for all elements
+            local_var_index += array_size * ((elem_size + 1) / 2);  // Reserve space for all elements
         } else {
             // Regular variables take one slot
             ctx.symbols[ctx.symbol_count].offset = local_var_index * 2;
@@ -185,6 +192,7 @@ static void add_symbol_multidim(const char* name, DataType type, int is_param, i
     }
     ctx.symbols[ctx.symbol_count].pointer_level = pointer_level;
     ctx.symbols[ctx.symbol_count].struct_name = struct_name ? strdup(struct_name) : NULL;
+    ctx.symbols[ctx.symbol_count].modifiers = MOD_NONE;
 
     if (is_param) {
         ctx.symbols[ctx.symbol_count].offset = 0;
@@ -197,7 +205,7 @@ static void add_symbol_multidim(const char* name, DataType type, int is_param, i
                 total_elements *= array_sizes[i];
             }
             ctx.symbols[ctx.symbol_count].offset = local_var_index * 2;
-            local_var_index += total_elements * (elem_size / 2);
+            local_var_index += total_elements * ((elem_size + 1) / 2);
         } else {
             ctx.symbols[ctx.symbol_count].offset = local_var_index * 2;
             local_var_index += (elem_size + 1) / 2;
@@ -228,10 +236,219 @@ static void emit(const char* fmt, ...) {
     va_end(args);
 }
 
+
+/* ====================================================================================================
+ * Stack discipline
+ *
+ * S points at the next free byte, so the byte at offset k from the lowest address of the frame is at S+1+k
+ * (the old code used S+k, which put the first local on the free slot a JSR push overwrites).  ctx.depth counts
+ * the bytes pushed on top of the frame while an expression is being evaluated (PHA temporaries, call
+ * arguments), so SPO() gives the right "n,S" operand at every point.
+ *
+ * Frame, lowest address first:   locals | three scratch words | register-argument slots | return address |
+ * stack arguments.  Register arguments are pushed by the prologue (PHY/PHX/PHA) before anything touches A.
+ * ==================================================================================================== */
+static int SPO(int frame_off) { return frame_off + 1 + ctx.depth; }
+#define SCRATCH0 (ctx.scratch)
+#define SCRATCH1 (ctx.scratch + 2)
+#define SCRATCH2 (ctx.scratch + 4)
+
+static void push_a(void) { emit("    PHA\n"); ctx.depth += 2; }
+static void pop_a(void)  { emit("    PLA\n"); ctx.depth -= 2; }
+/* A:X pair (lo, hi): lo ends up at the lower address, so a PLA pops the low word first. */
+static void push_ax(void) { emit("    PHX\n    PHA\n"); ctx.depth += 4; }
+
+/* S += n without disturbing A or X: A is parked in Y, which carries nothing across a call or return. */
+static void emit_drop_bytes(int n) {
+    if (n <= 0) return;
+    emit("    TAY\n    TSC\n    CLC\n    ADC #$%04X\n    TCS\n    TYA\n", n & 0xFFFF);
+}
+
+/* ====================================================================================================
+ * Expression types.  A value is one word (A) or two (A = low, X = high); the only other thing the code
+ * generator has to know is whether it is unsigned (compares, shifts right, divide, widening).
+ * ==================================================================================================== */
+typedef struct { int words; int uns; } CType;
+static CType ctype(int words, int uns) { CType t; t.words = words; t.uns = uns; return t; }
+
+static CType type_ctype(DataType t, TypeModifier m, int ptr) {
+    if (ptr > 0) return ctype(1, 1);
+    if (t == TYPE_LONG) return ctype(2, (m & MOD_UNSIGNED) != 0);
+    if (t == TYPE_CHAR) return ctype(1, !(m & MOD_SIGNED));   /* plain char is unsigned here */
+    if (t == TYPE_BOOL) return ctype(1, 1);
+    return ctype(1, (m & MOD_UNSIGNED) != 0);
+}
+
+static CType usual(CType a, CType b) {
+    if (a.words == 2 || b.words == 2)
+        return ctype(2, (a.words == 2 && a.uns) || (b.words == 2 && b.uns));
+    return ctype(1, a.uns || b.uns);
+}
+
+#define MAX_FUNCS 512
+#define MAX_PARAMS 16
+typedef struct { char* name; CType ret; int nparams; CType params[MAX_PARAMS]; } FuncInfo;
+static FuncInfo func_table[MAX_FUNCS];
+static int func_count = 0;
+
+static FuncInfo* find_func(const char* name) {
+    int i;
+    for (i = 0; i < func_count; i++)
+        if (strcmp(func_table[i].name, name) == 0) return &func_table[i];
+    return NULL;
+}
+
+static void register_func(ASTNode* node) {
+    FuncInfo* f;
+    int i;
+    if (func_count >= MAX_FUNCS) return;
+    f = &func_table[func_count++];
+    f->name = node->func_decl.func_name;
+    f->ret = type_ctype(node->func_decl.return_type, node->func_decl.return_modifiers, 0);
+    f->nparams = node->func_decl.param_count < MAX_PARAMS ? node->func_decl.param_count : MAX_PARAMS;
+    for (i = 0; i < f->nparams; i++) {
+        ASTNode* p = node->func_decl.params[i];
+        f->params[i] = type_ctype(p->param.param_type, p->param.modifiers, p->param.pointer_level);
+    }
+}
+
+static CType sym_ctype(Symbol* sym) {
+    if (sym->is_array) return ctype(1, 1);
+    return type_ctype(sym->type, sym->modifiers, sym->pointer_level);
+}
+
+static CType expr_type(ASTNode* n) {
+    Symbol* sym;
+    FuncInfo* f;
+    unsigned int v;
+    CType a, b;
+    if (!n) return ctype(1, 0);
+    switch (n->type) {
+        case AST_NUMBER:
+            v = (unsigned int)n->number;
+            if (v <= 0x7FFFu) return ctype(1, 0);
+            if (v <= 0xFFFFu) return ctype(1, 1);
+            if (v <= 0x7FFFFFFFu) return ctype(2, 0);
+            return ctype(2, 1);
+        case AST_IDENTIFIER:
+            sym = find_symbol(n->identifier);
+            return sym ? sym_ctype(sym) : ctype(1, 0);
+        case AST_STRING_LITERAL:
+        case AST_SIZEOF:
+        case AST_ADDR_OF:
+            return ctype(1, 1);
+        case AST_CAST:
+            if (n->cast.pointer_level > 0) return ctype(1, 1);
+            return type_ctype(n->cast.target_type, n->mods, 0);
+        case AST_COMMA:
+            return n->comma.expr_count > 0 ? expr_type(n->comma.expressions[n->comma.expr_count - 1]) : ctype(1, 0);
+        case AST_TERNARY:
+            return usual(expr_type(n->ternary.then_expr), expr_type(n->ternary.else_expr));
+        case AST_BINOP:
+            switch (n->binop.op) {
+                case OP_EQ: case OP_NE: case OP_LT: case OP_GT: case OP_LE: case OP_GE:
+                case OP_AND: case OP_OR:
+                    return ctype(1, 0);
+                case OP_SHL: case OP_SHR:
+                    a = expr_type(n->binop.left);
+                    return ctype(a.words, a.uns);
+                default:
+                    a = expr_type(n->binop.left);
+                    b = expr_type(n->binop.right);
+                    return usual(a, b);
+            }
+        case AST_UNOP:
+            if (n->unop.op == OP_NOT) return ctype(1, 0);
+            if (n->unop.op == OP_ADDR_OF) return ctype(1, 1);
+            if (n->unop.op == OP_DEREF) {
+                if (n->unop.operand->type == AST_IDENTIFIER) {
+                    sym = find_symbol(n->unop.operand->identifier);
+                    if (sym && sym->pointer_level > 0)
+                        return type_ctype(sym->type, sym->modifiers, sym->pointer_level - 1);
+                }
+                return ctype(1, 0);
+            }
+            return expr_type(n->unop.operand);
+        case AST_DEREF:
+            if (n->unop.operand->type == AST_IDENTIFIER) {
+                sym = find_symbol(n->unop.operand->identifier);
+                if (sym && sym->pointer_level > 0)
+                    return type_ctype(sym->type, sym->modifiers, sym->pointer_level - 1);
+            }
+            return ctype(1, 0);
+        case AST_CALL:
+            f = find_func(n->call.name);
+            return f ? f->ret : ctype(1, 0);
+        case AST_ASSIGN:
+            sym = find_symbol(n->assign.var_name);
+            return sym ? sym_ctype(sym) : ctype(1, 0);
+        case AST_ARRAY_SUBSCRIPT:
+            sym = find_symbol(n->array_subscript.array_name);
+            return sym ? type_ctype(sym->type, sym->modifiers, sym->pointer_level) : ctype(1, 0);
+        case AST_PRE_INC: case AST_POST_INC: case AST_PRE_DEC: case AST_POST_DEC:
+            sym = find_symbol(n->inc_dec.var_name);
+            return sym ? sym_ctype(sym) : ctype(1, 0);
+        default:
+            return ctype(1, 0);
+    }
+}
+
+/* A (and X) hold a value of type 'from'; make them hold it as 'to'. */
+static void emit_convert(CType from, CType to) {
+    int pos, done;
+    if (from.words == to.words || to.words == 1) return;   /* long -> int: the low word is already in A */
+    if (from.uns) { emit("    LDX #$0000\n"); return; }       /* int -> long: X = zero / sign extension of A */
+    pos = new_label();
+    done = new_label();
+    emit("    CMP #$0000\n");
+    emit("    BPL .L%d\n", pos);
+    emit("    LDX #$FFFF\n");
+    emit("    BRA .L%d\n", done);
+    emit(".L%d:\n", pos);
+    emit("    LDX #$0000\n");
+    emit(".L%d:\n", done);
+}
+
+static void codegen_expr_to(ASTNode* n, CType to) {
+    CType from = expr_type(n);
+    codegen_expression(n);
+    emit_convert(from, to);
+}
+
+/* Evaluate n for a truth test: A is nonzero exactly when n is true (a long is or'd down to one word). */
+static void codegen_truth(ASTNode* n) {
+    CType t = expr_type(n);
+    codegen_expression(n);
+    if (t.words == 2)
+        emit("    PHA\n    TXA\n    ORA 1,S\n    TAY\n    PLA\n    TYA\n");
+}
+
+static void load_sym(Symbol* sym) {
+    CType t = sym_ctype(sym);
+    if (t.words == 2) {
+        emit("    LDA %d,S\n", SPO(sym->offset + 2));
+        emit("    TAX\n");
+    }
+    emit("    LDA %d,S\n", SPO(sym->offset));
+}
+
+/* Store A (and X) into sym, converted by the caller to its type; A (and X) still hold the value afterwards. */
+static void store_sym(Symbol* sym) {
+    CType t = sym_ctype(sym);
+    emit("    STA %d,S\n", SPO(sym->offset));
+    if (t.words == 2) {
+        emit("    TXA\n");
+        emit("    STA %d,S\n", SPO(sym->offset + 2));
+        emit("    LDA %d,S\n", SPO(sym->offset));
+    }
+}
+
 // Code generation for expressions
 static void codegen_number(ASTNode* node) {
-    // Load immediate into A
-    emit("    LDA #$%04X\n", node->number & 0xFFFF);
+    CType t = expr_type(node);
+    unsigned int v = (unsigned int)node->number;
+    emit("    LDA #$%04X\n", (unsigned)(v & 0xFFFF));
+    if (t.words == 2) emit("    LDX #$%04X\n", (unsigned)((v >> 16) & 0xFFFF));
 }
 
 static void codegen_identifier(ASTNode* node) {
@@ -240,28 +457,7 @@ static void codegen_identifier(ASTNode* node) {
         fprintf(stderr, "Error: Undefined variable '%s'\n", node->identifier);
         return;
     }
-
-    if (sym->is_param) {
-        // Parameter - might be in register or on stack
-        if (sym->param_index == 0) {
-            // First parameter is already in A
-            // Nothing to do if it's already there
-        } else if (sym->param_index == 1) {
-            // Second parameter is in X
-            emit("    TXA\n");  // Transfer X to A
-        } else if (sym->param_index == 2) {
-            // Third parameter is in Y
-            emit("    TYA\n");  // Transfer Y to A
-        } else {
-            // Stack parameter
-            // Calculate offset: after saved registers
-            int offset = 3 + (sym->param_index - 3) * 2;
-            emit("    LDA %d,S\n", offset);
-        }
-    } else {
-        // Local variable
-        emit("    LDA %d,S\n", sym->offset);
-    }
+    load_sym(sym);
 }
 
 static void codegen_string_literal(ASTNode* node) {
@@ -282,83 +478,60 @@ static void codegen_sizeof(ASTNode* node) {
     int size = 0;
 
     if (node->sizeof_expr.expr) {
-        // sizeof(expression) - determine type of expression
-        // For now, simplified: assume int
-        size = 2;  // int is 2 bytes
+        CType t = expr_type(node->sizeof_expr.expr);
+        size = t.words * 2;
     } else {
-        // sizeof(type)
         size = get_type_size(node->sizeof_expr.size_type,
                             node->sizeof_expr.pointer_level,
                             node->sizeof_expr.type_name);
     }
 
-    // Load size as immediate
     emit("    LDA #$%04X\n", size);
 }
 
 // Code generation for cast expressions
 static void codegen_cast(ASTNode* node) {
-    // Evaluate the expression being cast
+    CType from = expr_type(node->cast.expr);
+    CType to;
+    int ok, done;
+
     codegen_expression(node->cast.expr);
 
-    // Perform type conversion based on target type
-    // Note: DEF88186 is always in 16-bit mode (REP #$30)
-
     if (node->cast.pointer_level > 0) {
-        // Casting to pointer - no conversion needed (pointers are always 16-bit)
-        // Result is already in A register
-        return;
+        return;                      /* pointers are one word: the low word is already in A */
     }
+    to = type_ctype(node->cast.target_type, node->mods, 0);
 
     switch (node->cast.target_type) {
-        case TYPE_INT:
-            // Casting to int - value is already 16-bit in A, no conversion needed
-            break;
-
         case TYPE_CHAR:
-            // Casting to char - mask off high byte to get 8-bit value
             emit("    AND #$00FF    ; Cast to char (truncate to 8 bits)\n");
+            if (node->mods & MOD_SIGNED) {          /* signed char: sign-extend bit 7 */
+                ok = new_label();
+                emit("    CMP #$0080\n");
+                emit("    BCC .L%d\n", ok);
+                emit("    ORA #$FF00\n");
+                emit(".L%d:\n", ok);
+            }
             break;
 
-        case TYPE_BOOL: {
-            // Casting to bool - normalize to 0/1 (A = (A != 0) ? 1 : 0).
-            // No BNE in the ISA: branch on zero instead.
-            int bool_zero = new_label();
-            int bool_done = new_label();
+        case TYPE_BOOL:
+            if (from.words == 2) emit("    PHA\n    TXA\n    ORA 1,S\n    TAY\n    PLA\n    TYA\n");
+            ok = new_label();
+            done = new_label();
             emit("    CMP #$0000    ; Cast to bool (normalize to 0/1)\n");
-            emit("    BEQ .L%d\n", bool_zero);
+            emit("    BEQ .L%d\n", ok);
             emit("    LDA #$0001\n");
-            emit("    BRA .L%d\n", bool_done);
-            emit(".L%d:\n", bool_zero);
+            emit("    BRA .L%d\n", done);
+            emit(".L%d:\n", ok);
             emit("    LDA #$0000\n");
-            emit(".L%d:\n", bool_done);
-            break;
-        }
-
-        case TYPE_VOID:
-            // Casting to void - no-op (discard value semantics)
-            break;
-
-        case TYPE_SHORT:
-            // Casting to short - same as int (16-bit)
+            emit(".L%d:\n", done);
             break;
 
         case TYPE_LONG:
-            // Casting to long - for now treat as int (16-bit)
-            // TODO: Implement 32-bit long support
+            emit_convert(from, to);
             break;
 
-        case TYPE_STRUCT:
-            // Struct casts not supported (would require memcpy)
-            break;
-
-        case TYPE_UNION:
-            // Union casts not supported (would require memcpy)
-            // Just leave value as-is
-            break;
-
-        case TYPE_POINTER:
-            // Already handled above
+        default:                     /* int, short, void, struct, union: nothing to convert */
             break;
     }
 }
@@ -377,288 +550,383 @@ static void codegen_comma(ASTNode* node) {
 static void codegen_ternary(ASTNode* node) {
     int else_label = new_label();
     int done_label = new_label();
+    CType t = expr_type(node);
 
-    // Evaluate condition
-    codegen_expression(node->ternary.condition);
-
-    // Branch if false
+    codegen_truth(node->ternary.condition);
     emit("    CMP #$0000\n");
     emit("    BEQ .L%d\n", else_label);
 
-    // True branch
-    codegen_expression(node->ternary.then_expr);
+    codegen_expr_to(node->ternary.then_expr, t);
     emit("    BRA .L%d\n", done_label);
 
-    // False branch
     emit(".L%d:\n", else_label);
-    codegen_expression(node->ternary.else_expr);
+    codegen_expr_to(node->ternary.else_expr, t);
 
     emit(".L%d:\n", done_label);
 }
 
-static void codegen_binop(ASTNode* node) {
-    // Generate code for left operand (result in A)
-    codegen_expression(node->binop.left);
-
-    // Save A to stack
-    emit("    PHA\n");
-
-    // Generate code for right operand (result in A)
-    codegen_expression(node->binop.right);
-
-    // Move right operand to X
-    emit("    TAX\n");
-
-    // Restore left operand to A
-    emit("    PLA\n");
-
-    // Perform operation
-    switch (node->binop.op) {
-        case OP_ADD:
-            emit("    CLC\n");
-            emit("    STX temp\n");
-            emit("    ADC temp\n");
-            break;
-        case OP_SUB:
-            emit("    SEC\n");
-            emit("    STX temp\n");
-            emit("    SBC temp\n");
-            break;
-        case OP_MUL:
-            emit("    MUL X\n");  // Hardware multiply
-            break;
-        case OP_DIV:
-            emit("    DIV X\n");  // Hardware divide
-            break;
-        case OP_MOD:
-            // A % X: compute A - (A/X)*X
-            emit("    PHA\n");           // Save A
-            emit("    DIV X\n");         // A = A / X
-            emit("    MUL X\n");         // A = (A/X) * X
-            emit("    STA temp\n");      // Save result
-            emit("    PLA\n");           // Restore original A
-            emit("    SEC\n");
-            emit("    SBC temp\n");      // A = A - (A/X)*X
-            break;
-        case OP_BIT_AND:
-            emit("    STX temp\n");
-            emit("    AND temp\n");
-            break;
-        case OP_BIT_OR:
-            emit("    STX temp\n");
-            emit("    ORA temp\n");
-            break;
-        case OP_BIT_XOR:
-            emit("    STX temp\n");
-            emit("    EOR temp\n");
-            break;
-        case OP_SHL:
-            // Shift A left by X times. Use an INX/DEX down-counter: the ISA has
-            // neither BNE nor a working CPX immediate, and DEX sets Z at zero.
-            int shl_loop = new_label();
-            int shl_done = new_label();
-            emit("    INX\n");
-            emit(".L%d:\n", shl_loop);
-            emit("    DEX\n");
-            emit("    BEQ .L%d\n", shl_done);
-            emit("    ASL A\n");
-            emit("    BRA .L%d\n", shl_loop);
-            emit(".L%d:\n", shl_done);
-            break;
-        case OP_SHR:
-            // Shift A right by X times (INX/DEX down-counter; see OP_SHL).
-            int shr_loop = new_label();
-            int shr_done = new_label();
-            emit("    INX\n");
-            emit(".L%d:\n", shr_loop);
-            emit("    DEX\n");
-            emit("    BEQ .L%d\n", shr_done);
-            emit("    LSR A\n");
-            emit("    BRA .L%d\n", shr_loop);
-            emit(".L%d:\n", shr_done);
-            break;
-        case OP_EQ:
-        case OP_NE:
-        case OP_LT:
-        case OP_GT:
-        case OP_LE:
-        case OP_GE:
-            // Comparison: A CMP X
-            emit("    STX temp\n");
-            emit("    CMP temp\n");
-
-            int true_label = new_label();
-            int done_label = new_label();
-
-            switch (node->binop.op) {
-                case OP_EQ:
-                    emit("    BEQ .L%d\n", true_label);
-                    break;
-                case OP_NE: {
-                    // No BNE in the ISA: branch to true unless equal.
-                    int ne_skip = new_label();
-                    emit("    BEQ .L%d\n", ne_skip);
-                    emit("    BRA .L%d\n", true_label);
-                    emit(".L%d:\n", ne_skip);
-                    break;
+/* After SEC/SBC (signed) or CMP (unsigned) with A = left: branch on the relation and leave 0 / 1 in A. */
+static void emit_relation(BinOpType op, int uns) {
+    int t = new_label(), f = new_label(), done = new_label(), ovf;
+    /* BGE is only an alias for BCS (unsigned >=), and CMP does not set V: signed relations are N != V after SBC. */
+    switch (op) {
+        case OP_EQ: emit("    BEQ .L%d\n    BRA .L%d\n", t, f); break;
+        case OP_NE: emit("    BEQ .L%d\n    BRA .L%d\n", f, t); break;
+        default:
+            if (uns) {
+                switch (op) {
+                    case OP_GE: emit("    BCS .L%d\n    BRA .L%d\n", t, f); break;
+                    case OP_LT: emit("    BCS .L%d\n    BRA .L%d\n", f, t); break;
+                    case OP_GT: emit("    BEQ .L%d\n    BCS .L%d\n    BRA .L%d\n", f, t, f); break;
+                    default:    emit("    BEQ .L%d\n    BCS .L%d\n    BRA .L%d\n", t, f, t); break;   /* LE */
                 }
-                case OP_LT:
-                    emit("    BMI .L%d\n", true_label);
-                    break;
-                case OP_GT:
-                    // A > X: not equal and not less
-                    emit("    BEQ .L%d\n", done_label);
-                    emit("    BMI .L%d\n", done_label);
-                    emit("    BRA .L%d\n", true_label);
-                    break;
-                case OP_LE:
-                    // A <= X: less or equal
-                    emit("    BEQ .L%d\n", true_label);
-                    emit("    BMI .L%d\n", true_label);
-                    break;
-                case OP_GE:
-                    // A >= X: signed greater-or-equal (no BPL in the ISA).
-                    emit("    BGE .L%d\n", true_label);
-                    break;
-                default:
-                    break;
+            } else {
+                int less_true = (op == OP_LT || op == OP_LE);
+                if (op == OP_GT) emit("    BEQ .L%d\n", f);
+                if (op == OP_LE) emit("    BEQ .L%d\n", t);
+                ovf = new_label();
+                emit("    BVS .L%d\n", ovf);
+                emit("    BMI .L%d\n", less_true ? t : f);
+                emit("    BRA .L%d\n", less_true ? f : t);
+                emit(".L%d:\n", ovf);
+                emit("    BMI .L%d\n", less_true ? f : t);
+                emit("    BRA .L%d\n", less_true ? t : f);
             }
+    }
+    emit(".L%d:\n    LDA #$0001\n    BRA .L%d\n", t, done);
+    emit(".L%d:\n    LDA #$0000\n", f);
+    emit(".L%d:\n", done);
+}
 
-            // False
-            emit("    LDA #$0000\n");
-            emit("    BRA .L%d\n", done_label);
-            // True
-            emit(".L%d:\n", true_label);
-            emit("    LDA #$0001\n");
-            emit(".L%d:\n", done_label);
-            break;
-        case OP_AND:
-        case OP_OR:
-            // Logical operators: treat non-zero as true
-            // Already have left in A, right in X
+/* A = -1 / 0 / 1 from a long compare helper: turn it into the relation's 0 / 1. */
+static void emit_cmp_result(BinOpType op) {
+    int t = new_label(), f = new_label(), done = new_label();
+    emit("    CMP #$0000\n");
+    switch (op) {
+        case OP_EQ: emit("    BEQ .L%d\n    BRA .L%d\n", t, f); break;
+        case OP_NE: emit("    BEQ .L%d\n    BRA .L%d\n", f, t); break;
+        case OP_LT: emit("    BMI .L%d\n    BRA .L%d\n", t, f); break;
+        case OP_LE: emit("    BMI .L%d\n    BEQ .L%d\n    BRA .L%d\n", t, t, f); break;
+        case OP_GT: emit("    BMI .L%d\n    BEQ .L%d\n    BRA .L%d\n", f, f, t); break;
+        default:    emit("    BMI .L%d\n    BRA .L%d\n", f, t); break;     /* GE */
+    }
+    emit(".L%d:\n    LDA #$0001\n    BRA .L%d\n", t, done);
+    emit(".L%d:\n    LDA #$0000\n", f);
+    emit(".L%d:\n", done);
+}
 
-            // Convert A to boolean (0 or 1). No BNE: branch on zero instead.
-            emit("    CMP #$0000\n");
-            int a_zero = new_label();
-            int a_done = new_label();
-            emit("    BEQ .L%d\n", a_zero);
-            emit("    LDA #$0001\n");
-            emit("    BRA .L%d\n", a_done);
-            emit(".L%d:\n", a_zero);
-            emit("    LDA #$0000\n");
-            emit(".L%d:\n", a_done);
+static void emit_abs(void) {
+    int neg = new_label(), done = new_label();
+    emit("    BMI .L%d\n    BRA .L%d\n.L%d:\n    EOR #$FFFF\n    INC A\n.L%d:\n", neg, done, neg, done);
+}
 
-            emit("    PHA\n");  // Save boolean A
+/* Signed 16-bit divide / remainder on top of the unsigned DIV: divide the magnitudes, then negate the result when
+ * its sign calls for it (quotient: operand signs differ; remainder: the dividend's sign). The right operand has
+ * been pushed and A holds the left. */
+static void emit_sdivmod(int rem) {
+    int neg = new_label(), pos = new_label(), done = new_label();
+    emit("    TAY\n");
+    pop_a();
+    emit("    STA %d,S\n", SPO(SCRATCH1));           /* divisor */
+    emit("    TYA\n");
+    emit("    STA %d,S\n", SPO(SCRATCH0));           /* dividend */
+    if (!rem) emit("    XOR %d,S\n", SPO(SCRATCH1));  /* bit 15 = signs differ */
+    emit("    STA %d,S\n", SPO(SCRATCH2));           /* sign of the result */
+    emit("    LDA %d,S\n", SPO(SCRATCH1));
+    emit_abs();
+    emit("    TAY\n");
+    emit("    LDA %d,S\n", SPO(SCRATCH0));
+    emit_abs();
+    emit("    TAX\n");
+    emit("    DIV X,Y\n");
+    if (rem) emit("    TXA\n");
+    emit("    STA %d,S\n", SPO(SCRATCH0));
+    emit("    LDA %d,S\n", SPO(SCRATCH2));
+    emit("    BMI .L%d\n    BRA .L%d\n", neg, pos);
+    emit(".L%d:\n    LDA %d,S\n    EOR #$FFFF\n    INC A\n    BRA .L%d\n", neg, SPO(SCRATCH0), done);
+    emit(".L%d:\n    LDA %d,S\n", pos, SPO(SCRATCH0));
+    emit(".L%d:\n", done);
+}
 
-            // Convert X to boolean. No BNE: branch on zero instead.
-            emit("    TXA\n");
-            emit("    CMP #$0000\n");
-            int x_zero = new_label();
-            int x_done = new_label();
-            emit("    BEQ .L%d\n", x_zero);
-            emit("    LDA #$0001\n");
-            emit("    BRA .L%d\n", x_done);
-            emit(".L%d:\n", x_zero);
-            emit("    LDA #$0000\n");
-            emit(".L%d:\n", x_done);
+/* Short-circuit && and ||. */
+static void codegen_logical(ASTNode* node) {
+    int fl = new_label(), end = new_label();
+    if (node->binop.op == OP_AND) {
+        codegen_truth(node->binop.left);
+        emit("    CMP #$0000\n    BEQ .L%d\n", fl);
+        codegen_truth(node->binop.right);
+        emit("    CMP #$0000\n    BEQ .L%d\n", fl);
+        emit("    LDA #$0001\n    BRA .L%d\n", end);
+    } else {
+        int tr = new_label(), rhs = new_label();
+        codegen_truth(node->binop.left);
+        emit("    CMP #$0000\n    BEQ .L%d\n    BRA .L%d\n", rhs, tr);
+        emit(".L%d:\n", rhs);
+        codegen_truth(node->binop.right);
+        emit("    CMP #$0000\n    BEQ .L%d\n", fl);
+        emit(".L%d:\n    LDA #$0001\n    BRA .L%d\n", tr, end);
+    }
+    emit(".L%d:\n    LDA #$0000\n", fl);
+    emit(".L%d:\n", end);
+}
 
-            emit("    TAX\n");  // X = boolean right
-            emit("    PLA\n");  // A = boolean left
+/* Long scratch block used by the zp_long.asm helpers: left $802C00, right $802C04 (low word first). */
+static void stage_long(void) {
+    /* right operand pushed (low word on top), left in A:X */
+    emit("    STA $802C00\n    TXA\n    STA $802C02\n");
+    emit("    PLA\n    STA $802C04\n");
+    ctx.depth -= 2;
+    emit("    PLA\n    STA $802C06\n");
+    ctx.depth -= 2;
+}
 
-            if (node->binop.op == OP_AND) {
-                emit("    STX temp\n");
-                emit("    AND temp\n");
-            } else {  // OP_OR
-                emit("    STX temp\n");
-                emit("    ORA temp\n");
+static const char* long_helper(BinOpType op, int uns) {
+    switch (op) {
+        case OP_ADD: return "__zp_ladd";
+        case OP_SUB: return "__zp_lsub";
+        case OP_MUL: return "__zp_lmul";
+        case OP_DIV: return uns ? "__zp_ludiv" : "__zp_lsdiv";
+        case OP_MOD: return uns ? "__zp_lumod" : "__zp_lsmod";
+        case OP_BIT_AND: return "__zp_land";
+        case OP_BIT_OR: return "__zp_lor";
+        case OP_BIT_XOR: return "__zp_lxor";
+        case OP_SHL: return "__zp_lshl";
+        case OP_SHR: return uns ? "__zp_llsr" : "__zp_lasr";
+        default: return NULL;
+    }
+}
+
+static void codegen_binop(ASTNode* node) {
+    BinOpType op = node->binop.op;
+    CType lt, rt, c;
+    int is_cmp, is_shift;
+    int loop, done;
+
+    if (op == OP_AND || op == OP_OR) { codegen_logical(node); return; }
+
+    lt = expr_type(node->binop.left);
+    rt = expr_type(node->binop.right);
+    is_cmp = (op == OP_EQ || op == OP_NE || op == OP_LT || op == OP_GT || op == OP_LE || op == OP_GE);
+    is_shift = (op == OP_SHL || op == OP_SHR);
+    c = is_shift ? ctype(lt.words, lt.uns) : usual(lt, rt);
+
+    if (c.words == 2) {
+        /* ---- 32-bit: right operand (or the shift count) first, then the left; runtime helper does the work ---- */
+        if (is_shift) {
+            codegen_expr_to(node->binop.right, ctype(1, 1));
+            push_a();
+            codegen_expr_to(node->binop.left, c);
+            emit("    STA $802C00\n    TXA\n    STA $802C02\n");
+            pop_a();
+            emit("    STA $802C04\n");
+        } else {
+            codegen_expr_to(node->binop.right, c);
+            push_ax();
+            codegen_expr_to(node->binop.left, c);
+            stage_long();
+        }
+        if (is_cmp) {
+            emit("    JSR %s\n", c.uns ? "__zp_lcmpu" : "__zp_lcmps");
+            emit_cmp_result(op);
+        } else {
+            emit("    JSR %s\n", long_helper(op, c.uns));
+        }
+        return;
+    }
+
+    /* ---- 16-bit: right operand pushed, left in A ---- */
+    if (is_shift) {
+        codegen_expr_to(node->binop.right, ctype(1, 1));
+        push_a();
+        codegen_expr_to(node->binop.left, c);
+        emit("    TAY\n");
+        pop_a();
+        emit("    TAX\n    TYA\n");               /* X = count, A = value */
+        loop = new_label();
+        done = new_label();
+        emit("    INX\n");
+        emit(".L%d:\n", loop);
+        emit("    DEX\n");
+        emit("    BEQ .L%d\n", done);
+        if (op == OP_SHL) emit("    ASL A\n");
+        else if (c.uns) emit("    LSR A\n");
+        else emit("    CMP #$8000\n    ROR A\n");   /* arithmetic: C = sign bit rotates back in */
+        emit("    BRA .L%d\n", loop);
+        emit(".L%d:\n", done);
+        return;
+    }
+
+    codegen_expr_to(node->binop.right, c);
+    push_a();
+    codegen_expr_to(node->binop.left, c);
+
+    if (op == OP_DIV || op == OP_MOD) {
+        if (c.uns) {
+            emit("    TAX\n");
+            pop_a();
+            emit("    TAY\n");
+            emit("    DIV X,Y\n");
+            if (op == OP_MOD) emit("    TXA\n");
+        } else {
+            emit_sdivmod(op == OP_MOD);
+        }
+        return;
+    }
+
+    /* A = left, right in scratch 0 */
+    emit("    TAY\n");
+    pop_a();
+    emit("    STA %d,S\n", SPO(SCRATCH0));
+    emit("    TYA\n");
+
+    switch (op) {
+        case OP_ADD: emit("    CLC\n    ADC %d,S\n", SPO(SCRATCH0)); break;
+        case OP_SUB: emit("    SEC\n    SBC %d,S\n", SPO(SCRATCH0)); break;
+        case OP_MUL: emit("    MUL %d,S\n", SPO(SCRATCH0)); break;
+        case OP_BIT_AND: emit("    AND %d,S\n", SPO(SCRATCH0)); break;
+        case OP_BIT_OR:  emit("    ORA %d,S\n", SPO(SCRATCH0)); break;
+        case OP_BIT_XOR: emit("    XOR %d,S\n", SPO(SCRATCH0)); break;   /* the stack-relative form is spelled XOR */
+        default:
+            if (is_cmp) {
+                if (c.uns || op == OP_EQ || op == OP_NE) emit("    CMP %d,S\n", SPO(SCRATCH0));
+                else emit("    SEC\n    SBC %d,S\n", SPO(SCRATCH0));
+                emit_relation(op, c.uns);
             }
             break;
     }
 }
 
 static void codegen_unop(ASTNode* node) {
+    CType t;
+    int one, done;
     switch (node->unop.op) {
         case OP_ADDR_OF:
-            // Handled by codegen_addr_of
             codegen_addr_of(node);
             return;
         case OP_DEREF:
-            // Handled by codegen_deref
             codegen_deref(node);
             return;
         default:
             break;
     }
 
-    codegen_expression(node->unop.operand);
+    t = expr_type(node->unop.operand);
 
+    if (node->unop.op == OP_NOT) {
+        codegen_truth(node->unop.operand);
+        one = new_label();
+        done = new_label();
+        emit("    CMP #$0000\n");
+        emit("    BEQ .L%d\n", one);
+        emit("    LDA #$0000\n");
+        emit("    BRA .L%d\n", done);
+        emit(".L%d:\n", one);
+        emit("    LDA #$0001\n");
+        emit(".L%d:\n", done);
+        return;
+    }
+
+    codegen_expression(node->unop.operand);
     switch (node->unop.op) {
         case OP_NEG:
-            // Negate: 0 - A
             emit("    EOR #$FFFF\n");
-            emit("    INC A\n");
-            break;
-        case OP_NOT:
-            // Logical not: A = (A == 0) ? 1 : 0
-            emit("    CMP #$0000\n");
-            int not_true = new_label();
-            int not_done = new_label();
-            emit("    BEQ .L%d\n", not_true);
-            emit("    LDA #$0000\n");
-            emit("    BRA .L%d\n", not_done);
-            emit(".L%d:\n", not_true);
-            emit("    LDA #$0001\n");
-            emit(".L%d:\n", not_done);
+            if (t.words == 2)
+                emit("    TAY\n    TXA\n    EOR #$FFFF\n    TAX\n    TYA\n    CLC\n    ADC #$0001\n    TAY\n    TXA\n    ADC #$0000\n    TAX\n    TYA\n");
+            else
+                emit("    INC A\n");
             break;
         case OP_BIT_NOT:
             emit("    EOR #$FFFF\n");
+            if (t.words == 2) emit("    TAY\n    TXA\n    EOR #$FFFF\n    TAX\n    TYA\n");
             break;
-        case OP_ADDR_OF:
-        case OP_DEREF:
-            // Already handled above
+        default:
             break;
     }
 }
 
+static int arg_is_simple(ASTNode* a) {
+    if (a->type == AST_NUMBER) return 1;
+    if (a->type == AST_IDENTIFIER) {
+        Symbol* sym = find_symbol(a->identifier);
+        return sym && !sym->is_array;
+    }
+    return 0;
+}
+
+/* Calls: the first three register words (A, X, Y) carry the leading arguments - a 32-bit argument takes two
+ * (A:X or X:Y) - and everything from the first argument that does not fit goes on the stack, right to left.
+ * Arguments that need real evaluation are computed into stack temporaries first, so evaluating one cannot
+ * clobber a register another has already been loaded into; constants and variables are loaded directly. */
 static void codegen_call(ASTNode* node) {
-    // Generate code for arguments in reverse order (push right to left)
-    // First 3 go in A, X, Y; rest on stack
+    int n = node->call.arg_count;
+    FuncInfo* f = find_func(node->call.name);
+    CType at[MAX_PARAMS];
+    int reg_of[MAX_PARAMS];
+    int temp_at[MAX_PARAMS];
+    int regs_used = 0, stack_from, i, base_depth;
 
-    // Push arguments > 3 onto stack (in reverse)
-    for (int i = node->call.arg_count - 1; i >= 3; i--) {
-        codegen_expression(node->call.args[i]);
-        emit("    PHA\n");
+    if (n > MAX_PARAMS) {
+        fprintf(stderr, "Error: too many arguments in call to '%s'\n", node->call.name);
+        n = MAX_PARAMS;
+    }
+    for (i = 0; i < n; i++) {
+        CType from = expr_type(node->call.args[i]);
+        at[i] = (f && i < f->nparams) ? f->params[i] : from;   /* unknown callee: pass each argument as it is */
+    }
+    stack_from = n;
+    for (i = 0; i < n; i++) {
+        if (stack_from == n && regs_used + at[i].words <= 3) {
+            reg_of[i] = regs_used;
+            regs_used += at[i].words;
+        } else {
+            if (stack_from == n) stack_from = i;
+            reg_of[i] = -1;
+        }
     }
 
-    // Load first 3 arguments into registers
-    if (node->call.arg_count >= 3) {
-        codegen_expression(node->call.args[2]);
-        emit("    TAY\n");  // Third arg in Y
+    base_depth = ctx.depth;
+
+    for (i = 0; i < stack_from; i++) {
+        temp_at[i] = -1;
+        if (arg_is_simple(node->call.args[i])) continue;
+        codegen_expr_to(node->call.args[i], at[i]);
+        if (at[i].words == 2) push_ax(); else push_a();
+        temp_at[i] = ctx.depth;
+    }
+    for (i = n - 1; i >= stack_from; i--) {
+        codegen_expr_to(node->call.args[i], at[i]);
+        if (at[i].words == 2) push_ax(); else push_a();
     }
 
-    if (node->call.arg_count >= 2) {
-        codegen_expression(node->call.args[1]);
-        emit("    TAX\n");  // Second arg in X
+    /* load the registers, highest first so the lower ones (A last) are never disturbed */
+    for (i = stack_from - 1; i >= 0; i--) {
+        int r = reg_of[i];
+        if (temp_at[i] < 0) {
+            codegen_expr_to(node->call.args[i], at[i]);      /* leaves the value in A (and X) */
+            if (at[i].words == 1) {
+                if (r == 1) emit("    TAX\n");
+                else if (r == 2) emit("    TAY\n");
+            } else if (r == 1) {
+                emit("    TXY\n    TAX\n");                    /* X:Y = lo:hi */
+            }
+        } else {
+            int lo = ctx.depth - temp_at[i] + 1;
+            if (at[i].words == 1) {
+                emit("    LDA %d,S\n", lo);
+                if (r == 1) emit("    TAX\n");
+                else if (r == 2) emit("    TAY\n");
+            } else if (r == 0) {
+                emit("    LDA %d,S\n    TAX\n    LDA %d,S\n", lo + 2, lo);
+            } else {
+                emit("    LDA %d,S\n    TAY\n    LDA %d,S\n    TAX\n", lo + 2, lo);
+            }
+        }
     }
 
-    if (node->call.arg_count >= 1) {
-        codegen_expression(node->call.args[0]);
-        // First arg already in A
-    }
-
-    // Call function
     emit("    JSR %s\n", node->call.name);
 
-    // Clean up stack if we pushed any arguments
-    if (node->call.arg_count > 3) {
-        int stack_bytes = (node->call.arg_count - 3) * 2;
-        emit("    TSC\n");
-        emit("    CLC\n");
-        emit("    ADC #$%04X\n", stack_bytes);
-        emit("    TCS\n");
-    }
-
-    // Result is in A
+    emit_drop_bytes(ctx.depth - base_depth);       /* temporaries and stack arguments, keeping A and X */
+    ctx.depth = base_depth;
 }
 
 static void codegen_assign(ASTNode* node) {
@@ -667,28 +935,8 @@ static void codegen_assign(ASTNode* node) {
         fprintf(stderr, "Error: Undefined variable '%s'\n", node->assign.var_name);
         return;
     }
-
-    // Generate code for value (result in A)
-    codegen_expression(node->assign.value);
-
-    // Store to variable
-    if (sym->is_param) {
-        if (sym->param_index == 0) {
-            // First parameter - just leave in A
-            // But also need to update stack location if there is one
-        } else if (sym->param_index == 1) {
-            emit("    TAX\n");  // Update X register
-        } else if (sym->param_index == 2) {
-            emit("    TAY\n");  // Update Y register
-        } else {
-            // Stack parameter
-            int offset = 3 + (sym->param_index - 3) * 2;
-            emit("    STA %d,S\n", offset);
-        }
-    } else {
-        // Local variable
-        emit("    STA %d,S\n", sym->offset);
-    }
+    codegen_expr_to(node->assign.value, sym_ctype(sym));
+    store_sym(sym);
 }
 
 static void codegen_array_subscript(ASTNode* node) {
@@ -713,14 +961,14 @@ static void codegen_array_subscript(ASTNode* node) {
 
     // Add base offset
     emit("    CLC\n");
-    emit("    ADC #$%04X\n", sym->offset);  // A = base + (index * 2)
+    emit("    ADC #$%04X\n", SPO(sym->offset));  // A = base + (index * 2)
 
     // Now A contains the offset from SP
     // Calculate effective address: SP + A
-    emit("    STA temp\n");      // Save offset
+    emit("    STA %d,S\n", SPO(SCRATCH0));      // Save offset
     emit("    TSC\n");           // A = SP
     emit("    CLC\n");
-    emit("    ADC temp\n");      // A = SP + offset
+    emit("    ADC %d,S\n", SPO(SCRATCH0));      // A = SP + offset
     emit("    TAX\n");           // X = effective address
 
     // Load from address in X (using absolute indexed by 0)
@@ -730,8 +978,7 @@ static void codegen_array_subscript(ASTNode* node) {
     emit("    TCD\n");           // DP = address
     emit("    LDA $00\n");       // Load from (DP)
 
-    // Restore DP to 0 (or previous value)
-    emit("    PHD\n");           // Will need to restore later - skip for now
+    // (D is left pointing at the element: arrays and pointers still go through the direct page - see docs)
 }
 
 static void codegen_array_assign(ASTNode* node) {
@@ -748,7 +995,7 @@ static void codegen_array_assign(ASTNode* node) {
 
     // Generate code for value (result in A)
     codegen_expression(node->array_assign.value);
-    emit("    PHA\n");  // Save value on stack
+    push_a();  // Save value on stack
 
     // Calculate address: base + (index * 2)
     codegen_expression(node->array_assign.index);
@@ -758,13 +1005,13 @@ static void codegen_array_assign(ASTNode* node) {
 
     // Add base offset
     emit("    CLC\n");
-    emit("    ADC #$%04X\n", sym->offset);  // A = base + (index * 2)
+    emit("    ADC #$%04X\n", SPO(sym->offset));  // A = base + (index * 2)
 
     // Now A contains the offset from SP
     emit("    TAX\n");           // X = offset
 
     // Restore value from stack
-    emit("    PLA\n");           // A = value
+    pop_a();           // A = value
 
     // Store to SP + X
     emit("    STA 0,S,X\n");     // Store to [SP + X]
@@ -781,12 +1028,10 @@ static void codegen_addr_of(ASTNode* node) {
             return;
         }
 
-        // Calculate address: SP + offset
+        // Calculate address: SP + 1 + offset (+ anything pushed)
         emit("    TSC\n");           // A = SP
-        if (sym->offset != 0) {
-            emit("    CLC\n");
-            emit("    ADC #$%04X\n", sym->offset);  // A = SP + offset
-        }
+        emit("    CLC\n");
+        emit("    ADC #$%04X\n", SPO(sym->offset));
         // A now contains the address
     } else if (operand->type == AST_ARRAY_SUBSCRIPT) {
         // Address of array element - similar to array subscript code
@@ -799,11 +1044,11 @@ static void codegen_addr_of(ASTNode* node) {
         codegen_expression(operand->array_subscript.index);
         emit("    ASL A\n");  // A = index * 2
         emit("    CLC\n");
-        emit("    ADC #$%04X\n", sym->offset);
-        emit("    STA temp\n");
+        emit("    ADC #$%04X\n", SPO(sym->offset));
+        emit("    STA %d,S\n", SPO(SCRATCH0));
         emit("    TSC\n");
         emit("    CLC\n");
-        emit("    ADC temp\n");  // A = SP + offset + (index * 2)
+        emit("    ADC %d,S\n", SPO(SCRATCH0));  // A = SP + offset + (index * 2)
     } else if (operand->type == AST_DEREF) {
         // &(*ptr) = ptr, so just evaluate the pointer
         codegen_expression(operand->unop.operand);
@@ -860,7 +1105,7 @@ static void codegen_member_address(ASTNode* node) {
             // Calculate address: SP + var_offset + member_offset
             emit("    TSC\n");
             emit("    CLC\n");
-            emit("    ADC #$%04X\n", sym->offset + member_offset);
+            emit("    ADC #$%04X\n", SPO(sym->offset + member_offset));
         } else {
             fprintf(stderr, "Error: Complex member access not yet supported\n");
         }
@@ -900,7 +1145,7 @@ static void codegen_member_assign(ASTNode* node) {
     codegen_expression(node->member_assign.value);
 
     // Push value onto stack to preserve it
-    emit("    PHA\n");
+    push_a();
 
     // Calculate address of member
     if (node->member_assign.object->type == AST_IDENTIFIER) {
@@ -933,7 +1178,7 @@ static void codegen_member_assign(ASTNode* node) {
         // Calculate address: SP + var_offset + member_offset
         emit("    TSC\n");
         emit("    CLC\n");
-        emit("    ADC #$%04X\n", sym->offset + member_offset);
+        emit("    ADC #$%04X\n", SPO(sym->offset + member_offset));
 
         // Store address in X, then use it via direct page
         emit("    TAX\n");
@@ -941,7 +1186,7 @@ static void codegen_member_assign(ASTNode* node) {
         emit("    TCD\n");
 
         // Pop value and store it
-        emit("    PLA\n");
+        pop_a();
         emit("    STA $00\n");
     } else {
         fprintf(stderr, "Error: Complex member assignment not yet supported\n");
@@ -954,7 +1199,7 @@ static void codegen_ptr_member_assign(ASTNode* node) {
     codegen_expression(node->ptr_member_assign.value);
 
     // Push value onto stack to preserve it
-    emit("    PHA\n");
+    push_a();
 
     // Evaluate pointer to get base address
     codegen_expression(node->ptr_member_assign.pointer);
@@ -968,117 +1213,36 @@ static void codegen_ptr_member_assign(ASTNode* node) {
     emit("    TCD\n");
 
     // Pop value and store it
-    emit("    PLA\n");
+    pop_a();
     emit("    STA $00\n");
 }
 
 static void codegen_inc_dec(ASTNode* node) {
     Symbol* sym = find_symbol(node->inc_dec.var_name);
+    CType t;
+    int inc = (node->type == AST_PRE_INC || node->type == AST_POST_INC);
+    int post = (node->type == AST_POST_INC || node->type == AST_POST_DEC);
     if (!sym) {
         fprintf(stderr, "Error: Undefined variable '%s'\n", node->inc_dec.var_name);
         return;
     }
-
-    switch (node->type) {
-        case AST_PRE_INC:
-            // Increment first, then load value
-            if (sym->is_param && sym->param_index < 3) {
-                // Parameter in register
-                if (sym->param_index == 0) {
-                    emit("    INC A\n");
-                } else if (sym->param_index == 1) {
-                    emit("    INX\n");
-                    emit("    TXA\n");
-                } else if (sym->param_index == 2) {
-                    emit("    INY\n");
-                    emit("    TYA\n");
-                }
-            } else {
-                // Local variable or stack parameter
-                emit("    LDA %d,S\n", sym->offset);
-                emit("    INC A\n");
-                emit("    STA %d,S\n", sym->offset);
-                // Result is already in A
-            }
-            break;
-
-        case AST_POST_INC:
-            // Load value first, then increment
-            if (sym->is_param && sym->param_index < 3) {
-                // Parameter in register
-                if (sym->param_index == 0) {
-                    emit("    PHA\n");           // Save old value
-                    emit("    INC A\n");
-                    emit("    PLA\n");           // Restore old value to A
-                } else if (sym->param_index == 1) {
-                    emit("    TXA\n");
-                    emit("    PHA\n");
-                    emit("    INX\n");
-                    emit("    PLA\n");
-                } else if (sym->param_index == 2) {
-                    emit("    TYA\n");
-                    emit("    PHA\n");
-                    emit("    INY\n");
-                    emit("    PLA\n");
-                }
-            } else {
-                // Local variable or stack parameter
-                emit("    LDA %d,S\n", sym->offset);
-                emit("    PHA\n");              // Save old value
-                emit("    INC A\n");
-                emit("    STA %d,S\n", sym->offset);
-                emit("    PLA\n");              // Restore old value to A
-            }
-            break;
-
-        case AST_PRE_DEC:
-            // Decrement first, then load value
-            if (sym->is_param && sym->param_index < 3) {
-                if (sym->param_index == 0) {
-                    emit("    DEC A\n");
-                } else if (sym->param_index == 1) {
-                    emit("    DEX\n");
-                    emit("    TXA\n");
-                } else if (sym->param_index == 2) {
-                    emit("    DEY\n");
-                    emit("    TYA\n");
-                }
-            } else {
-                emit("    LDA %d,S\n", sym->offset);
-                emit("    DEC A\n");
-                emit("    STA %d,S\n", sym->offset);
-            }
-            break;
-
-        case AST_POST_DEC:
-            // Load value first, then decrement
-            if (sym->is_param && sym->param_index < 3) {
-                if (sym->param_index == 0) {
-                    emit("    PHA\n");
-                    emit("    DEC A\n");
-                    emit("    PLA\n");
-                } else if (sym->param_index == 1) {
-                    emit("    TXA\n");
-                    emit("    PHA\n");
-                    emit("    DEX\n");
-                    emit("    PLA\n");
-                } else if (sym->param_index == 2) {
-                    emit("    TYA\n");
-                    emit("    PHA\n");
-                    emit("    DEY\n");
-                    emit("    PLA\n");
-                }
-            } else {
-                emit("    LDA %d,S\n", sym->offset);
-                emit("    PHA\n");
-                emit("    DEC A\n");
-                emit("    STA %d,S\n", sym->offset);
-                emit("    PLA\n");
-            }
-            break;
-
-        default:
-            break;
+    t = sym_ctype(sym);
+    load_sym(sym);
+    if (t.words == 1) {
+        if (post) emit("    TAY\n");
+        emit(inc ? "    INC A\n" : "    DEC A\n");
+        emit("    STA %d,S\n", SPO(sym->offset));
+        if (post) emit("    TYA\n");
+        return;
+    }
+    if (post) push_ax();
+    if (inc) emit("    CLC\n    ADC #$0001\n    TAY\n    TXA\n    ADC #$0000\n    TAX\n    TYA\n");
+    else     emit("    SEC\n    SBC #$0001\n    TAY\n    TXA\n    SBC #$0000\n    TAX\n    TYA\n");
+    store_sym(sym);
+    if (post) {
+        /* the old value is back on the stack, low word on top */
+        emit("    PLA\n    TAY\n    PLA\n    TAX\n    TYA\n");
+        ctx.depth -= 4;
     }
 }
 
@@ -1157,19 +1321,11 @@ static void codegen_expression(ASTNode* node) {
 
 // Code generation for statements
 static void codegen_return(ASTNode* node) {
-    if (node->ret.value) {
-        codegen_expression(node->ret.value);
-        // Result is in A
-    }
+    if (node->ret.value)
+        codegen_expr_to(node->ret.value, ctype(ctx.ret_words, ctx.ret_uns));
 
-    // Epilogue - deallocate locals
-    if (ctx.stack_offset < 0) {
-        emit("    TSC\n");
-        emit("    CLC\n");
-        emit("    ADC #$%04X\n", -ctx.stack_offset);
-        emit("    TCS\n");
-    }
-
+    /* Epilogue: pop the frame and anything still pushed (a switch value), keeping A and X */
+    emit_drop_bytes(ctx.frame_total + ctx.depth);
     emit("    RTS\n");
 }
 
@@ -1178,7 +1334,7 @@ static void codegen_if(ASTNode* node) {
     int done_label = new_label();
 
     // Evaluate condition
-    codegen_expression(node->if_stmt.condition);
+    codegen_truth(node->if_stmt.condition);
 
     // Branch if false
     emit("    CMP #$0000\n");
@@ -1210,7 +1366,7 @@ static void codegen_while(ASTNode* node) {
     emit(".L%d:\n", loop_label);
 
     // Evaluate condition
-    codegen_expression(node->while_stmt.condition);
+    codegen_truth(node->while_stmt.condition);
 
     // Branch if false
     emit("    CMP #$0000\n");
@@ -1242,7 +1398,7 @@ static void codegen_do_while(ASTNode* node) {
     codegen_statement(node->do_while_stmt.body);
 
     // Evaluate condition
-    codegen_expression(node->do_while_stmt.condition);
+    codegen_truth(node->do_while_stmt.condition);
 
     // Branch back if true (using BEQ + BRA since DEF88186 has no BNE)
     emit("    CMP #$0000\n");
@@ -1370,7 +1526,7 @@ static void codegen_for(ASTNode* node) {
 
     // Condition
     if (node->for_stmt.condition && node->for_stmt.condition->expr_stmt.expr) {
-        codegen_expression(node->for_stmt.condition->expr_stmt.expr);
+        codegen_truth(node->for_stmt.condition->expr_stmt.expr);
         emit("    CMP #$0000\n");
         emit("    BEQ .L%d\n", done_label);
     }
@@ -1402,6 +1558,7 @@ static void codegen_block(ASTNode* node) {
 }
 
 static void codegen_var_decl(ASTNode* node) {
+    Symbol* sym;
     // Add variable to symbol table
     if (node->var_decl.array_dimensions > 0) {
         // Multi-dimensional array
@@ -1416,18 +1573,20 @@ static void codegen_var_decl(ASTNode* node) {
                    node->var_decl.is_array, array_size,
                    node->var_decl.pointer_level, node->var_decl.struct_name);
     }
+    ctx.symbols[ctx.symbol_count - 1].modifiers = node->var_decl.modifiers;
 
     // Initialize if there's an initial value
     if (node->var_decl.init_value) {
-        Symbol* sym = find_symbol(node->var_decl.var_name);
+        sym = find_symbol(node->var_decl.var_name);
         if (!sym) return;
 
         if (node->var_decl.init_value->type == AST_INIT_LIST) {
             // Array initialization: int arr[3] = {1, 2, 3};
             ASTNode* init_list = node->var_decl.init_value;
             int elem_size = (node->var_decl.var_type == TYPE_CHAR) ? 1 : 2;
+            int i;
 
-            for (int i = 0; i < init_list->init_list.value_count; i++) {
+            for (i = 0; i < init_list->init_list.value_count; i++) {
                 // Evaluate the expression for this element
                 codegen_expression(init_list->init_list.values[i]);
 
@@ -1436,36 +1595,37 @@ static void codegen_var_decl(ASTNode* node) {
                 if (node->var_decl.var_type == TYPE_CHAR) {
                     // For char arrays, store byte
                     emit("    SEP #$20        ; 8-bit A\n");
-                    emit("    STA %d,S\n", offset);
+                    emit("    STA %d,S\n", SPO(offset));
                     emit("    REP #$20        ; 16-bit A\n");
                 } else {
                     // For int arrays, store word
-                    emit("    STA %d,S\n", offset);
+                    emit("    STA %d,S\n", SPO(offset));
                 }
             }
         } else if (!node->var_decl.is_array) {
             // Regular variable initialization
-            codegen_expression(node->var_decl.init_value);
-            emit("    STA %d,S\n", sym->offset);
+            codegen_expr_to(node->var_decl.init_value, sym_ctype(sym));
+            store_sym(sym);
         }
     }
 }
 
 static void codegen_switch(ASTNode* node) {
     int end_label = new_label();
-
-    // Push loop context for break statements
-    push_loop(end_label, end_label);
+    int i;
 
     // Evaluate switch expression once and save to stack
-    codegen_expression(node->switch_stmt.expr);
-    emit("    PHA\n");  // Save switch value
+    codegen_expr_to(node->switch_stmt.expr, ctype(1, 0));
+    push_a();
+
+    // break leaves through end_label, which pops the switch value itself; continue belongs to an enclosing loop
+    push_loop(end_label, -1);
 
     // Generate labels for each case
     int* case_labels = malloc(sizeof(int) * node->switch_stmt.case_count);
     int default_label = -1;
 
-    for (int i = 0; i < node->switch_stmt.case_count; i++) {
+    for (i = 0; i < node->switch_stmt.case_count; i++) {
         case_labels[i] = new_label();
         if (node->switch_stmt.cases[i]->type == AST_DEFAULT) {
             default_label = case_labels[i];
@@ -1473,7 +1633,7 @@ static void codegen_switch(ASTNode* node) {
     }
 
     // Generate comparisons for each case
-    for (int i = 0; i < node->switch_stmt.case_count; i++) {
+    for (i = 0; i < node->switch_stmt.case_count; i++) {
         ASTNode* case_node = node->switch_stmt.cases[i];
         if (case_node->type == AST_CASE) {
             emit("    LDA 1,S\n");  // Load switch value from stack
@@ -1490,28 +1650,27 @@ static void codegen_switch(ASTNode* node) {
     }
 
     // Generate code for each case
-    for (int i = 0; i < node->switch_stmt.case_count; i++) {
+    for (i = 0; i < node->switch_stmt.case_count; i++) {
         ASTNode* case_node = node->switch_stmt.cases[i];
+        int j;
         emit(".L%d:\n", case_labels[i]);
 
         if (case_node->type == AST_CASE) {
-            for (int j = 0; j < case_node->case_stmt.stmt_count; j++) {
+            for (j = 0; j < case_node->case_stmt.stmt_count; j++) {
                 codegen_statement(case_node->case_stmt.statements[j]);
             }
         } else if (case_node->type == AST_DEFAULT) {
-            for (int j = 0; j < case_node->default_stmt.stmt_count; j++) {
+            for (j = 0; j < case_node->default_stmt.stmt_count; j++) {
                 codegen_statement(case_node->default_stmt.statements[j]);
             }
         }
     }
 
     emit(".L%d:\n", end_label);
-    emit("    PLA\n");  // Clean up stack (remove switch value)
+    pop_loop();
+    pop_a();                // Clean up stack (remove switch value)
 
     free(case_labels);
-
-    // Pop loop context
-    pop_loop();
 }
 
 static void codegen_expr_stmt(ASTNode* node) {
@@ -1526,14 +1685,24 @@ static void codegen_break(ASTNode* node) {
         fprintf(stderr, "Error: break statement outside of loop\n");
         return;
     }
+    if (ctx.depth > loop->break_depth) {       /* leave a switch value etc. behind: the target expects this depth */
+        emit("    TSC\n    CLC\n    ADC #$%04X\n    TCS\n", ctx.depth - loop->break_depth);
+    }
     emit("    BRA .L%d\n", loop->break_label);
 }
 
 static void codegen_continue(ASTNode* node) {
     LoopContext* loop = current_loop();
-    if (!loop) {
+    int i;
+    /* a switch has no continue of its own: use the innermost real loop's */
+    for (i = ctx.loop_depth - 1; i >= 0 && ctx.loop_stack[i].continue_label < 0; i--) { }
+    if (i < 0) {
         fprintf(stderr, "Error: continue statement outside of loop\n");
         return;
+    }
+    loop = &ctx.loop_stack[i];
+    if (ctx.depth > loop->continue_depth) {
+        emit("    TSC\n    CLC\n    ADC #$%04X\n    TCS\n", ctx.depth - loop->continue_depth);
     }
     emit("    BRA .L%d\n", loop->continue_label);
 }
@@ -1611,38 +1780,39 @@ static void codegen_statement(ASTNode* node) {
     }
 }
 
-// Helper to count local variables in a statement
-static int count_locals(ASTNode* node);
 
-static int count_locals_block(ASTNode* node) {
-    int count = 0;
-    for (int i = 0; i < node->block.stmt_count; i++) {
-        count += count_locals(node->block.statements[i]);
+/* (count_locals_block and the original count_locals live below, rewritten) */
+
+
+
+// Code generation for functions
+/* Words a declaration occupies in the frame (must mirror add_symbol / add_symbol_multidim). */
+static int decl_words(ASTNode* d) {
+    int elem_size = get_type_size(d->var_decl.var_type, d->var_decl.pointer_level, d->var_decl.struct_name);
+    int elems = 1, i;
+    if (d->var_decl.array_dimensions > 0) {
+        for (i = 0; i < d->var_decl.array_dimensions; i++) elems *= d->var_decl.array_sizes[i];
+    } else if (d->var_decl.is_array && d->var_decl.array_sizes) {
+        elems = d->var_decl.array_sizes[0];
     }
-    return count;
+    return elems * ((elem_size + 1) / 2);
 }
 
 static int count_locals(ASTNode* node) {
+    int i, count = 0;
     if (!node) return 0;
 
     switch (node->type) {
         case AST_VAR_DECL:
-            // Arrays count as multiple locals
-            if (node->var_decl.is_array) {
-                return (node->var_decl.array_sizes && node->var_decl.array_dimensions > 0) ?
-                       node->var_decl.array_sizes[0] : 0;
-            }
-            return 1;
-        case AST_VAR_DECL_LIST: {
-            // Count all declarations in the list
-            int count = 0;
-            for (int i = 0; i < node->var_decl_list.decl_count; i++) {
+            return decl_words(node);
+        case AST_VAR_DECL_LIST:
+            for (i = 0; i < node->var_decl_list.decl_count; i++)
                 count += count_locals(node->var_decl_list.declarations[i]);
-            }
             return count;
-        }
         case AST_BLOCK:
-            return count_locals_block(node);
+            for (i = 0; i < node->block.stmt_count; i++)
+                count += count_locals(node->block.statements[i]);
+            return count;
         case AST_IF:
             return count_locals(node->if_stmt.then_stmt) + count_locals(node->if_stmt.else_stmt);
         case AST_WHILE:
@@ -1650,17 +1820,41 @@ static int count_locals(ASTNode* node) {
         case AST_DO_WHILE:
             return count_locals(node->do_while_stmt.body);
         case AST_FOR:
-            return count_locals(node->for_stmt.body);
+            return count_locals(node->for_stmt.init) + count_locals(node->for_stmt.body);
+        case AST_SWITCH:
+            for (i = 0; i < node->switch_stmt.case_count; i++) {
+                ASTNode* c = node->switch_stmt.cases[i];
+                int j;
+                if (c->type == AST_CASE)
+                    for (j = 0; j < c->case_stmt.stmt_count; j++) count += count_locals(c->case_stmt.statements[j]);
+                else if (c->type == AST_DEFAULT)
+                    for (j = 0; j < c->default_stmt.stmt_count; j++) count += count_locals(c->default_stmt.statements[j]);
+            }
+            return count;
+        case AST_LABEL:
+            return count_locals(node->label_stmt.statement);
         default:
             return 0;
     }
 }
 
-// Code generation for functions
+static int param_words(ASTNode* p) {
+    return type_ctype(p->param.param_type, p->param.modifiers, p->param.pointer_level).words;
+}
+
 static void codegen_function(ASTNode* node) {
+    int nparams = node->func_decl.param_count;
+    int reg_of[MAX_PARAMS];
+    int nregs = 0, stack_from, i, locals_bytes, below, stack_words = 0;
+    CType rt;
+
     ctx.current_function = node->func_decl.func_name;
     ctx.stack_offset = 0;
+    ctx.depth = 0;
     local_var_index = 0;
+    rt = type_ctype(node->func_decl.return_type, node->func_decl.return_modifiers, 0);
+    ctx.ret_words = rt.words;
+    ctx.ret_uns = rt.uns;
 
     emit("\n; Function: %s\n", node->func_decl.func_name);
     emit("%s:\n", node->func_decl.func_name);
@@ -1668,37 +1862,58 @@ static void codegen_function(ASTNode* node) {
     // Set to 16-bit mode
     emit("    REP #$30        ; 16-bit A, X, Y\n");
 
-    // Add parameters to symbol table
-    for (int i = 0; i < node->func_decl.param_count; i++) {
-        ASTNode* param = node->func_decl.params[i];
-        add_symbol(param->param.param_name, param->param.param_type, 1, i, 0, 0,
-                   param->param.pointer_level, param->param.struct_name);
+    if (nparams > MAX_PARAMS) nparams = MAX_PARAMS;
+
+    /* where each parameter arrives: register words (A, X, Y) first, a 32-bit one taking two; once one does not
+     * fit, it and everything after it is on the stack */
+    stack_from = nparams;
+    for (i = 0; i < nparams; i++) {
+        int w = param_words(node->func_decl.params[i]);
+        if (stack_from == nparams && nregs + w <= 3) {
+            reg_of[i] = nregs;
+            nregs += w;
+        } else {
+            if (stack_from == nparams) stack_from = i;
+            reg_of[i] = -1;
+        }
     }
 
-    // Count local variables to allocate stack space
-    int num_locals = count_locals(node->func_decl.body);
+    locals_bytes = count_locals(node->func_decl.body) * 2;
+    ctx.scratch = locals_bytes;
+    below = locals_bytes + 6;                 /* locals + three scratch words */
+    ctx.frame_total = below + nregs * 2;
 
-    // Allocate stack space for locals if needed
-    if (num_locals > 0) {
-        int stack_size = num_locals * 2;  // 2 bytes per variable
-        emit("    TSC\n");
-        emit("    SEC\n");
-        emit("    SBC #$%04X\n", stack_size);
-        emit("    TCS\n");
-        ctx.stack_offset = -stack_size;
+    /* Spill the register arguments first (PHY/PHX/PHA): TSC/SBC/TCS below would destroy A */
+    if (nregs >= 3) emit("    PHY\n");
+    if (nregs >= 2) emit("    PHX\n");
+    if (nregs >= 1) emit("    PHA\n");
+    emit("    TSC\n");
+    emit("    SEC\n");
+    emit("    SBC #$%04X\n", below);
+    emit("    TCS\n");
+
+    // Add parameters to symbol table
+    for (i = 0; i < nparams; i++) {
+        ASTNode* param = node->func_decl.params[i];
+        Symbol* sym;
+        add_symbol(param->param.param_name, param->param.param_type, 1, i, 0, 0,
+                   param->param.pointer_level, param->param.struct_name);
+        sym = &ctx.symbols[ctx.symbol_count - 1];
+        sym->modifiers = param->param.modifiers;
+        if (reg_of[i] >= 0) {
+            sym->offset = below + reg_of[i] * 2;
+        } else {
+            sym->offset = ctx.frame_total + 2 + stack_words * 2;    /* above the 2-byte return address */
+            stack_words += param_words(param);
+        }
     }
 
     // Generate code for function body
     codegen_statement(node->func_decl.body);
 
     // Add default return if needed
-    if (num_locals > 0) {
-        emit("    ; Epilogue\n");
-        emit("    TSC\n");
-        emit("    CLC\n");
-        emit("    ADC #$%04X\n", num_locals * 2);
-        emit("    TCS\n");
-    }
+    emit("    ; Epilogue\n");
+    emit_drop_bytes(ctx.frame_total);
     emit("    RTS\n");
 
     // Clear symbols for next function
@@ -1806,6 +2021,11 @@ void codegen_program(ASTNode* node, FILE* output) {
             emit("\n");
         }
     }
+
+    // Register every function's signature (calls convert their arguments to the parameter types)
+    func_count = 0;
+    for (int i = 0; i < node->program.decl_count; i++)
+        if (node->program.decls[i]->type == AST_FUNC_DECL) register_func(node->program.decls[i]);
 
     // Second pass: generate code for functions and variables
     for (int i = 0; i < node->program.decl_count; i++) {

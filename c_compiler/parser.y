@@ -17,6 +17,12 @@ ASTNode* ast_root = NULL;
 // Global variables for passing type info to declarators
 static DataType current_decl_type;
 static char* current_decl_struct_name;
+static TypeModifier current_decl_mods;   /* signed/unsigned of the declaration being parsed (set once per declaration) */
+
+/* type_specifier's value is the DataType, with the signed/unsigned modifier packed into the bits above it. */
+#define TS_PACK(t, m)  ((DataType)((int)(t) | ((int)(m) << 8)))
+#define TS_TYPE(v)     ((DataType)((int)(v) & 0xFF))
+#define TS_MODS(v)     ((TypeModifier)(((int)(v) >> 8) & 0xFF))
 
 // Global variables for enum enumerators
 static char** enum_names_temp;
@@ -158,7 +164,8 @@ base_type_specifier:
 /* Combined type specifier (allows modifiers + qualifiers + base type) */
 type_specifier:
     base_type_specifier { $$ = $1; }
-    | type_modifier base_type_specifier { $$ = $2; /* modifier handled separately */ }
+    | type_modifier base_type_specifier { $$ = TS_PACK($2, $1); }
+    | type_modifier { $$ = TS_PACK(TYPE_INT, $1); current_decl_struct_name = NULL; }   /* bare "unsigned" */
     ;
 
 struct_or_union_specifier:
@@ -201,7 +208,7 @@ enum_declaration:
 typedef_declaration:
     TYPEDEF type_specifier pointer IDENTIFIER ';' {
         // Simple typedef: typedef int myint; or typedef int* intptr;
-        $$ = ast_create_typedef($2, $4, $3, NULL, 0);
+        $$ = ast_create_typedef(TS_TYPE($2), $4, $3, NULL, 0);
         free($4);
     }
     | TYPEDEF type_specifier pointer IDENTIFIER array_sizes ';' {
@@ -211,23 +218,25 @@ typedef_declaration:
             sizes[i] = ((int*)$5.items)[i];
         }
         free($5.items);
-        $$ = ast_create_typedef($2, $4, $3, sizes, $5.count);
+        $$ = ast_create_typedef(TS_TYPE($2), $4, $3, sizes, $5.count);
         free($4);
     }
     ;
 
 struct_member_list:
     type_specifier pointer IDENTIFIER ';' {
-        char* struct_name = ($1 == TYPE_STRUCT) ? yylval.string : NULL;
+        char* struct_name = (TS_TYPE($1) == TYPE_STRUCT) ? yylval.string : NULL;
         $$.items = malloc(sizeof(ASTNode*));
-        $$.items[0] = ast_create_var_decl($1, $3, NULL, 0, 0, $2, struct_name);
+        $$.items[0] = ast_create_var_decl(TS_TYPE($1), $3, NULL, 0, 0, $2, struct_name);
+        $$.items[0]->var_decl.modifiers = TS_MODS($1);
         $$.count = 1;
         free($3);
     }
     | struct_member_list type_specifier pointer IDENTIFIER ';' {
-        char* struct_name = ($2 == TYPE_STRUCT) ? yylval.string : NULL;
+        char* struct_name = (TS_TYPE($2) == TYPE_STRUCT) ? yylval.string : NULL;
         $$.items = realloc($1.items, sizeof(ASTNode*) * ($1.count + 1));
-        $$.items[$1.count] = ast_create_var_decl($2, $4, NULL, 0, 0, $3, struct_name);
+        $$.items[$1.count] = ast_create_var_decl(TS_TYPE($2), $4, NULL, 0, 0, $3, struct_name);
+        $$.items[$1.count]->var_decl.modifiers = TS_MODS($2);
         $$.count = $1.count + 1;
         free($4);
     }
@@ -296,7 +305,8 @@ array_sizes:
 
 variable_declaration:
     type_specifier {
-        current_decl_type = $1;
+        current_decl_type = TS_TYPE($1);
+        current_decl_mods = TS_MODS($1);
         // current_decl_struct_name is already set by type_specifier
       } declarator_list ';' {
         // $3 is declarator_list (shifted due to mid-rule action)
@@ -344,47 +354,55 @@ initializer_list:
 declarator:
     pointer IDENTIFIER {
         $$ = ast_create_var_decl(current_decl_type, $2, NULL, 0, 0, $1, current_decl_struct_name);
+        $$->var_decl.modifiers = current_decl_mods;
         free($2);
     }
     | pointer IDENTIFIER '=' expression {
         $$ = ast_create_var_decl(current_decl_type, $2, $4, 0, 0, $1, current_decl_struct_name);
+        $$->var_decl.modifiers = current_decl_mods;
         free($2);
     }
     | pointer IDENTIFIER array_sizes {
         $$ = ast_create_var_decl_multidim(current_decl_type, $2, NULL, (int*)$3.items, $3.count, $1, current_decl_struct_name);
+        $$->var_decl.modifiers = current_decl_mods;
         free($2);
     }
     | pointer IDENTIFIER array_sizes '=' '{' initializer_list '}' {
         // Array initialization: int arr[3] = {1, 2, 3};
         ASTNode* init_list = ast_create_init_list($6.items, $6.count);
         $$ = ast_create_var_decl_multidim(current_decl_type, $2, init_list, (int*)$3.items, $3.count, $1, current_decl_struct_name);
+        $$->var_decl.modifiers = current_decl_mods;
         free($2);
     }
     ;
 
 function_declaration:
     type_specifier IDENTIFIER '(' ')' compound_statement {
-        $$ = ast_create_func_decl($1, $2, NULL, 0, $5);
+        $$ = ast_create_func_decl(TS_TYPE($1), $2, NULL, 0, $5);
+        $$->func_decl.return_modifiers = TS_MODS($1);
         free($2);
     }
     | type_specifier IDENTIFIER '(' parameter_list ')' compound_statement {
-        $$ = ast_create_func_decl($1, $2, $4.items, $4.count, $6);
+        $$ = ast_create_func_decl(TS_TYPE($1), $2, $4.items, $4.count, $6);
+        $$->func_decl.return_modifiers = TS_MODS($1);
         free($2);
     }
     ;
 
 parameter_list:
     type_specifier pointer IDENTIFIER {
-        char* struct_name = ($1 == TYPE_STRUCT) ? yylval.string : NULL;
+        char* struct_name = (TS_TYPE($1) == TYPE_STRUCT) ? yylval.string : NULL;
         $$.items = malloc(sizeof(ASTNode*));
-        $$.items[0] = ast_create_param($1, $3, $2, struct_name);
+        $$.items[0] = ast_create_param(TS_TYPE($1), $3, $2, struct_name);
+        $$.items[0]->param.modifiers = TS_MODS($1);
         $$.count = 1;
         free($3);
     }
     | parameter_list ',' type_specifier pointer IDENTIFIER {
-        char* struct_name = ($3 == TYPE_STRUCT) ? yylval.string : NULL;
+        char* struct_name = (TS_TYPE($3) == TYPE_STRUCT) ? yylval.string : NULL;
         $$.items = realloc($1.items, sizeof(ASTNode*) * ($1.count + 1));
-        $$.items[$1.count] = ast_create_param($3, $5, $4, struct_name);
+        $$.items[$1.count] = ast_create_param(TS_TYPE($3), $5, $4, struct_name);
+        $$.items[$1.count]->param.modifiers = TS_MODS($3);
         $$.count = $1.count + 1;
         free($5);
     }
@@ -763,12 +781,13 @@ unary_expression:
         free($2);
     }
     | '(' type_specifier pointer ')' unary_expression {
-        char* type_name = ($2 == TYPE_STRUCT) ? yylval.string : NULL;
-        $$ = ast_create_cast($2, type_name, $3, $5);
+        char* type_name = (TS_TYPE($2) == TYPE_STRUCT) ? yylval.string : NULL;
+        $$ = ast_create_cast(TS_TYPE($2), type_name, $3, $5);
+        $$->mods = TS_MODS($2);
     }
     | SIZEOF '(' type_specifier pointer ')' {
-        char* type_name = ($3 == TYPE_STRUCT) ? yylval.string : NULL;
-        $$ = ast_create_sizeof_type($3, type_name, $4);
+        char* type_name = (TS_TYPE($3) == TYPE_STRUCT) ? yylval.string : NULL;
+        $$ = ast_create_sizeof_type(TS_TYPE($3), type_name, $4);
     }
     | SIZEOF '(' unary_expression ')' {
         $$ = ast_create_sizeof_expr($3);

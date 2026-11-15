@@ -33,12 +33,15 @@ typedef struct {
     int array_dimensions; /* Number of dimensions (0 = not array, 1 = arr[N], 2 = arr[N][M]) */
     int pointer_level; /* 0 = not a pointer, 1 = *, 2 = **, etc. */
     char* struct_name; /* For struct types */
+    TypeModifier modifiers; /* signed/unsigned */
 } Symbol;
 
 /* Loop context for break/continue */
 typedef struct {
     int break_label;
     int continue_label;
+    int break_depth;     /* ctx.depth a break must unwind to (the target may pop one more word itself) */
+    int continue_depth;
 } LoopContext;
 
 /* Code generator context */
@@ -57,6 +60,11 @@ typedef struct {
     LoopContext* loop_stack;
     int loop_depth;
     int loop_capacity;
+    int depth;            /* bytes pushed on top of the frame while evaluating an expression */
+    int scratch;          /* frame offset of the three scratch words */
+    int frame_total;      /* bytes between S+1 and the return address */
+    int ret_words;        /* return type of the function being generated */
+    int ret_uns;
 } CodegenContext;
 
 /* Code generation functions */

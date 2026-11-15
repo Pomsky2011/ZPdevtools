@@ -132,6 +132,7 @@ struct ASTNode;
 typedef struct ASTNode {
     ASTNodeType type;
     DataType data_type;
+    TypeModifier mods;        /* signed/unsigned of a cast's target type */
 
     union {
         /* Literals */

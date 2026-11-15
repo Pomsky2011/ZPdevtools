@@ -6,6 +6,7 @@ static ASTNode* ast_create_node(ASTNodeType type) {
     ASTNode* node = (ASTNode*)malloc(sizeof(ASTNode));
     node->type = type;
     node->data_type = TYPE_VOID;
+    node->mods = MOD_NONE;
     return node;
 }
 
