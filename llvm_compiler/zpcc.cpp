@@ -82,7 +82,8 @@ struct FnLower {
   int frameSize = 0;                   // total frame bytes (word aligned)
   int labelCounter = 0;
   int spDelta = 0;                     // extra bytes currently pushed (call setup)
-  int nRegArgs = 0;                    // register arguments pushed by the prologue (PHY/PHX/PHA)
+  int nRegArgs = 0;                    // register words pushed by the prologue (PHY/PHX/PHA); a long is two
+  std::vector<int> argReg;             // first register word of each argument, or -1 when it is on the stack
   int extraSize = 0;                   // frame bytes the prologue allocates below those pushes
   int scratch0 = 0, scratch1 = 0, scratch2 = 0;   // frame slots standing in for memory temporaries
   int saveD = 0;                       // frame slot holding D across a load/store through a pointer
@@ -96,8 +97,18 @@ struct FnLower {
 
   static int roundWord(int n) { return (n + 1) & ~1; }
 
-  // Byte size of a value when materialized in a 16-bit slot.
-  int valueWords() const { return 2; }
+  // Words a value of this type occupies: everything up to 16 bits (and pointers) is one, i32 is two (A = low, X =
+  // high in registers, low word first in memory). Wider integers are not supported - say so instead of truncating.
+  int wordsOf(Type *T) {
+    if (auto *IT = dyn_cast<IntegerType>(T)) {
+      unsigned bw = IT->getBitWidth();
+      if (bw <= 16) return 1;
+      if (bw <= 32) return 2;
+      backendError("integer wider than 32 bits (i" + std::to_string(bw) + ") in " + fnName);
+    }
+    return 1;
+  }
+  int wordsOf(const Value *V) { return wordsOf(V->getType()); }
 
   // The frame is [S+1 .. S+frameSize] once the prologue has run (S points at the next free byte, so the top of the
   // stack is S+1, not S+0), lowest address first:  extra area (allocas, temporaries, copies of stack arguments),
@@ -113,10 +124,20 @@ struct FnLower {
     scratch1 = off; off += 2;
     scratch2 = off; off += 2;
     saveD = off;    off += 2;
+    // Register assignment: a 32-bit argument takes two of A, X, Y; once one does not fit, it and every later
+    // argument is on the stack. Stack arguments are copied into the frame by the prologue.
+    nRegArgs = 0;
+    bool onStack = false;
+    argReg.assign(F.arg_size(), -1);
     for (Argument &A : F.args()) {
-      if (A.getArgNo() >= 3) {   // stack arguments are copied into the frame by the prologue
+      int w = wordsOf(&A);
+      if (!onStack && nRegArgs + w <= 3) {
+        argReg[A.getArgNo()] = nRegArgs;
+        nRegArgs += w;
+      } else {
+        onStack = true;
         slot[&A] = off;
-        off += 2;
+        off += 2 * w;
       }
     }
     for (BasicBlock &BB : F) {
@@ -134,15 +155,14 @@ struct FnLower {
         }
         if (!I.getType()->isVoidTy()) {
           slot[&I] = off;
-          off += 2;
+          off += 2 * wordsOf(&I);
         }
       }
     }
     extraSize = roundWord(off);
-    nRegArgs = F.arg_size() < 3 ? (int)F.arg_size() : 3;
     for (Argument &A : F.args())
-      if (A.getArgNo() < 3)
-        slot[&A] = extraSize + 2 * (int)A.getArgNo();
+      if (argReg[A.getArgNo()] >= 0)
+        slot[&A] = extraSize + 2 * argReg[A.getArgNo()];
     frameSize = extraSize + 2 * nRegArgs;
   }
 
@@ -158,6 +178,8 @@ struct FnLower {
     V = V->stripPointerCastsSameRepresentation();
     if (auto *CI = dyn_cast<ConstantInt>(V)) {
       emit("    LDA #$%04X\n", (unsigned)(CI->getZExtValue() & 0xFFFF));
+      if (wordsOf(V) == 2)
+        emit("    LDX #$%04X\n", (unsigned)((CI->getZExtValue() >> 16) & 0xFFFF));
       return;
     }
     if (isa<ConstantPointerNull>(V)) {
@@ -200,6 +222,10 @@ struct FnLower {
       return;
     }
     if (hasSlot(V)) {
+      if (wordsOf(V) == 2) {
+        emit("    LDA %d,S\n", sp(slotOf(V)) + 2);
+        emit("    TAX\n");
+      }
       emit("    LDA %d,S\n", sp(slotOf(V)));
       return;
     }
@@ -212,6 +238,10 @@ struct FnLower {
     if (I->getType()->isVoidTy())
       return;
     emit("    STA %d,S\n", sp(slotOf(I)));
+    if (wordsOf(I) == 2) {
+      emit("    TXA\n");
+      emit("    STA %d,S\n", sp(slotOf(I)) + 2);
+    }
   }
 
   // Compute the effective address of a pointer operand into A.
@@ -235,7 +265,12 @@ struct FnLower {
 
   void lowerLoad(LoadInst *LI) {
     Value *Ptr = LI->getPointerOperand();
+    const bool wide = wordsOf(LI) == 2;
     if (auto *AI = dyn_cast<AllocaInst>(Ptr->stripPointerCasts())) {
+      if (wide) {
+        emit("    LDA %d,S\n", sp(slotOf(AI)) + 2);
+        emit("    TAX\n");
+      }
       emit("    LDA %d,S\n", sp(slotOf(AI)));
     } else {
       // Direct page is the only register-indirect mode, so D is borrowed as the pointer and put back after.
@@ -243,10 +278,18 @@ struct FnLower {
       emit("    STA %d,S\n", sp(saveD));
       addressToA(Ptr);
       emit("    TCD          ; DP = pointer\n");
+      if (wide) {
+        emit("    LDA $02\n");
+        emit("    STA %d,S\n", sp(scratch1));
+      }
       emit("    LDA $00      ; load through pointer\n");
       emit("    TAY\n");
       emit("    LDA %d,S\n", sp(saveD));
       emit("    TCD          ; restore D\n");
+      if (wide) {
+        emit("    LDA %d,S\n", sp(scratch1));
+        emit("    TAX\n");
+      }
       emit("    TYA\n");
     }
     storeAToResult(LI);
@@ -255,16 +298,29 @@ struct FnLower {
   void lowerStore(StoreInst *SI) {
     Value *Val = SI->getValueOperand();
     Value *Ptr = SI->getPointerOperand();
+    const bool wide = wordsOf(Val) == 2;
     if (auto *AI = dyn_cast<AllocaInst>(Ptr->stripPointerCasts())) {
       loadToA(Val);
       emit("    STA %d,S\n", sp(slotOf(AI)));
+      if (wide) {
+        emit("    TXA\n");
+        emit("    STA %d,S\n", sp(slotOf(AI)) + 2);
+      }
     } else {
       loadToA(Val);
       emit("    STA %d,S\n", sp(scratch0));
+      if (wide) {
+        emit("    TXA\n");
+        emit("    STA %d,S\n", sp(scratch1));
+      }
       emit("    TDC\n");
       emit("    STA %d,S\n", sp(saveD));
       addressToA(Ptr);
       emit("    TCD          ; DP = pointer\n");
+      if (wide) {
+        emit("    LDA %d,S\n", sp(scratch1));
+        emit("    STA $02\n");
+      }
       emit("    LDA %d,S\n", sp(scratch0));
       emit("    STA $00      ; store through pointer\n");
       emit("    LDA %d,S\n", sp(saveD));
@@ -291,7 +347,42 @@ struct FnLower {
     return buf;
   }
 
+  // 32-bit operators are runtime calls (lib/zp_long.asm): left operand in $80:2C00, right in $80:2C04, result in
+  // A:X. A shift count is the low word of the right operand.
+  void lowerBinary32(BinaryOperator *BO) {
+    const char *helper = nullptr;
+    switch (BO->getOpcode()) {
+    case Instruction::Add:  helper = "__zp_ladd"; break;
+    case Instruction::Sub:  helper = "__zp_lsub"; break;
+    case Instruction::Mul:  helper = "__zp_lmul"; break;
+    case Instruction::And:  helper = "__zp_land"; break;
+    case Instruction::Or:   helper = "__zp_lor"; break;
+    case Instruction::Xor:  helper = "__zp_lxor"; break;
+    case Instruction::UDiv: helper = "__zp_ludiv"; break;
+    case Instruction::SDiv: helper = "__zp_lsdiv"; break;
+    case Instruction::URem: helper = "__zp_lumod"; break;
+    case Instruction::SRem: helper = "__zp_lsmod"; break;
+    case Instruction::Shl:  helper = "__zp_lshl"; break;
+    case Instruction::LShr: helper = "__zp_llsr"; break;
+    case Instruction::AShr: helper = "__zp_lasr"; break;
+    default:
+      backendError("unsupported 32-bit binary op in " + fnName);
+      return;
+    }
+    loadToA(BO->getOperand(1));
+    emit("    STA $802C04\n");
+    emit("    TXA\n");
+    emit("    STA $802C06\n");
+    loadToA(BO->getOperand(0));
+    emit("    STA $802C00\n");
+    emit("    TXA\n");
+    emit("    STA $802C02\n");
+    emit("    JSR %s\n", helper);
+    storeAToResult(BO);
+  }
+
   void lowerBinary(BinaryOperator *BO) {
+    if (wordsOf(BO) == 2) { lowerBinary32(BO); return; }
     unsigned op = BO->getOpcode();
     Value *lhs = BO->getOperand(0), *rhs = BO->getOperand(1);
     switch (op) {
@@ -418,7 +509,45 @@ struct FnLower {
   //
   // Unsigned relations come straight from CMP's carry (C = lhs >= rhs). Signed ones need the overflow flag, which
   // CMP does not set but SBC does: after SEC/SBC, lhs < rhs exactly when N != V.
+  // 32-bit compare: the helper leaves -1 / 0 / +1 in A, then the relation is read off that.
+  void lowerICmp32(ICmpInst *CI) {
+    loadToA(CI->getOperand(1));
+    emit("    STA $802C04\n");
+    emit("    TXA\n");
+    emit("    STA $802C06\n");
+    loadToA(CI->getOperand(0));
+    emit("    STA $802C00\n");
+    emit("    TXA\n");
+    emit("    STA $802C02\n");
+    emit("    JSR %s\n", CI->isSigned() ? "__zp_lcmps" : "__zp_lcmpu");
+    emit("    CMP #$0000\n");
+    int trueL = newLabel(), falseL = newLabel(), doneL = newLabel();
+    switch (CI->getPredicate()) {
+    case CmpInst::ICMP_EQ:  bra("BEQ", trueL); bra("BRA", falseL); break;
+    case CmpInst::ICMP_NE:  bra("BEQ", falseL); bra("BRA", trueL); break;
+    case CmpInst::ICMP_ULT:
+    case CmpInst::ICMP_SLT: bra("BMI", trueL); bra("BRA", falseL); break;
+    case CmpInst::ICMP_ULE:
+    case CmpInst::ICMP_SLE: bra("BMI", trueL); bra("BEQ", trueL); bra("BRA", falseL); break;
+    case CmpInst::ICMP_UGT:
+    case CmpInst::ICMP_SGT: bra("BMI", falseL); bra("BEQ", falseL); bra("BRA", trueL); break;
+    case CmpInst::ICMP_UGE:
+    case CmpInst::ICMP_SGE: bra("BMI", falseL); bra("BRA", trueL); break;
+    default:
+      backendError("unsupported icmp predicate in " + fnName);
+      return;
+    }
+    deflabel(trueL);
+    emit("    LDA #$0001\n");
+    bra("BRA", doneL);
+    deflabel(falseL);
+    emit("    LDA #$0000\n");
+    deflabel(doneL);
+    storeAToResult(CI);
+  }
+
   void lowerICmp(ICmpInst *CI) {
+    if (wordsOf(CI->getOperand(0)) == 2) { lowerICmp32(CI); return; }
     Value *lhs = CI->getOperand(0), *rhs = CI->getOperand(1);
     const CmpInst::Predicate pr = CI->getPredicate();
     const bool sgn = CI->isSigned();
@@ -509,7 +638,8 @@ struct FnLower {
 
   void lowerCast(Instruction *I) {
     Value *src = I->getOperand(0);
-    loadToA(src);
+    loadToA(src);                 // A (and X for a 32-bit source)
+    const int sw = wordsOf(src), dw = wordsOf(I);
     if (auto *TR = dyn_cast<TruncInst>(I)) {
       unsigned bits = TR->getDestTy()->getIntegerBitWidth();
       if (bits <= 8)
@@ -523,13 +653,25 @@ struct FnLower {
         emit("    ORA #$FF00   ; sign-extend i8\n");
         emit(".L%s_%d:\n", fnName.c_str(), pos);
       }
+      if (dw == 2 && sw == 1) {   // X = the sign of A
+        int pos = newLabel(), done = newLabel();
+        emit("    CMP #$0000\n");
+        emit("    BPL .L%s_%d\n", fnName.c_str(), pos);
+        emit("    LDX #$FFFF\n");
+        emit("    BRA .L%s_%d\n", fnName.c_str(), done);
+        emit(".L%s_%d:\n", fnName.c_str(), pos);
+        emit("    LDX #$0000\n");
+        emit(".L%s_%d:\n", fnName.c_str(), done);
+      }
     } else if (auto *ZX = dyn_cast<ZExtInst>(I)) {
       if (ZX->getSrcTy()->getIntegerBitWidth() <= 8)
         emit("    AND #$00FF   ; zero-extend from i8\n");
-      else if (ZX->getSrcTy()->getIntegerBitWidth() == 1)
-        emit("    AND #$0001   ; zero-extend from i1\n");
+      if (dw == 2 && sw == 1)
+        emit("    LDX #$0000\n");
+    } else if (dw == 2 && sw == 1) {
+      emit("    LDX #$0000\n");   // ptrtoint to a 32-bit integer: pointers are one word
     }
-    // bitcast / ptrtoint / inttoptr: value already correct.
+    // bitcast / inttoptr: nothing else to do (a 32-bit source's low word is already in A).
     storeAToResult(I);
   }
 
@@ -558,6 +700,10 @@ struct FnLower {
       Value *in = phi.getIncomingValueForBlock(pred);
       loadToA(in);
       emit("    STA %d,S     ; phi\n", sp(slotOf(&phi)));
+      if (wordsOf(&phi) == 2) {
+        emit("    TXA\n");
+        emit("    STA %d,S\n", sp(slotOf(&phi)) + 2);
+      }
     }
   }
 
@@ -617,7 +763,21 @@ struct FnLower {
   void lowerCall(CallInst *CI) {
     Function *callee = CI->getCalledFunction();
     unsigned n = CI->arg_size();
-    unsigned nStack = n > 3 ? n - 3 : 0;
+
+    // Where each argument goes: register words (A, X, Y; a 32-bit one takes two) until one does not fit, then
+    // everything from that argument on is pushed, right to left.
+    std::vector<int> reg(n, -1);
+    int regsUsed = 0;
+    unsigned stackFrom = n;
+    for (unsigned i = 0; i < n; ++i) {
+      int w = wordsOf(CI->getArgOperand(i));
+      if (stackFrom == n && regsUsed + w <= 3) {
+        reg[i] = regsUsed;
+        regsUsed += w;
+      } else {
+        if (stackFrom == n) stackFrom = i;
+      }
+    }
 
     // Indirect calls: the only hardware indirect-call opcode is
     // JSR (addr,X), which reads its 2-byte target from addr+X. X is also
@@ -625,10 +785,10 @@ struct FnLower {
     // arg0 (A) - a nonzero arg1 in X at the JSR would corrupt the target
     // address lookup (it isn't restored afterward; the callee ends up with
     // X=0 as arg1 too, and the jump itself goes to the wrong place).
-    if (!callee && n > 1) {
+    if (!callee && (n > 1 || regsUsed > 1)) {
       backendError("indirect call in " + fnName + " takes " +
                    std::to_string(n) +
-                   " arguments; only 0 or 1 is supported through a function "
+                   " arguments; only 0 or 1 (one word) is supported through a function "
                    "pointer (X is both the arg1 register and the "
                    "JSR (addr,X) index register)");
       return;
@@ -641,18 +801,32 @@ struct FnLower {
       emit("    STA icall_target\n");
     }
 
-    // Push stack args (indices >= 3) right-to-left.  spDelta tracks the
+    // Push stack args right-to-left (a 32-bit one low word on top).  spDelta tracks the
     // shifting stack pointer so off,S operands stay correct.
     spDelta = 0;
-    for (unsigned i = n; i > 3; --i) {
-      loadToA(CI->getArgOperand(i - 1));
+    for (unsigned i = n; i > stackFrom; --i) {
+      Value *a = CI->getArgOperand(i - 1);
+      loadToA(a);
+      if (wordsOf(a) == 2) {
+        emit("    PHX\n");
+        spDelta += 2;
+      }
       emit("    PHA\n");
       spDelta += 2;
     }
-    // Register args, loaded last so A holds arg0 at the JSR.
-    if (n >= 3) { loadToA(CI->getArgOperand(2)); emit("    TAY\n"); }
-    if (n >= 2) { loadToA(CI->getArgOperand(1)); emit("    TAX\n"); }
-    if (n >= 1) { loadToA(CI->getArgOperand(0)); }
+    // Register args, highest register first so A (loaded last) is never disturbed; operands are values
+    // already in slots, so loading one cannot clobber another.
+    for (int i = (int)stackFrom - 1; i >= 0; --i) {
+      Value *a = CI->getArgOperand(i);
+      loadToA(a);
+      if (wordsOf(a) == 1) {
+        if (reg[i] == 1) emit("    TAX\n");
+        else if (reg[i] == 2) emit("    TAY\n");
+      } else if (reg[i] == 1) {
+        emit("    TXY\n");      // X:Y = low:high
+        emit("    TAX\n");
+      }
+    }
 
     if (callee) {
       emit("    JSR %s\n", callee->getName().str().c_str());
@@ -661,11 +835,12 @@ struct FnLower {
       emit("    JSR (icall_target,X)\n");
     }
 
+    const int pushed = spDelta;
     spDelta = 0;
-    if (nStack)
-      emitPopBytes((int)nStack * 2);   // keeps the result in A
+    if (pushed)
+      emitPopBytes(pushed);   // keeps the result in A (and X)
     if (!CI->getType()->isVoidTy())
-      emit("    STA %d,S\n", sp(slotOf(CI)));
+      storeAToResult(CI);
   }
 
   void lowerInstruction(Instruction *I) {
@@ -730,12 +905,16 @@ struct FnLower {
       emit("    SBC #$%04X\n", extraSize & 0xFFFF);
       emit("    TCS\n");
     }
-    // Copy stack arguments (5th onward) into frame slots: [S+frameSize+1..2] is the return address, so the first
-    // stack argument is at S+frameSize+3.
+    // Copy stack arguments into frame slots: [S+frameSize+1..2] is the return address, so the first stack
+    // argument is at S+frameSize+3, the next after it, and a 32-bit one takes two words.
+    int stackOff = 0;
     for (Argument &A : F.args()) {
-      if (A.getArgNo() < 3) continue;
-      emit("    LDA %d,S     ; arg%u (stack)\n", frameSize + 3 + (int)(A.getArgNo() - 3) * 2, A.getArgNo());
-      emit("    STA %d,S\n", sp(slotOf(&A)));
+      if (argReg[A.getArgNo()] >= 0) continue;
+      for (int w = 0; w < wordsOf(&A); ++w) {
+        emit("    LDA %d,S     ; arg%u (stack)\n", frameSize + 3 + stackOff, A.getArgNo());
+        emit("    STA %d,S\n", sp(slotOf(&A)) + 2 * w);
+        stackOff += 2;
+      }
     }
 
     for (BasicBlock &BB : F) {
@@ -777,10 +956,14 @@ static void emitGlobal(GlobalVariable &GV, const DataLayout &DL) {
     }
   }
   if (auto *ci = dyn_cast<ConstantInt>(init)) {
-    if (DL.getTypeAllocSize(ty).getFixedValue() == 1)
+    const uint64_t sz = DL.getTypeAllocSize(ty).getFixedValue();
+    if (sz == 1) {
       emit("    .byte $%02X\n", (unsigned)(ci->getZExtValue() & 0xFF));
-    else
+    } else {
       emit("    .word $%04X\n", (unsigned)(ci->getZExtValue() & 0xFFFF));
+      if (sz == 4)
+        emit("    .word $%04X\n", (unsigned)((ci->getZExtValue() >> 16) & 0xFFFF));
+    }
     return;
   }
   if (isa<ConstantAggregateZero>(init) || init->isNullValue()) {
