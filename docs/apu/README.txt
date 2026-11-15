@@ -83,6 +83,12 @@ The ZPA sound pack and BIOS sequencer design (the pack format, the score event s
 the CPU mailbox protocol), and the `zpsnd` baker that builds packs from a text score.
 The baker and its reference interpreter exist; the BIOS engines are not written yet.
 
+### adpcm.md
+The looping stereo IMA ADPCM player: a decoder that runs *on* the APU (table-driven, ~77 instructions per frame, so
+44.1 kHz stereo needs the fast clock) feeding the MMP stream port, plus the encoder, the ROM builder and the CPU
+feeder (`scripts/ima_adpcm.py`, `scripts/gen_adpcm_apu.py`, `scripts/build_adpcm_rom.py`,
+`examples/adpcm-player/`).
+
 ### programming-guide.txt
 Practical examples and programming patterns for common tasks.
 

@@ -25,6 +25,7 @@ Complete development toolchain for the ZeroPoint fantasy console.
 ### Utilities
 - **Hex Viewer** (hexview) - Smart binary file viewer with statistics
 - **WAV Converter** (wav2mmp) - Convert WAV files to MMP audio format
+- **ADPCM player** (`scripts/build_adpcm_rom.py`) - any audio file to a looping stereo IMA ADPCM ROM decoded on the APU (`docs/apu/adpcm.md`)
 
 **📖 For complete tool documentation, see [DEV-TOOLS.md](DEV-TOOLS.md)**
 
