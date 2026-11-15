@@ -10,8 +10,11 @@ the main CPU to handle all audio-related tasks.
 
 - **Architecture**: 8-bit RISC
 - **Clock Speed**: 4.250710 MHz (executes every 16th master clock cycle)
-- **Cycles Per Instruction (CPI)**: 4
-- **Effective Performance**: 1.06 MIPS (1,062,677 instructions per second)
+- **Cycles Per Instruction (CPI)**: 2
+- **Effective Performance**: 2.13 MIPS (2,125,355 instructions per second)
+- **Fast mode** (opt-in, `APUCLK` $D8001A bit 0): master/8 = 8.5 MHz, still CPI 2 = 4.25 MIPS, at the price of bus
+  contention: CPU accesses to the APU window (bank $A0) take 1 extra cycle each, and DMA to or from the window runs
+  at half rate. A reset drops back to normal mode. Numbers below are normal mode; fast mode doubles them.
 - **Instruction Size**: 16-bit fixed width
 - **Instruction Format**: 5-bit opcode + 11-bit operands
 
@@ -30,17 +33,17 @@ This deterministic pattern ensures perfect synchronization with other system com
 
 ### Clock Budget
 - Total cycles per second: 4,250,710
-- Instructions per second: 1,062,677 (every instruction is 4 cycles)
-- At 60 Hz: ~17,711 instructions per frame
-- At 48 kHz sample rate: ~22.1 instructions per sample
+- Instructions per second: 2,125,355 (every instruction is 2 cycles)
+- At 60 Hz: ~35,422 instructions per frame
+- At 48 kHz sample rate: ~44.3 instructions per sample
 
 ### Audio Frame Budget (60 Hz)
 ```
 Frame time: 16.67 ms
 Cycles per frame: ~70,845
-Instructions per frame: ~17,711 (at 4 CPI)
+Instructions per frame: ~35,422 (at 2 CPI)
 Samples per frame (48 kHz): 800
-Instruction budget per sample: ~22 instructions
+Instruction budget per sample: ~44 instructions
 ```
 
 ## Major Subsystems

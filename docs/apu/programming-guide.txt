@@ -387,17 +387,17 @@ equal:
 ```
 
 ### Delay Loop (milliseconds)
-The APU runs at 4,250,710 Hz and every instruction takes 4 cycles, so 1 ms is
-about 4,251 cycles. `NOP $7FF` stalls for 4 + 2047 cycles:
+The APU runs at 4,250,710 Hz and every instruction takes 2 cycles, so 1 ms is
+about 4,251 cycles. `NOP $7FF` stalls for 2 + 2047 cycles:
 ```
 ; delay_ms: X = milliseconds (1-255); clobbers X
 delay_ms:
-    nop $7FF            ; 2051 cycles
-    nop $7FF            ; 2051
-    nop $085            ; 137
-    dec x               ; 4
-    jz x, delay_done    ; 4
-    jms delay_ms        ; 4   -> 4,251 cycles per pass
+    nop $7FF            ; 2049 cycles
+    nop $7FF            ; 2049
+    nop $091            ; 147
+    dec x               ; 2
+    jz x, delay_done    ; 2
+    jms delay_ms        ; 2   -> 4,251 cycles per pass
 delay_done:
     ret
 ```

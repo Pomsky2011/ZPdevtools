@@ -46,13 +46,13 @@ entries below.
 Opcode:  00000
 Encoding: 00000 XXXXXXXXXXX
 Syntax:   NOP 0xXXX
-Cycles:   4 + X
+Cycles:   2 + X
 
 Stalls for X additional cycles. Useful for timing synchronization.
 
 Example:
-  NOP 0x000    ; 4 cycle delay
-  NOP 0x100    ; 260 cycle delay
+  NOP 0x000    ; 2 cycle delay
+  NOP 0x100    ; 258 cycle delay
 ```
 
 ---
@@ -708,13 +708,19 @@ Manipulated by: SFR, CF, SF, STF
 
 ## Instruction Timing
 
-All instructions: 4 clock cycles (base).
+All instructions: 2 clock cycles (base).
 NOP adds up to 2047 additional stall cycles.
 
-The APU clock is 4,250,710 Hz (master / 16), so with 4 cycles per instruction
-that is 1,062,677 instructions/second (~0.94 μs per instruction), or about
-22 instructions per 48 kHz output sample. There are no wait states: reading or
-writing any region (RAM, ARAM, SST, AROM, MMP registers) costs the same 4 cycles.
+The APU clock is 4,250,710 Hz (master / 16), so with 2 cycles per instruction
+that is 2,125,355 instructions/second (~0.47 μs per instruction), or about
+44 instructions per 48 kHz output sample. There are no wait states: reading or
+writing any region (RAM, ARAM, SST, AROM, MMP registers) costs the same 2 cycles.
+
+Fast mode (the CPU sets bit 0 of APUCLK, $D8001A) clocks the APU at master / 8 = 8,501,420 Hz: still 2 cycles per
+instruction, so 4,250,710 instructions/second (~88 per 48 kHz sample). The price is bus contention on the shared
+APU RAM: every CPU access through the bank $A0 window costs 1 extra CPU cycle, and a DMA transfer whose source or
+target is in the window runs at half rate. A reset returns to normal mode. `cycleCount` counts cycles of whichever
+clock is running, and the cycle-counted stalls (NOP) are in those cycles, so a stall is half as long in fast mode.
 
 ## Programming Tips
 

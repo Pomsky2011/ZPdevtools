@@ -70,7 +70,7 @@ $0080-$00FF: Reserved2          (future use)
 - DSP coefficient storage
 
 **Notes:**
-- Same 4-cycle access cost as every other region (there are no wait states)
+- Same 2-cycle access cost as every other region (there are no wait states)
 - Visible to the CPU through the APU window (bank $A0), like all APU memory
 - Zeroed on APU reset
 
@@ -334,7 +334,7 @@ copy_loop:
 ## Memory Performance Notes
 
 ### Access Speed
-Every instruction takes 4 cycles regardless of which region it touches; there
+Every instruction takes 2 cycles regardless of which region it touches; there
 are no wait states anywhere in the address space (RAM, ARAM, STL, SST, BIOS,
 AROM, MMP registers, DEF88186 buffers all cost the same). `NOP $XXX` is the
 only way to add cycles.

@@ -476,7 +476,7 @@ arpeggio_loop:
 ### CPU Cost
 
 MMP register writes take effect immediately (no buffering):
-- Read/write: ~4 cycles + memory access time
+- Read/write: ~2 cycles + memory access time
 
 ### Channel Budget
 
