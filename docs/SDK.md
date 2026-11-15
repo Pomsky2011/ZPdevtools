@@ -24,9 +24,10 @@ Include the umbrella and you get everything:
 | `zp_ppu.h`   | PPU window, VOC registers, `zp_ppu_boot` / `zp_ppu_upload` / start/reset |
 | `zp_apu.h`   | APU window, `zp_apu_boot` / `zp_apu_upload_samples`, rombank, control |
 | `zp_timer.h` | 8 hardware timers (`ZP_TMR_*`), enable/IRQ/status/wait helpers |
+| `zp_cop.h`   | Every `COP` signature: generic `zp_cop3` / `zp_cop32`, Boot ROM service wrappers (`zp_sin`, `zp_sqrt`, `zp_hypot`, `zp_boot_ppu_load`, `zp_verify_chunk`, ...) |
 
 Everything funnels down to two hardware primitives, `zp_peek8` / `zp_poke8`,
-supplied by the runtime (`lib/zp_mmio.asm`).
+supplied by the runtime (`lib/zp_mmio.asm`); the `COP` calls come from `lib/zp_cop.asm`.
 
 ### Example
 
@@ -79,8 +80,29 @@ The loaders are written array-free (sequential register writes rather than a
 | `crt0_entry.asm` | Entrypoint-mode startup: sets 16-bit mode, slides into `main`. `.include` at the top of your program. |
 | `crt0_rom.asm`   | ROM-mode startup: fuller bring-up (CLD, defined flags) then `main`. |
 | `zp_mmio.asm`    | `zp_peek8` / `zp_poke8`, implemented with absolute-long-indexed access to the RAM/APU/PPU/IO banks. |
+| `zp_cop.asm`     | `zp_cop3` / `zp_cop32` (any `COP` signature, built at run time) plus the typed Boot ROM service wrappers. Needs the real Boot ROM (`--boot`) for `$F0-$FF`. |
+| `zp_dma.asm`     | `zp_dma_load` for hand-written asm (boot ROM, no C runtime). |
 
 The C ABI (shared by both compilers) is 16-bit mode, args in A/X/Y, return in A.
+
+## COP calls — `zp_cop.h`
+
+A `COP` signature is an instruction operand, so it can't be a plain C argument;
+`zp_cop.asm` writes `COP #sig / SDB #db / RTL` into scratch Work RAM and calls it.
+That reaches every signature: the Boot ROM services `$F0-$FF` (math, PPU load,
+chunk verify — `ZeroPoint/docs/boot-math-services.md`) and the cartridge's own
+`$00-$EF`. It restores DB, which `COP #$FF` would otherwise clobber.
+
+```c
+zps16 s = zp_sin(0x4000);                 /* $7FFF */
+zpu16 d = zp_hypot(3, 4);                 /* 5     */
+zpu16 r = zp_cop3(0xF5, 0x4240, 0x000F);  /* any signature: A = sig, then the service's A and X */
+```
+
+Notes: not re-entrant (fixed scratch at `$80:2B00`); from C use `zp_cop3` and the
+typed wrappers, since a 4th argument makes both compilers clobber A when they pop
+it (`zp_cop32` is fine from assembly); `zp_sqrt32(v)` needs 32-bit shifts, so on
+def88186cc call `zp_sqrt(lo, hi)`. Tested by `ZeroPoint/bin/test_zp_cop`.
 
 ## def88186cc dialect (`ZP_CC_DOS`)
 

@@ -2,12 +2,14 @@
  * zeropoint.h - Umbrella header for the ZeroPoint fantasy console C SDK.
  *
  * Include this one header to get the full memory map, MMIO register set, DMA
- * loaders, PPU/APU upload helpers, and hardware timer API.  Everything here is
- * strict C89 so it builds identically under zpcc (clang) and def88186cc (DOS).
+ * loaders, PPU/APU upload helpers, hardware timer API, and the COP (Boot ROM
+ * service) calls.  Everything here is strict C89 so it builds identically
+ * under zpcc (clang) and def88186cc (DOS).
  *
  *   #include <zeropoint/zeropoint.h>
  *
- * Link against libzp (crt0 + zp_mmio.asm) so zp_peek8/zp_poke8 resolve.
+ * Link against libzp (crt0 + zp_mmio.asm, plus zp_cop.asm for the COP calls)
+ * so zp_peek8/zp_poke8 and zp_cop resolve.
  */
 #ifndef ZEROPOINT_H
 #define ZEROPOINT_H
@@ -22,5 +24,6 @@
 #include "zp_ppu.h"
 #include "zp_apu.h"
 #include "zp_timer.h"
+#include "zp_cop.h"
 
 #endif /* ZEROPOINT_H */
