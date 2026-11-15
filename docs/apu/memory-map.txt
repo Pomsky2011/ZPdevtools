@@ -35,7 +35,7 @@ $0020-$002F: Channel Volume     (ch0-15, 1 byte each; 0=silent, 255=max)
 $0030-$003F: Channel Pan        (ch0-15, 1 byte each; 0=full L, 128=center, 255=full R)
 $0040-$004F: Reserved0          (ch0-15, per-channel; future use)
 $0050-$006F: Sample STL Address (ch0-15, 2 bytes each, little-endian)
-$0070-$007F: Reserved1          (global; future use)
+$0070-$007F: Stream port        (stereo PCM ring buffer; see mmp.txt)
 $0080-$00FF: Reserved2          (future use)
 ```
 
