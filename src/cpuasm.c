@@ -24,9 +24,16 @@
 #include "compat.h"
 
 #define MAX_LINE 256
-#define MAX_LABELS 256
 #define MAX_CODE 131072
+/* Compiler output (def88186cc / zpcc) has a label per branch target, so a real C program needs thousands; the
+ * real-mode DOS builds keep the small tables (64 KB data segment). */
+#if defined(__TURBOC__) || defined(M_I86)
+#define MAX_LABELS 256
 #define MAX_FIXUPS 256
+#else
+#define MAX_LABELS 8192
+#define MAX_FIXUPS 8192
+#endif
 
 /* Addressing modes */
 typedef enum {

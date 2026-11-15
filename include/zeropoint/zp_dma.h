@@ -102,20 +102,30 @@ ZP_INLINE zpu16 zp_dma_load(zpaddr src, zpaddr dst, zpu32 len, zpu8 chan)
     return xfers;
 }
 
-/* Fill dst..dst+len with a constant byte via ConstRepeat DMA. */
+/* Work RAM the fill borrows to hold its 4-byte pattern (ConstCopy reads the pattern from memory). */
+#define ZP_DMA_PATTERN  0x802D00UL
+
+/* Fill dst..dst+len with a constant byte via ConstCopy DMA.  (ConstRepeat, which this used to use, writes its
+ * byte to one address over and over - a FIFO mode, not a fill - and takes the byte from memory, not from the
+ * source address.) */
 ZP_INLINE void zp_dma_fill(zpaddr dst, zpu8 value, zpu32 len, zpu8 chan)
 {
     zpu32 done = 0;
     zpu32 total = (len + (ZP_DMA_UNIT - 1)) & ~((zpu32)(ZP_DMA_UNIT - 1));
+
+    /* the pattern is S+1 bytes (up to 4): repeat the value so any transfer size sees the same byte */
+    zp_poke8(ZP_DMA_PATTERN, value);
+    zp_poke8(ZP_DMA_PATTERN + 1, value);
+    zp_poke8(ZP_DMA_PATTERN + 2, value);
+    zp_poke8(ZP_DMA_PATTERN + 3, value);
 
     while (done < total) {
         zpu32 chunk = total - done;
         zpu8  units;
         if (chunk > ZP_DMA_MAX_XFER) chunk = ZP_DMA_MAX_XFER;
         units = (zpu8)(chunk / ZP_DMA_UNIT);
-        /* ConstRepeat: source low byte carries the constant value. */
         zp_dma_wait(chan);
-        zp_dma_kick(ZP_DMA_CONST_REPEAT, chan, (zpaddr)value, dst + done,
+        zp_dma_kick(ZP_DMA_CONST_COPY, chan, ZP_DMA_PATTERN, dst + done,
                     (zpu8)(units - 1), 1, 0);
         done += chunk;
     }

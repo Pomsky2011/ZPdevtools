@@ -10,6 +10,9 @@
 ;                          Y = value.  No return.
 ;   zp_peek8(addr)       : A = addr low 16, X = addr high 16.  Returns byte in A.
 ;
+; Both are true byte accesses (the store/load is done with 8-bit A): a 16-bit STA here wrote a second byte, which
+; for the I/O registers (the DMA config stream advances an index per write) corrupted the hardware state.
+;
 ; Assemble standalone:  cpuasm zp_mmio.asm zp_mmio.bin
 ; (Or .include it into the program so the labels resolve at link time.)
 
@@ -36,32 +39,40 @@ __poke_io:
         PLA                     ; A = offset
         TAX                     ; X = index
         TYA                     ; A = value
+        SEP #$20                ; byte store
         STA $D80000,X
+        REP #$20
         RTS
 __poke_ppu:
         REP #$20
         PLA
         TAX
         TYA
+        SEP #$20
         STA $B00000,X
+        REP #$20
         RTS
 __poke_apu:
         REP #$20
         PLA
         TAX
         TYA
+        SEP #$20
         STA $A00000,X
+        REP #$20
         RTS
 __poke_ram:
         REP #$20
         PLA
         TAX
         TYA
+        SEP #$20
         STA $800000,X
+        REP #$20
         RTS
 
 ; ---------------------------------------------------------------------------
-; zpu8 zp_peek8(zpaddr addr)  -> byte in A
+; zpu8 zp_peek8(zpaddr addr)  -> byte in A (upper byte zero)
 ; ---------------------------------------------------------------------------
 zp_peek8:
         PHA
@@ -78,29 +89,37 @@ zp_peek8:
         REP #$20                ; ROM ($00) / unknown -> read from bank $00
         PLA
         TAX
+        SEP #$20
         LDA $000000,X
-        RTS
+        BRA __peek_done
 __peek_io:
         REP #$20
         PLA
         TAX
+        SEP #$20
         LDA $D80000,X
-        RTS
+        BRA __peek_done
 __peek_ppu:
         REP #$20
         PLA
         TAX
+        SEP #$20
         LDA $B00000,X
-        RTS
+        BRA __peek_done
 __peek_apu:
         REP #$20
         PLA
         TAX
+        SEP #$20
         LDA $A00000,X
-        RTS
+        BRA __peek_done
 __peek_ram:
         REP #$20
         PLA
         TAX
+        SEP #$20
         LDA $800000,X
+__peek_done:
+        REP #$20
+        AND #$00FF              ; the hidden high byte is whatever A held: return a clean byte
         RTS
