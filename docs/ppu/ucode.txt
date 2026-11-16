@@ -665,11 +665,11 @@ TILEDRAW (sub-op 0xC) - Draw the current tile at the current position
   Format: TILEDRAW                      Encoding: 1100 --------
   See 9.2 for the full concurrent-dispatch model. Snapshots position,
   current tile bank/ID/mode, blend mode, and translucency at issue time;
-  actual pixel writes happen later (in the background) or immediately
-  (synchronous fallback), never using live state from after the issuing
-  instruction.
-  Cycles: 8 if a blit channel is free (dispatch only); 264 (opaque) or 392
-  (blended) if all 8 channels are busy (synchronous fallback) - see 9.2/8.1
+  actual pixel writes happen later, in the background, in issue order -
+  never using live state from after the issuing instruction.
+  Cycles: 8 if a blit channel is free (dispatch only). If all 8 are busy the
+  instruction re-executes each cycle (1 cycle per retry) until one frees,
+  then dispatches for 8 - see 9.2/8.1
 
 SETTILEBANK (sub-op 0xD) - Select the active tile bank
   Format: SETTILEBANK RX                Encoding: 1101 XXXXXX --
@@ -847,7 +847,7 @@ the next fetch/interrupt check.
   CYC_CLRTILE                 8   CLRTILE
   CYC_CLRPAL                  8   CLRPALETTE
   CYC_TILE_BASE                8   TILEDRAW, dispatch-only cost (channel free)
-  264 (opaque) / 392 (blended)     TILEDRAW, synchronous fallback (all 8
+  264 (opaque) / 392 (blended)     TILEDRAW, old synchronous fallback (all 8
                                     channels busy) - CYC_TILE_BASE(8) +
                                     64 * (CYC_TILE_PX(4) or
                                     CYC_TILE_PX_BLEND(6))
@@ -949,12 +949,17 @@ for a free one:
       whatever the live current-tile/position registers have moved on to.
 
   All 8 channels busy:
-    - Falls back to the old fully-synchronous behavior: draws immediately,
-      inline, paying the full blit cost (264 opaque / 392 blended) as this
-      TILEDRAW's own instruction stall. Never drops a draw or corrupts an
-      in-flight one - strictly a worse-case-only path versus having a free
-      channel, and per 8.3, exactly the scenario the 8-channel design
-      exists to avoid staying in for long.
+    - TILEDRAW waits: the pointer is backed up so it re-executes next cycle
+      (1 cycle per retry) until a channel frees, then dispatches as above.
+      Core revision 7; before it drew immediately and synchronously, ahead of
+      the older blits still in flight (a later layer ended up under an
+      earlier one).
+
+  Retirement order: blits retire in issue order whatever they cost (a blit's
+  completion is held strictly after the previous one's, and completions due
+  together run in that order), so program order is z-order even when a cheap
+  row-clipped tile follows a full one. Once all 8 channels are busy the
+  throughput is one blit per ~33 cycles (264/8).
 
 This makes `runBatch()` (the fast interpreter behind `--jit`) and `tick()`
 produce identical results: both call `advanceBlitChannels()` with the exact
