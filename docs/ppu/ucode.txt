@@ -627,6 +627,8 @@ PALETTE16 (sub-op 0x5) - Load 16-color palette from (DP)
 
 PALETTE256 (sub-op 0x6) - Load 256-color palette from (DP)
   Format: PALETTE256                    Encoding: 0110 --------
+  16-bit render mode: 256 BBGR 5-5-5-1 entries, 512 bytes (as PALETTE16's, expanded for the blitters). 32-bit render
+  mode: 256 RRGGBBAA entries, 1024 bytes. Before core revision 5 it always read 1024 bytes of 32-bit entries.
   Cycles: 258 (`CYC_PAL_BASE(2) + 256 * CYC_PAL_PER_ENTRY(1)`)
 
 JMR (sub-op 0x7) - Jump unconditionally to (PC)
@@ -917,7 +919,10 @@ CLRTILE clears all 4 banks unconditionally, not just the active one.
 
 Tile pixel data is written directly to $0300-$033F, 64 bytes per tile, one
 byte per pixel (interpretation depends on `currentTileMode`, set by
-SETTILE's mode operand: 4bpp/8bpp x 16-bit/32-bit palette lookup). There is
+SETTILE's mode operand: 4bpp/8bpp; the 16-bit/32-bit half of the mode picks
+nothing since core revision 5). Per-blit attributes (transparent, hflip,
+vflip) are VOC $00FC bits 2-4, sampled at each TILEDRAW: docs/ppu.md in the
+emulator repo, "Tile attributes". There is
 no start/end tile-definition instruction pair (Revision 1.0's
 STRTDEFTILE/ENDDEFTILE) - writes simply land wherever DP points within that
 window.
@@ -957,10 +962,13 @@ elapsed-cycle count at every point either advances time, including inside
 
 9.3 PALETTE MANAGEMENT
 
-16-color palette (32/64 bytes, 16-bit/32-bit mode - loaded via PALETTE16)
-and 256-color palette (512/1024 bytes - loaded via PALETTE256) are both
-always present in memory; only one is used per draw depending on the VOC's
-palette-mode bit ($00F0 bit 3). CLRPALETTE resets BOTH to a default
+16-color palette (32 bytes, 16-bit entries in either render mode - loaded via
+PALETTE16) and 256-color palette (512/1024 bytes by render mode - loaded via
+PALETTE256) are both always present. A tile blit uses the 16-entry one for
+4bpp tiles and the 256-entry one for 8bpp tiles, in either render mode (core
+revision 5: 8bpp tiles in 16-bit mode used to show indices 16+ as gray). The
+VOC's palette-mode bit ($00F0 bit 3) only selects the table for the
+single-pixel port's index at $0104. CLRPALETTE resets BOTH to a default
 grayscale ramp - not to all-zero/black as Revision 1.0 stated.
 
 9.4 RENDER MODES
