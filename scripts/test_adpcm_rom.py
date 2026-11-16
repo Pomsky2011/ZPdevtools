@@ -5,6 +5,10 @@ and the rendered audio (HLE boot, strict signature check, the player verifies ev
 
     python3 -I scripts/test_adpcm_rom.py [zeropoint-build-dir]      (needs numpy, ffmpeg and a built ZeroPoint next to ZPdevtools)
 
+It runs twice: on the native HLE APU BIOS, and (when ZPbootROM/build/bios_full.bin exists next to it) on the real APU BIOS
+image, whose jingle engine leaves its flags, stack and channels behind: a player that doesn't reset the APU before it
+starts (it used to) runs its decoder from that state, overruns its own code with the stack and plays loud clipped noise.
+
 Passes when the tones are present, in the right channels, for the whole 5 s render (3+ trips round the 1.5 s loop:
 the only windows allowed to fit badly are the ones that straddle a loop point, where the sine's phase jumps), at
 the stream rate the ROM asked for. Exits non-zero on failure."""
@@ -34,13 +38,13 @@ def make_wav(path, rate=44100):
         w.setnchannels(2); w.setsampwidth(2); w.setframerate(rate)
         w.writeframes((pcm * 32767).astype("<i2").tobytes())
 
-def main():
+def main(label="HLE APU BIOS", extra=()):
     with tempfile.TemporaryDirectory() as d:
         src, rom, out = (os.path.join(d, n) for n in ("src.wav", "t.zpb", "t.wav"))
         make_wav(src)
         subprocess.run([sys.executable, "-I", os.path.join(HERE, "build_adpcm_rom.py"), src, rom, "--workdir", os.path.join(d, "work")],
                        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.run([os.path.join(build, "bin", "zpb_wav"), rom, str(SECONDS), out, "--verify"], check=True, stdout=subprocess.DEVNULL)
+        subprocess.run([os.path.join(build, "bin", "zpb_wav"), rom, str(SECONDS), out, "--verify", *extra], check=True, stdout=subprocess.DEVNULL)
         with wave.open(out) as w:
             rate = w.getframerate()
             pcm = np.frombuffer(w.readframes(w.getnframes()), dtype="<i2").reshape(-1, 2).astype(float)
@@ -49,14 +53,20 @@ def main():
            fit_snr_db(pcm[i:i + n, 0], FR, rate), fit_snr_db(pcm[i:i + n, 1], FL, rate)) for i in range(0, len(pcm) - n, n)]
     good = [w[1] > GOOD_DB and w[2] > GOOD_DB for w in ws]
     if not any(good):
-        print("FAIL: no window has the two tones"); return 1
+        print(f"[{label}] FAIL: no window has the two tones (peak {np.abs(pcm).max() / 32768:.3f} FS)"); return 1
     first = good.index(True)
     bad = [ws[i][0] for i in range(first, len(ws)) if not good[i]]
     loops = int(SECONDS / LOOP_S)
     swapped = any(w[3] > 0 or w[4] > 0 for w, g in zip(ws, good) if g)
     ok = first * WIN < 1.0 and len(bad) <= loops and not swapped
-    print(f"tones from {ws[first][0]:.2f}s, {len(bad)} bad windows in {SECONDS - ws[first][0]:.1f}s ({loops} loop points allowed), "
+    print(f"[{label}] tones from {ws[first][0]:.2f}s, {len(bad)} bad windows in {SECONDS - ws[first][0]:.1f}s ({loops} loop points allowed), "
           f"channels {'SWAPPED' if swapped else 'ok'}, worst good window {min(w[1] for w, g in zip(ws, good) if g):.1f} dB -> {'PASS' if ok else 'FAIL'}")
     return 0 if ok else 1
 
-sys.exit(main())
+BIOS = os.path.join(ROOT, "ZPbootROM", "build", "bios_full.bin")
+status = main()
+if os.path.exists(BIOS):
+    status |= main("real APU BIOS", ("--apu-bios", BIOS))
+else:
+    print(f"(skipping the real-APU-BIOS run: {BIOS} not built)")
+sys.exit(status)

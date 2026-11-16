@@ -51,5 +51,14 @@ APU is in fast mode, so the loader uploads first and sets fast mode last.
 - The boot jingle's channels keep looping when the APU is taken over mid-jingle (an endless 880 Hz drone), so `start`
   zeroes all 16 STL registers; and the Boot ROM leaves its result (1) in mailbox $1000, so the player clears both
   mailboxes before starting the APU.
+- **The APU arrives in whatever state the BIOS engine left it.** With the real APU BIOS (`--apu-bios`, which the Qt
+  frontend loads from its saved settings) the engine leaves its flags (`04`), stack pointer and registers behind; the
+  HLE BIOS leaves a reset machine. The player used to start the decoder with just a PC write, and from that state the
+  stack grew up through the decoder's own code (SP `$0B02`, inside the program) and it played loud clipped noise (~-7 dB
+  RMS, 100% peaks, no correlation with the track). The player's `start` now resets *and halts* the APU first
+  (`APUCTRL = $03`: a plain reset would restart the BIOS engine and replay the jingle mid-upload), before any upload
+  because a reset clears APU RAM, and resumes it (`$04`) after writing the PC. `scripts/test_adpcm_rom.py` renders
+  both BIOS configurations (the real one only passes with the reset: the old player peaked at 1.000 FS and had no tones).
+  Anything else that starts its own APU program from a cartridge should do the same.
 - Host speed: decoding adds ~4M APU events/s to the scheduler. The run-ahead CPU burst now runs APU instructions as
   ordinary events (ZeroPoint's `System::runCpuBurst`); `test_batched` checks it is state-identical.

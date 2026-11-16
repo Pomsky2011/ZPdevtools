@@ -27,6 +27,13 @@ start:
         SEP #$30
         SDB #$80
 
+        ; the APU may be mid-way through the BIOS's jingle engine (the real APU BIOS leaves its flags, stack, registers
+        ; and sounding channels behind; the HLE BIOS leaves a reset machine): reset it first, and halt it so the BIOS
+        ; engine does not restart while the program is uploaded. A reset also clears APU RAM, so this comes before
+        ; every upload. APUCTRL $D80010: bit 0 reset, bit 1 halt, bit 2 resume.
+        LDA #$03
+        STA $D80010
+
         ; --- upload the APU program to $A0:0200 and its tables to $A0:9000 ---
         LDA #$00
         STA $800010
@@ -100,6 +107,8 @@ start:
         STA $D80012
         LDA #$05
         STA $D80013                ; APU PC = $0500
+        LDA #$04
+        STA $D80010                ; resume the (halted) APU: it runs the program from $0500
 
 feed_loop:
         LDA $0100
