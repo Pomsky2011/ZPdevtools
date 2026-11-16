@@ -220,7 +220,13 @@ authoritative list also in ZeroPoint's `CLAUDE.md`):
   $0208-$02FF  Free (code/data)
   $0300-$033F  Tile-definition buffer, 64 bytes - writes here target
                `tileStorage[currentTileBank][currentTileId]` (see 9.1)
-  $0340-$DFFF  Free (code/data)
+  $0340-$034F  Line-blit port: $0340 src (PPU address of 4bpp palette indices),
+               $0342 x (signed), $0344 y, $0346 count (pixels), a write to
+               $0348 launches; $034A reads busy (bits 0-3) / dropped-launch
+               (bit 7), any write clears bit 7. Alpha-0 palette entries are
+               transparent. 4 async channels, 8 + 1/pixel cycles each (see
+               `docs/ppu.md` in the ZeroPoint repo, "Line Blitter")
+  $0350-$DFFF  Free (code/data)
   $E000-$FFFF  Framebuffer window, always 8 KiB regardless of render mode -
                mirrors the Display's rolling buffer (see `docs/display.md`
                in the ZeroPoint repo for the rolling-window model)
