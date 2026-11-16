@@ -921,7 +921,8 @@ Tile pixel data is written directly to $0300-$033F, 64 bytes per tile, one
 byte per pixel (interpretation depends on `currentTileMode`, set by
 SETTILE's mode operand: 4bpp/8bpp; the 16-bit/32-bit half of the mode picks
 nothing since core revision 5). Per-blit attributes (transparent, hflip,
-vflip, row clip) are VOC $00FC bits 2-5, sampled at each TILEDRAW; the row
+vflip, row clip) are VOC $00FC bits 2-5, latched by $00FD bit 4 (their own
+push, separate from the blend mode's bit 3) and snapshotted by each TILEDRAW; the row
 clip writes only the screen rows in [$0204, $0206) (core revision 6): see
 docs/ppu.md in the emulator repo, "Tile attributes". There is
 no start/end tile-definition instruction pair (Revision 1.0's
