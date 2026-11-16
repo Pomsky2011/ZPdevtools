@@ -46,6 +46,12 @@ int main()                        /* main(), not main(void), for def88186cc */
 }
 ```
 
+**Warning: the APU is not reset when the cartridge starts.** It holds whatever the BIOS jingle engine left (different for
+the real APU BIOS and the HLE one), so a program started by only writing the PC can corrupt itself. `zp_apu_boot()` resets
+before it uploads, but leaves the APU running: the BIOS engine restarts and, with the real APU BIOS, has set its own SP/DP/flags
+~0.6 ms later, so a long upload inherits that state again. For a long upload, or a hand-written loader, write `APUCTRL` =
+`$03` (reset **and halt**), upload, set the PC, then `$04` (resume); see `ZeroPoint/docs/boot-handoff.md`.
+
 Compile:
 
 ```sh

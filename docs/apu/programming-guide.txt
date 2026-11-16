@@ -44,6 +44,14 @@ done:
 A program uploaded by the CPU lives in ARAM (`$3000-$6FFF`) instead, with the
 BIOS handing off to it (see the BIOS header in ZPbootROM's `launch.uas`).
 
+> **WARNING: the APU is not reset when the cartridge starts.** The Boot ROM leaves it exactly as the BIOS jingle engine
+> did, and the real APU BIOS and the native HLE one leave different flags, SP, RP/DP, channels and mailbox contents
+> (`ZeroPoint/docs/boot-handoff.md`, "The APU is NOT reset at handoff"). A program the CPU starts by only writing the PC
+> inherits all of it: the ADPCM decoder's stack ended up inside its own code and it played loud clipped noise, but only
+> with the real APU BIOS. Before uploading, write `APUCTRL` (`$D80010`) = `$03` (reset + halt); after writing the PC,
+> write `$04` (resume). (A plain reset is not enough for a long upload: the BIOS engine restarts and has set its own
+> SP/DP/flags within ~0.6 ms.) Set every register you rely on (`srp`, `bsp`, flags) as in the example above anyway.
+
 **Writing 16-bit MMP registers:**
 Pitch and STL address are 16-bit little-endian values spread over two byte
 addresses. Write each byte with its own `STA`:
