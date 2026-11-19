@@ -196,7 +196,7 @@ static void usage(const char *p)
 {
     fprintf(stderr, "zpbuild - ZeroPoint ROM signer (HQ mastering step)\n\n");
     fprintf(stderr, "Usage: %s IN.elf -o OUT.zpb\n", p);
-    fprintf(stderr, "       [--title NAME] [--dev AUTHOR] [--entry ADDR] [--codesize N]\n");
+    fprintf(stderr, "       [--title NAME] [--dev AUTHOR] [--entry ADDR] [--codesize N] [--trailer 2|3]\n");
     fprintf(stderr, "       [--selftest] [-v]\n\n");
     fprintf(stderr, "Reads a zplink ELF, reconstructs the ROM payload, and writes a\n");
     fprintf(stderr, "signed .zpb ROM (ZPB header + payload + RSA-2048/SHA-256 trailer).\n");
@@ -207,6 +207,9 @@ static void usage(const char *p)
     fprintf(stderr, "each BLAKE2s-hashed into a signed manifest (checked lazily, per\n");
     fprintf(stderr, "chunk, when cartridge code loads it). Omit for the original\n");
     fprintf(stderr, "single-region SHA-256-over-the-whole-payload path.\n");
+    fprintf(stderr, "--trailer 2 (with --codesize) signs the whole payload instead: code and\n");
+    fprintf(stderr, "data are each BLAKE2s-hashed at boot, no manifest, no per-chunk checks\n");
+    fprintf(stderr, "(the console's BLAKE2s engine makes that ~0.5 s per 8 MB). Default is 3.\n");
 }
 
 int main(int argc, char **argv)
@@ -215,7 +218,7 @@ int main(int argc, char **argv)
     char title[32], dev[16];
     unsigned long entry = 0, img_size = 0, elf_entry = 0, elf_len = 0, total;
     unsigned long code_size = 0;
-    int have_entry = 0, have_codesize = 0, verbose = 0, i;
+    int have_entry = 0, have_codesize = 0, verbose = 0, i, trailer_ver = 3;
     unsigned char *elf, *img;
     unsigned char hdr[ZPB_HDR_SIZE], digest[32], sig[ZP_RSA_BYTES];
     unsigned char *manifest = NULL;
@@ -233,6 +236,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i],"-o") && i+1<argc) out=argv[++i];
         else if (!strcmp(argv[i],"--entry") && i+1<argc){ entry=parse_addr(argv[++i]); have_entry=1; }
         else if (!strcmp(argv[i],"--codesize") && i+1<argc){ code_size=parse_addr(argv[++i]); have_codesize=1; }
+        else if (!strcmp(argv[i],"--trailer") && i+1<argc){ trailer_ver=atoi(argv[++i]); if (trailer_ver!=2 && trailer_ver!=3){ fprintf(stderr,"zpbuild: --trailer must be 2 or 3\n"); return 1; } }
         else if (!strcmp(argv[i],"--title") && i+1<argc){ memset(title,0,32); strncpy(title,argv[++i],31); }
         else if (!strcmp(argv[i],"--dev") && i+1<argc){ memset(dev,0,16); strncpy(dev,argv[++i],15); }
         else if (argv[i][0]=='-'){ fprintf(stderr,"zpbuild: unknown option '%s'\n",argv[i]); usage(argv[0]); return 1; }
@@ -268,7 +272,20 @@ int main(int argc, char **argv)
     memcpy(hdr+16, title, 32);
     memcpy(hdr+48, dev, 16);
 
-    if (have_codesize) {
+    if (have_codesize && trailer_ver == 2) {
+        /* Whole-payload split (v2 trailer): code_digest = BLAKE2s(code),
+           data_digest = BLAKE2s(data), signed digest = SHA256(header||
+           code_digest||data_digest) - ZPbootROM's rsa_verify_composite, which
+           hashes both through the BLAKE2s engine. No manifest, no chunks. */
+        unsigned char code_digest[32], data_digest[32];
+        zp_blake2s_buf(img, code_size, code_digest);
+        zp_blake2s_buf(img + code_size, img_size - code_size, data_digest);
+        zp_sha256_init(&sh);
+        zp_sha256_update(&sh, hdr, ZPB_HDR_SIZE);
+        zp_sha256_update(&sh, code_digest, 32);
+        zp_sha256_update(&sh, data_digest, 32);
+        zp_sha256_final(&sh, digest);
+    } else if (have_codesize) {
         /* Code + chunked-data-manifest split (v3 trailer): code_digest =
            BLAKE2s(code); the data region is split into CHUNK_SIZE-byte
            chunks (last one short), each BLAKE2s'd independently into
@@ -324,7 +341,7 @@ int main(int argc, char **argv)
         unsigned char tr[8+32];
         memset(tr,0,sizeof(tr));
         tr[0]='Z'; tr[1]='P'; tr[2]='S'; tr[3]='G';
-        tr[4]=(unsigned char)(have_codesize?3:1);/* trailer version */
+        tr[4]=(unsigned char)(have_codesize?trailer_ver:1);/* trailer version */
         tr[5]=(unsigned char)(ZP_RSA_BITS/64);   /* 2048/64 = 32 */
         put16(tr+6, ZP_RSA_BYTES);
         memcpy(tr+8, digest, 32);
@@ -346,7 +363,10 @@ int main(int argc, char **argv)
     printf("ROM written: %s\n", out);
     printf("  header    : 64 bytes (ZPB v2, signed)\n");
     printf("  payload   : %lu bytes  (entry 0x%06lX)\n", img_size, entry);
-    if (have_codesize) {
+    if (have_codesize && trailer_ver == 2) {
+        printf("  split     : %lu code bytes + %lu data bytes, both BLAKE2s (v2, no manifest)\n",
+               code_size, img_size-code_size);
+    } else if (have_codesize) {
         printf("  split     : %lu code bytes (BLAKE2s) + %lu data bytes in"
                " %lu chunk(s) (BLAKE2s manifest)\n",
                code_size, img_size-code_size, chunk_count);
