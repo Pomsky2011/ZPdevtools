@@ -226,7 +226,13 @@ authoritative list also in ZeroPoint's `CLAUDE.md`):
                (bit 7), any write clears bit 7. Alpha-0 palette entries are
                transparent. 4 async channels, 8 + 1/pixel cycles each (see
                `docs/ppu.md` in the ZeroPoint repo, "Line Blitter")
-  $0350-$DFFF  Free (code/data)
+  $0350-$0367  Tile-row queue port (write-ahead): $0350 src, $0352 count,
+               $0354 x, $0356 y, $0358/$035A clip rows, $035C flags, $035E
+               frame; a write to $0360 launches (a read is the cells pending);
+               $0362 bit 0 = write-ahead mode ($C000-$FFFF read open bus);
+               $0364 sticky late/overflow bits; $0366 hardware frame number.
+               See `docs/ppu.md`, "Tile-Row Queue", and layers.md
+  $0368-$DFFF  Free (code/data)
   $E000-$FFFF  Framebuffer window, always 8 KiB regardless of render mode -
                mirrors the Display's rolling buffer (see `docs/display.md`
                in the ZeroPoint repo for the rolling-window model)
