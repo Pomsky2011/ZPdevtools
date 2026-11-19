@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "zpstrdup.h"
 #include <unistd.h>
 #include "ast.h"
 #include "codegen.h"
@@ -18,9 +19,9 @@ typedef struct {
     int include_count;
     char** defines;
     int define_count;
-    int compile_only;      // -c flag: compile to .asm only
-    int preprocess_only;   // -E flag: preprocess only
-    int link;              // Link and assemble to .bin
+    int compile_only;      /* -c flag: compile to .asm only */
+    int preprocess_only;   /* -E flag: preprocess only */
+    int link;              /* Link and assemble to .bin */
 } CompilerOptions;
 
 void print_usage(const char* prog_name) {
@@ -44,6 +45,7 @@ void print_usage(const char* prog_name) {
 }
 
 void parse_args(int argc, char** argv, CompilerOptions* opts) {
+    int i;
     opts->input_files = malloc(sizeof(char*) * argc);
     opts->input_count = 0;
     opts->output_file = NULL;
@@ -51,11 +53,11 @@ void parse_args(int argc, char** argv, CompilerOptions* opts) {
     opts->include_count = 0;
     opts->defines = malloc(sizeof(char*) * 32);
     opts->define_count = 0;
-    opts->compile_only = 1;  // Default: compile to .asm
+    opts->compile_only = 1;  /* Default: compile to .asm */
     opts->preprocess_only = 0;
     opts->link = 0;
 
-    for (int i = 1; i < argc; i++) {
+    for (i = 1; i < argc; i++) {
         if (argv[i][0] == '-') {
             if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
                 opts->output_file = argv[++i];
@@ -95,27 +97,29 @@ void parse_args(int argc, char** argv, CompilerOptions* opts) {
     }
 }
 
-// Preprocess a file and return temp file path
+/* Preprocess a file and return temp file path */
 char* preprocess_file(const char* input_file, CompilerOptions* opts) {
+    int i;
+    char* temp_file;
     FILE* input = fopen(input_file, "r");
     if (!input) {
         fprintf(stderr, "Error: Cannot open input file '%s'\n", input_file);
         return NULL;
     }
 
-    char* temp_file = malloc(256);
+    temp_file = malloc(256);
     if (opts->preprocess_only) {
-        // Output to stdout
+        /* Output to stdout */
         PreprocessorContext* pp_ctx = preprocessor_create(input, stdout);
 
-        // Add include paths
-        for (int i = 0; i < opts->include_count; i++) {
+        /* Add include paths */
+        for (i = 0; i < opts->include_count; i++) {
             preprocessor_add_include_path(pp_ctx, opts->include_paths[i]);
         }
 
-        // Add macro definitions
-        for (int i = 0; i < opts->define_count; i++) {
-            char* define = strdup(opts->defines[i]);
+        /* Add macro definitions */
+        for (i = 0; i < opts->define_count; i++) {
+            char* define = zp_strdup(opts->defines[i]);
             char* eq = strchr(define, '=');
             if (eq) {
                 *eq = '\0';
@@ -134,18 +138,20 @@ char* preprocess_file(const char* input_file, CompilerOptions* opts) {
 
         fclose(input);
         preprocessor_destroy(pp_ctx);
-        exit(0);  // Done with preprocessing
+        exit(0);  /* Done with preprocessing */
     } else {
-        // Create temp file - extract base name from input path
+        FILE* temp;
+        PreprocessorContext* pp_ctx;
+        /* Create temp file - extract base name from input path */
         const char* base_name = strrchr(input_file, '/');
         if (base_name) {
-            base_name++;  // Skip the '/'
+            base_name++;  /* Skip the '/' */
         } else {
             base_name = input_file;
         }
         snprintf(temp_file, 256, "/tmp/cc_%d_%s.i", getpid(), base_name);
 
-        FILE* temp = fopen(temp_file, "w");
+        temp = fopen(temp_file, "w");
         if (!temp) {
             fprintf(stderr, "Error: Cannot create temp file '%s'\n", temp_file);
             fclose(input);
@@ -153,16 +159,16 @@ char* preprocess_file(const char* input_file, CompilerOptions* opts) {
             return NULL;
         }
 
-        PreprocessorContext* pp_ctx = preprocessor_create(input, temp);
+        pp_ctx = preprocessor_create(input, temp);
 
-        // Add include paths
-        for (int i = 0; i < opts->include_count; i++) {
+        /* Add include paths */
+        for (i = 0; i < opts->include_count; i++) {
             preprocessor_add_include_path(pp_ctx, opts->include_paths[i]);
         }
 
-        // Add macro definitions
-        for (int i = 0; i < opts->define_count; i++) {
-            char* define = strdup(opts->defines[i]);
+        /* Add macro definitions */
+        for (i = 0; i < opts->define_count; i++) {
+            char* define = zp_strdup(opts->defines[i]);
             char* eq = strchr(define, '=');
             if (eq) {
                 *eq = '\0';
@@ -190,8 +196,9 @@ char* preprocess_file(const char* input_file, CompilerOptions* opts) {
     }
 }
 
-// Compile preprocessed file to assembly
+/* Compile preprocessed file to assembly */
 int compile_to_asm(const char* input_file, const char* output_file) {
+    FILE* output;
     yyin = fopen(input_file, "r");
     if (!yyin) {
         fprintf(stderr, "Error: Cannot open preprocessed file '%s'\n", input_file);
@@ -211,7 +218,7 @@ int compile_to_asm(const char* input_file, const char* output_file) {
         return 0;
     }
 
-    FILE* output = fopen(output_file, "w");
+    output = fopen(output_file, "w");
     if (!output) {
         fprintf(stderr, "Error: Cannot open output file '%s'\n", output_file);
         ast_free(ast_root);
@@ -229,31 +236,36 @@ int compile_to_asm(const char* input_file, const char* output_file) {
 }
 
 int main(int argc, char** argv) {
+    int asm_count;
+    int i;
+    char** asm_files;
     CompilerOptions opts;
     parse_args(argc, argv, &opts);
 
-    char** asm_files = malloc(sizeof(char*) * opts.input_count);
-    int asm_count = 0;
+    asm_files = malloc(sizeof(char*) * opts.input_count);
+    asm_count = 0;
 
-    // Process each input file
-    for (int i = 0; i < opts.input_count; i++) {
+    /* Process each input file */
+    for (i = 0; i < opts.input_count; i++) {
+        char* preprocessed;
+        char* output_asm;
         const char* input_file = opts.input_files[i];
 
-        // Preprocess
+        /* Preprocess */
         printf("Preprocessing %s...\n", input_file);
-        char* preprocessed = preprocess_file(input_file, &opts);
+        preprocessed = preprocess_file(input_file, &opts);
         if (!preprocessed) {
             fprintf(stderr, "Preprocessing failed for %s\n", input_file);
             return 1;
         }
 
-        // Determine output filename
-        char* output_asm = malloc(256);
+        /* Determine output filename */
+        output_asm = malloc(256);
         if (opts.input_count == 1 && opts.output_file) {
-            // Single file with specified output
+            /* Single file with specified output */
             strcpy(output_asm, opts.output_file);
         } else {
-            // Multiple files or no output specified
+            /* Multiple files or no output specified */
             const char* base = input_file;
             const char* ext = strrchr(base, '.');
             size_t base_len = ext ? (size_t)(ext - base) : strlen(base);
@@ -262,7 +274,7 @@ int main(int argc, char** argv) {
             strcat(output_asm, ".asm");
         }
 
-        // Compile to assembly
+        /* Compile to assembly */
         if (!compile_to_asm(preprocessed, output_asm)) {
             fprintf(stderr, "Compilation failed for %s\n", input_file);
             unlink(preprocessed);
@@ -271,7 +283,7 @@ int main(int argc, char** argv) {
             return 1;
         }
 
-        // Clean up temp file
+        /* Clean up temp file */
         unlink(preprocessed);
         free(preprocessed);
 
@@ -280,8 +292,13 @@ int main(int argc, char** argv) {
 
     printf("Compilation successful!\n");
 
-    // Link and assemble if requested
+    /* Link and assemble if requested */
     if (opts.link) {
+        size_t base_len;
+        char* ext;
+        FILE* combined;
+        char cmd[512];
+        int ret;
         char* final_asm = malloc(256);
         char* final_bin = malloc(256);
 
@@ -291,15 +308,15 @@ int main(int argc, char** argv) {
             strcpy(final_bin, "a.out.bin");
         }
 
-        // Remove .bin extension to get base name
-        char* ext = strrchr(final_bin, '.');
-        size_t base_len = ext ? (size_t)(ext - final_bin) : strlen(final_bin);
+        /* Remove .bin extension to get base name */
+        ext = strrchr(final_bin, '.');
+        base_len = ext ? (size_t)(ext - final_bin) : strlen(final_bin);
         strncpy(final_asm, final_bin, base_len);
         final_asm[base_len] = '\0';
         strcat(final_asm, ".asm");
 
-        // Concatenate all assembly files
-        FILE* combined = fopen(final_asm, "w");
+        /* Concatenate all assembly files */
+        combined = fopen(final_asm, "w");
         if (!combined) {
             fprintf(stderr, "Error: Cannot create combined assembly file '%s'\n", final_asm);
             return 1;
@@ -307,11 +324,11 @@ int main(int argc, char** argv) {
 
         fprintf(combined, "; Combined assembly from %d source file(s)\n\n", asm_count);
 
-        for (int i = 0; i < asm_count; i++) {
+        for (i = 0; i < asm_count; i++) {
             FILE* asm_file = fopen(asm_files[i], "r");
             if (asm_file) {
-                fprintf(combined, "; ========== %s ==========\n", asm_files[i]);
                 char line[4096];
+                fprintf(combined, "; ========== %s ==========\n", asm_files[i]);
                 while (fgets(line, sizeof(line), asm_file)) {
                     fputs(line, combined);
                 }
@@ -325,10 +342,9 @@ int main(int argc, char** argv) {
         printf("Linking to %s...\n", final_asm);
         printf("Assembling with cpuasm...\n");
 
-        // Call cpuasm
-        char cmd[512];
+        /* Call cpuasm */
         snprintf(cmd, sizeof(cmd), "../cpuasm %s %s", final_asm, final_bin);
-        int ret = system(cmd);
+        ret = system(cmd);
 
         if (ret != 0) {
             fprintf(stderr, "Error: cpuasm failed\n");
@@ -343,7 +359,7 @@ int main(int argc, char** argv) {
         free(final_bin);
     } else {
         printf("Assembly files created:\n");
-        for (int i = 0; i < asm_count; i++) {
+        for (i = 0; i < asm_count; i++) {
             printf("  %s\n", asm_files[i]);
         }
         printf("\nTo assemble, run:\n");
@@ -351,7 +367,7 @@ int main(int argc, char** argv) {
             printf("  ../cpuasm %s output.bin\n", asm_files[0]);
         } else {
             printf("  cat %s", asm_files[0]);
-            for (int i = 1; i < asm_count; i++) {
+            for (i = 1; i < asm_count; i++) {
                 printf(" %s", asm_files[i]);
             }
             printf(" > combined.asm\n");
@@ -359,8 +375,8 @@ int main(int argc, char** argv) {
         }
     }
 
-    // Clean up
-    for (int i = 0; i < asm_count; i++) {
+    /* Clean up */
+    for (i = 0; i < asm_count; i++) {
         free(asm_files[i]);
     }
     free(asm_files);

@@ -404,7 +404,7 @@ typedef struct ASTNode {
         struct {
             char* asm_code;  /* Raw assembly code as string */
         } inline_asm;
-    };
+    } u;
 } ASTNode;
 
 /* AST creation functions */

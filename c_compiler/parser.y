@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "zpstrdup.h"
 #include "ast.h"
 
 extern int yylex();
@@ -14,7 +15,7 @@ void yyerror(const char* s);
 
 ASTNode* ast_root = NULL;
 
-// Global variables for passing type info to declarators
+/* Global variables for passing type info to declarators */
 static DataType current_decl_type;
 static char* current_decl_struct_name;
 static TypeModifier current_decl_mods;   /* signed/unsigned of the declaration being parsed (set once per declaration) */
@@ -24,7 +25,7 @@ static TypeModifier current_decl_mods;   /* signed/unsigned of the declaration b
 #define TS_TYPE(v)     ((DataType)((int)(v) & 0xFF))
 #define TS_MODS(v)     ((TypeModifier)(((int)(v) >> 8) & 0xFF))
 
-// Global variables for enum enumerators
+/* Global variables for enum enumerators */
 static char** enum_names_temp;
 static int* enum_values_temp;
 static int enum_count_temp;
@@ -194,12 +195,12 @@ union_declaration:
 
 enum_declaration:
     ENUM IDENTIFIER '{' {
-        // Initialize enum globals
+        /* Initialize enum globals */
         enum_names_temp = NULL;
         enum_values_temp = NULL;
         enum_count_temp = 0;
       } enumerator_list '}' ';' {
-        // enumerator_list has populated enum_names_temp and enum_values_temp
+        /* enumerator_list has populated enum_names_temp and enum_values_temp */
         $$ = ast_create_enum_decl($2, enum_names_temp, enum_values_temp, enum_count_temp);
         free($2);
     }
@@ -207,14 +208,15 @@ enum_declaration:
 
 typedef_declaration:
     TYPEDEF type_specifier pointer IDENTIFIER ';' {
-        // Simple typedef: typedef int myint; or typedef int* intptr;
+        /* Simple typedef: typedef int myint; or typedef int* intptr; */
         $$ = ast_create_typedef(TS_TYPE($2), $4, $3, NULL, 0);
         free($4);
     }
     | TYPEDEF type_specifier pointer IDENTIFIER array_sizes ';' {
-        // Array typedef: typedef int arr[10];
+        /* Array typedef: typedef int arr[10]; */
         int* sizes = malloc(sizeof(int) * $5.count);
-        for (int i = 0; i < $5.count; i++) {
+        int i;
+        for (i = 0; i < $5.count; i++) {
             sizes[i] = ((int*)$5.items)[i];
         }
         free($5.items);
@@ -228,7 +230,7 @@ struct_member_list:
         char* struct_name = (TS_TYPE($1) == TYPE_STRUCT) ? yylval.string : NULL;
         $$.items = malloc(sizeof(ASTNode*));
         $$.items[0] = ast_create_var_decl(TS_TYPE($1), $3, NULL, 0, 0, $2, struct_name);
-        $$.items[0]->var_decl.modifiers = TS_MODS($1);
+        $$.items[0]->u.var_decl.modifiers = TS_MODS($1);
         $$.count = 1;
         free($3);
     }
@@ -236,7 +238,7 @@ struct_member_list:
         char* struct_name = (TS_TYPE($2) == TYPE_STRUCT) ? yylval.string : NULL;
         $$.items = realloc($1.items, sizeof(ASTNode*) * ($1.count + 1));
         $$.items[$1.count] = ast_create_var_decl(TS_TYPE($2), $4, NULL, 0, 0, $3, struct_name);
-        $$.items[$1.count]->var_decl.modifiers = TS_MODS($2);
+        $$.items[$1.count]->u.var_decl.modifiers = TS_MODS($2);
         $$.count = $1.count + 1;
         free($4);
     }
@@ -249,41 +251,41 @@ enum_constant:
 
 enumerator_list:
     IDENTIFIER {
-        // First enumerator, value = 0
+        /* First enumerator, value = 0 */
         enum_count_temp = 1;
         enum_names_temp = malloc(sizeof(char*));
         enum_values_temp = malloc(sizeof(int));
-        enum_names_temp[0] = strdup($1);
+        enum_names_temp[0] = zp_strdup($1);
         enum_values_temp[0] = 0;
         free($1);
         $$.count = 1;
     }
     | IDENTIFIER '=' enum_constant {
-        // First enumerator with explicit value
+        /* First enumerator with explicit value */
         enum_count_temp = 1;
         enum_names_temp = malloc(sizeof(char*));
         enum_values_temp = malloc(sizeof(int));
-        enum_names_temp[0] = strdup($1);
+        enum_names_temp[0] = zp_strdup($1);
         enum_values_temp[0] = $3;
         free($1);
         $$.count = 1;
     }
     | enumerator_list ',' IDENTIFIER {
-        // Add enumerator, value = previous + 1
+        /* Add enumerator, value = previous + 1 */
         enum_count_temp++;
         enum_names_temp = realloc(enum_names_temp, sizeof(char*) * enum_count_temp);
         enum_values_temp = realloc(enum_values_temp, sizeof(int) * enum_count_temp);
-        enum_names_temp[enum_count_temp - 1] = strdup($3);
+        enum_names_temp[enum_count_temp - 1] = zp_strdup($3);
         enum_values_temp[enum_count_temp - 1] = enum_values_temp[enum_count_temp - 2] + 1;
         free($3);
         $$.count = enum_count_temp;
     }
     | enumerator_list ',' IDENTIFIER '=' enum_constant {
-        // Add enumerator with explicit value
+        /* Add enumerator with explicit value */
         enum_count_temp++;
         enum_names_temp = realloc(enum_names_temp, sizeof(char*) * enum_count_temp);
         enum_values_temp = realloc(enum_values_temp, sizeof(int) * enum_count_temp);
-        enum_names_temp[enum_count_temp - 1] = strdup($3);
+        enum_names_temp[enum_count_temp - 1] = zp_strdup($3);
         enum_values_temp[enum_count_temp - 1] = $5;
         free($3);
         $$.count = enum_count_temp;
@@ -307,19 +309,20 @@ variable_declaration:
     type_specifier {
         current_decl_type = TS_TYPE($1);
         current_decl_mods = TS_MODS($1);
-        // current_decl_struct_name is already set by type_specifier
+        /* current_decl_struct_name is already set by type_specifier */
       } declarator_list ';' {
-        // $3 is declarator_list (shifted due to mid-rule action)
+        /* $3 is declarator_list (shifted due to mid-rule action) */
         ASTNode** decls = malloc(sizeof(ASTNode*) * $3.count);
-        for (int i = 0; i < $3.count; i++) {
+        int i;
+        for (i = 0; i < $3.count; i++) {
             decls[i] = $3.items[i];
         }
         if ($3.count == 1) {
-            // Single declarator - return it directly
+            /* Single declarator - return it directly */
             $$ = decls[0];
             free(decls);
         } else {
-            // Multiple declarators - return var_decl_list
+            /* Multiple declarators - return var_decl_list */
             $$ = ast_create_var_decl_list(decls, $3.count);
         }
     }
@@ -354,24 +357,24 @@ initializer_list:
 declarator:
     pointer IDENTIFIER {
         $$ = ast_create_var_decl(current_decl_type, $2, NULL, 0, 0, $1, current_decl_struct_name);
-        $$->var_decl.modifiers = current_decl_mods;
+        $$->u.var_decl.modifiers = current_decl_mods;
         free($2);
     }
     | pointer IDENTIFIER '=' expression {
         $$ = ast_create_var_decl(current_decl_type, $2, $4, 0, 0, $1, current_decl_struct_name);
-        $$->var_decl.modifiers = current_decl_mods;
+        $$->u.var_decl.modifiers = current_decl_mods;
         free($2);
     }
     | pointer IDENTIFIER array_sizes {
         $$ = ast_create_var_decl_multidim(current_decl_type, $2, NULL, (int*)$3.items, $3.count, $1, current_decl_struct_name);
-        $$->var_decl.modifiers = current_decl_mods;
+        $$->u.var_decl.modifiers = current_decl_mods;
         free($2);
     }
     | pointer IDENTIFIER array_sizes '=' '{' initializer_list '}' {
-        // Array initialization: int arr[3] = {1, 2, 3};
+        /* Array initialization: int arr[3] = {1, 2, 3}; */
         ASTNode* init_list = ast_create_init_list($6.items, $6.count);
         $$ = ast_create_var_decl_multidim(current_decl_type, $2, init_list, (int*)$3.items, $3.count, $1, current_decl_struct_name);
-        $$->var_decl.modifiers = current_decl_mods;
+        $$->u.var_decl.modifiers = current_decl_mods;
         free($2);
     }
     ;
@@ -379,33 +382,33 @@ declarator:
 function_declaration:
     type_specifier IDENTIFIER '(' ')' compound_statement {
         $$ = ast_create_func_decl(TS_TYPE($1), $2, NULL, 0, $5);
-        $$->func_decl.return_modifiers = TS_MODS($1);
+        $$->u.func_decl.return_modifiers = TS_MODS($1);
         free($2);
     }
     | type_specifier IDENTIFIER '(' parameter_list ')' compound_statement {
         $$ = ast_create_func_decl(TS_TYPE($1), $2, $4.items, $4.count, $6);
-        $$->func_decl.return_modifiers = TS_MODS($1);
+        $$->u.func_decl.return_modifiers = TS_MODS($1);
         free($2);
     }
     /* prototypes: a declaration with no body records the signature (return/parameter widths) for calls */
     | type_specifier IDENTIFIER '(' ')' ';' {
         $$ = ast_create_func_decl(TS_TYPE($1), $2, NULL, 0, NULL);
-        $$->func_decl.return_modifiers = TS_MODS($1);
+        $$->u.func_decl.return_modifiers = TS_MODS($1);
         free($2);
     }
     | type_specifier IDENTIFIER '(' parameter_list ')' ';' {
         $$ = ast_create_func_decl(TS_TYPE($1), $2, $4.items, $4.count, NULL);
-        $$->func_decl.return_modifiers = TS_MODS($1);
+        $$->u.func_decl.return_modifiers = TS_MODS($1);
         free($2);
     }
     | EXTERN type_specifier IDENTIFIER '(' ')' ';' {
         $$ = ast_create_func_decl(TS_TYPE($2), $3, NULL, 0, NULL);
-        $$->func_decl.return_modifiers = TS_MODS($2);
+        $$->u.func_decl.return_modifiers = TS_MODS($2);
         free($3);
     }
     | EXTERN type_specifier IDENTIFIER '(' parameter_list ')' ';' {
         $$ = ast_create_func_decl(TS_TYPE($2), $3, $5.items, $5.count, NULL);
-        $$->func_decl.return_modifiers = TS_MODS($2);
+        $$->u.func_decl.return_modifiers = TS_MODS($2);
         free($3);
     }
     ;
@@ -415,7 +418,7 @@ parameter_list:
         char* struct_name = (TS_TYPE($1) == TYPE_STRUCT) ? yylval.string : NULL;
         $$.items = malloc(sizeof(ASTNode*));
         $$.items[0] = ast_create_param(TS_TYPE($1), $3, $2, struct_name);
-        $$.items[0]->param.modifiers = TS_MODS($1);
+        $$.items[0]->u.param.modifiers = TS_MODS($1);
         $$.count = 1;
         free($3);
     }
@@ -423,7 +426,7 @@ parameter_list:
         char* struct_name = (TS_TYPE($3) == TYPE_STRUCT) ? yylval.string : NULL;
         $$.items = realloc($1.items, sizeof(ASTNode*) * ($1.count + 1));
         $$.items[$1.count] = ast_create_param(TS_TYPE($3), $5, $4, struct_name);
-        $$.items[$1.count]->param.modifiers = TS_MODS($3);
+        $$.items[$1.count]->u.param.modifiers = TS_MODS($3);
         $$.count = $1.count + 1;
         free($5);
     }
@@ -438,7 +441,7 @@ statement:
     | variable_declaration { $$ = $1; }
     | switch_statement { $$ = $1; }
     | ASM '(' STRING_LITERAL ')' ';' {
-        // Strip quotes from string literal
+        /* Strip quotes from string literal */
         char* asm_code = $3;
         if (asm_code[0] == '"') {
             asm_code++;
@@ -469,10 +472,10 @@ statement_list:
         $$ = ast_create_block(stmts, 1);
     }
     | statement_list statement {
-        ASTNode** stmts = realloc($1->block.statements,
-                                   sizeof(ASTNode*) * ($1->block.stmt_count + 1));
-        stmts[$1->block.stmt_count] = $2;
-        $$ = ast_create_block(stmts, $1->block.stmt_count + 1);
+        ASTNode** stmts = realloc($1->u.block.statements,
+                                   sizeof(ASTNode*) * ($1->u.block.stmt_count + 1));
+        stmts[$1->u.block.stmt_count] = $2;
+        $$ = ast_create_block(stmts, $1->u.block.stmt_count + 1);
         free($1);
     }
     ;
@@ -586,15 +589,15 @@ jump_statement:
 expression:
     assignment_expression { $$ = $1; }
     | expression ',' assignment_expression {
-        // Build comma expression
+        /* Build comma expression */
         if ($1->type == AST_COMMA) {
-            // Extend existing comma expression
-            ASTNode** exprs = realloc($1->comma.expressions, sizeof(ASTNode*) * ($1->comma.expr_count + 1));
-            exprs[$1->comma.expr_count] = $3;
-            $$ = ast_create_comma(exprs, $1->comma.expr_count + 1);
+            /* Extend existing comma expression */
+            ASTNode** exprs = realloc($1->u.comma.expressions, sizeof(ASTNode*) * ($1->u.comma.expr_count + 1));
+            exprs[$1->u.comma.expr_count] = $3;
+            $$ = ast_create_comma(exprs, $1->u.comma.expr_count + 1);
             free($1);
         } else {
-            // Create new comma expression
+            /* Create new comma expression */
             ASTNode** exprs = malloc(sizeof(ASTNode*) * 2);
             exprs[0] = $1;
             exprs[1] = $3;

@@ -1,6 +1,7 @@
 %{
 #include <stdio.h>
 #include <string.h>
+#include "zpstrdup.h"
 #include "ast.h"
 #include "parser.tab.h"
 
@@ -16,7 +17,8 @@ int col_num = 1;
 \n                  { line_num++; col_num = 1; }
 "//".*              { /* ignore C++ style comments */ }
 "/*"([^*]|\*+[^*/])*"*/" {
-    for (int i = 0; i < yyleng; i++) {
+    int i;
+    for (i = 0; i < yyleng; i++) {
         if (yytext[i] == '\n') {
             line_num++;
             col_num = 1;
@@ -61,10 +63,10 @@ int col_num = 1;
 "__asm__"           { col_num += yyleng; return ASM; }
 "asm"               { col_num += yyleng; return ASM; }
 
-[a-zA-Z_][a-zA-Z0-9_]* { col_num += yyleng; yylval.string = strdup(yytext); return IDENTIFIER; }
+[a-zA-Z_][a-zA-Z0-9_]* { col_num += yyleng; yylval.string = zp_strdup(yytext); return IDENTIFIER; }
 [0-9]+[uUlL]*              { col_num += yyleng; yylval.number = (int)strtoul(yytext, NULL, 10); return NUMBER; }
 "0x"[0-9a-fA-F]+[uUlL]*    { col_num += yyleng; yylval.number = (int)strtoul(yytext, NULL, 16); return NUMBER; }
-\"([^"\\]|\\.)*\"   { col_num += yyleng; yylval.string = strdup(yytext); return STRING_LITERAL; }
+\"([^"\\]|\\.)*\"   { col_num += yyleng; yylval.string = zp_strdup(yytext); return STRING_LITERAL; }
 '.'                 { col_num += yyleng; yylval.number = yytext[1]; return CHAR_LITERAL; }
 '\\n'               { col_num += yyleng; yylval.number = '\n'; return CHAR_LITERAL; }
 '\\t'               { col_num += yyleng; yylval.number = '\t'; return CHAR_LITERAL; }
