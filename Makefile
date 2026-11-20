@@ -103,6 +103,7 @@ help:
 	@echo "  disassemblers  - Build disassemblers (cpudisasm, ppudisasm, apudisasm)"
 	@echo "  rom-tools      - Build ROM tools (rombuilder, rominspect)"
 	@echo "  utilities      - Build utilities (hexview, wav2mmp)"
+	@echo "  check          - Build, then run the assembler, linker, signer and disassembler tests"
 	@echo "  clean          - Remove all built files"
 	@echo "  install        - Install tools to /usr/local/bin"
 	@echo ""
@@ -115,4 +116,12 @@ help:
 	@echo "  Converters:    wav2mmp"
 	@echo "  Utilities:     hexview"
 
-.PHONY: all assemblers disassemblers rom-tools utilities clean install help
+# The fast tool tests (the fuzzer, tests/asm/fuzz_asm.py, and the compiler suite, tests/cc/run.sh, are run separately).
+check: all
+	sh tests/asm/check.sh
+	sh tests/asm/robust.sh
+	sh tests/c89/check.sh
+	python3 tests/link/check.py
+	python3 tests/disasm/check.py
+
+.PHONY: all assemblers disassemblers rom-tools utilities clean install help check
