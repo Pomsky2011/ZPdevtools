@@ -66,6 +66,9 @@
 
 #define ZPB_HDR_SIZE 64
 #define MAX_IMAGE    (16UL*1024UL*1024UL)
+/* The emulator's ROM window ($00-$7F) is 8 MB; ROM::load refuses a larger (or empty) romSize, so signing one
+ * would produce a ROM that can never be loaded. */
+#define MAX_ROM_SIZE (8UL*1024UL*1024UL)
 #define EM_ZP        0x5A50      /* private machine id: 'ZP' */
 #define PT_LOAD      1
 #define CHUNK_SIZE   16384UL     /* v3 manifest chunk size - must match
@@ -218,7 +221,7 @@ int main(int argc, char **argv)
     char title[32], dev[16];
     unsigned long entry = 0, img_size = 0, elf_entry = 0, elf_len = 0, total;
     unsigned long code_size = 0;
-    int have_entry = 0, have_codesize = 0, verbose = 0, i, trailer_ver = 3;
+    int have_entry = 0, have_codesize = 0, have_trailer = 0, verbose = 0, i, trailer_ver = 3;
     unsigned char *elf, *img;
     unsigned char hdr[ZPB_HDR_SIZE], digest[32], sig[ZP_RSA_BYTES];
     unsigned char *manifest = NULL;
@@ -236,7 +239,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i],"-o") && i+1<argc) out=argv[++i];
         else if (!strcmp(argv[i],"--entry") && i+1<argc){ entry=parse_addr(argv[++i]); have_entry=1; }
         else if (!strcmp(argv[i],"--codesize") && i+1<argc){ code_size=parse_addr(argv[++i]); have_codesize=1; }
-        else if (!strcmp(argv[i],"--trailer") && i+1<argc){ trailer_ver=atoi(argv[++i]); if (trailer_ver!=2 && trailer_ver!=3){ fprintf(stderr,"zpbuild: --trailer must be 2 or 3\n"); return 1; } }
+        else if (!strcmp(argv[i],"--trailer") && i+1<argc){ have_trailer=1; trailer_ver=atoi(argv[++i]); if (trailer_ver!=2 && trailer_ver!=3){ fprintf(stderr,"zpbuild: --trailer must be 2 or 3\n"); return 1; } }
         else if (!strcmp(argv[i],"--title") && i+1<argc){ memset(title,0,32); strncpy(title,argv[++i],31); }
         else if (!strcmp(argv[i],"--dev") && i+1<argc){ memset(dev,0,16); strncpy(dev,argv[++i],15); }
         else if (argv[i][0]=='-'){ fprintf(stderr,"zpbuild: unknown option '%s'\n",argv[i]); usage(argv[0]); return 1; }
@@ -253,6 +256,15 @@ int main(int argc, char **argv)
     free(elf);
     if (!img) return 1;
     if (!have_entry) entry = elf_entry;
+    if (img_size == 0 || img_size > MAX_ROM_SIZE) {
+        fprintf(stderr,"zpbuild: payload is %lu bytes; a ROM must be 1 - %lu bytes\n",img_size,MAX_ROM_SIZE);
+        free(img); return 1;
+    }
+    if (have_trailer && !have_codesize) {
+        /* Used to be ignored, silently producing a v1 ROM. */
+        fprintf(stderr,"zpbuild: --trailer needs --codesize\n");
+        free(img); return 1;
+    }
     if (have_codesize && code_size > img_size) {
         fprintf(stderr,"zpbuild: --codesize %lu exceeds payload size %lu\n",code_size,img_size);
         free(img); return 1;

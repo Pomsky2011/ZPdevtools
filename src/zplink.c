@@ -75,11 +75,20 @@ static void put32(unsigned char *p, unsigned long v)
 { p[0]=(unsigned char)(v&0xFF); p[1]=(unsigned char)((v>>8)&0xFF);
   p[2]=(unsigned char)((v>>16)&0xFF); p[3]=(unsigned char)((v>>24)&0xFF); }
 
-static unsigned long parse_addr(const char *s)
+/* Parse a 24-bit address (0xNNNN, $NNNN or decimal). Anything that is not wholly a number, or does not fit the
+ * 24-bit space, used to come back as 0 or as an address no segment could be loaded at; refuse it instead. */
+static int parse_addr(const char *s, unsigned long *out)
 {
-    if (s[0]=='0' && (s[1]=='x'||s[1]=='X')) return strtoul(s,NULL,16);
-    if (s[0]=='$') return strtoul(s+1,NULL,16);
-    return strtoul(s,NULL,10);
+    const char *digits = s; int base = 10; char *end; unsigned long v;
+    if (s[0]=='0' && (s[1]=='x'||s[1]=='X')) { digits=s+2; base=16; }
+    else if (s[0]=='$')                      { digits=s+1; base=16; }
+    v = strtoul(digits,&end,base);
+    if (end==digits || *end!='\0' || v>=MAX_IMAGE) {
+        fprintf(stderr,"zplink: bad address '%s' (expected 0 - 0xFFFFFF)\n",s);
+        return 0;
+    }
+    *out = v;
+    return 1;
 }
 
 /* Read a whole file into a freshly malloc'd buffer. */
@@ -110,8 +119,10 @@ static int add_segment(Config *c, const char *spec, int role,
         size_t n=(size_t)(at-spec);
         if (n>=sizeof(path)) n=sizeof(path)-1;
         memcpy(path,spec,n); path[n]='\0';
-        addr = parse_addr(at+1); expl=1;
+        if (!parse_addr(at+1,&addr)) return 0;
+        expl=1;
     } else {
+        if (role==ROLE_DATA) { fprintf(stderr,"zplink: --data needs FILE@ADDR ('%s')\n",spec); return 0; }
         strncpy(path,spec,sizeof(path)-1); path[sizeof(path)-1]='\0';
     }
     s=&c->seg[c->nseg];
@@ -120,6 +131,12 @@ static int add_segment(Config *c, const char *spec, int role,
     strncpy(s->name,nm,sizeof(s->name)-1);
     s->data=read_file(path,&s->size);
     if (!s->data) return 0;
+    if (s->addr + s->size > MAX_IMAGE) {
+        fprintf(stderr,"zplink: '%s' (0x%06lX + %lu bytes) runs past the end of the 24-bit address space\n",
+                path,s->addr,s->size);
+        free(s->data);
+        return 0;
+    }
     c->nseg++;
     return 1;
 }
@@ -280,7 +297,7 @@ int main(int argc, char **argv)
     for (i=1;i<argc;i++){
         if (!strcmp(argv[i],"-h")||!strcmp(argv[i],"--help")){ usage(argv[0]); return 0; }
         else if (!strcmp(argv[i],"-o") && i+1<argc) c.out=argv[++i];
-        else if (!strcmp(argv[i],"--entry") && i+1<argc){ c.entry=parse_addr(argv[++i]); c.have_entry=1; }
+        else if (!strcmp(argv[i],"--entry") && i+1<argc){ if(!parse_addr(argv[++i],&c.entry)) return 1; c.have_entry=1; }
         else if (!strcmp(argv[i],"--cpu") && i+1<argc){ if(!add_segment(&c,argv[++i],ROLE_CPU,"text",DEFAULT_CPU_BASE)) return 1; }
         else if (!strcmp(argv[i],"--ppu") && i+1<argc){ if(!add_segment(&c,argv[++i],ROLE_PPU,"ppu",DEFAULT_PPU_BASE)) return 1; }
         else if (!strcmp(argv[i],"--apu") && i+1<argc){ if(!add_segment(&c,argv[++i],ROLE_APU,"apu",DEFAULT_APU_BASE)) return 1; }
