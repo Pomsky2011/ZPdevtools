@@ -43,7 +43,7 @@ zplink -o OUT.elf
 | `--entry ADDR` | Entry point. Default: base of the first `--cpu` segment. |
 
 Put the entrypoint init stub at the front of your program by `.include`-ing
-`lib/crt0_entry.asm` at the top (see [SDK.md](SDK.md)); it sets 16-bit CPU mode
+`lib/crt0_entry.asm` at the top (see [README.md](README.md)); it sets 16-bit CPU mode
 and slides straight into `main`. `zplink` records that address as the ELF entry.
 
 ### ELF details
@@ -66,7 +66,7 @@ $ readelf -l game.elf
 
 ```
 zpbuild IN.elf -o OUT.zpb [--title "NAME"] [--dev "AUTHOR"] [--entry ADDR]
-        [--codesize N] [--selftest] [-v]
+        [--codesize N] [--trailer 2|3] [--selftest] [-v]
 ```
 
 | Option | Meaning |
@@ -75,7 +75,8 @@ zpbuild IN.elf -o OUT.zpb [--title "NAME"] [--dev "AUTHOR"] [--entry ADDR]
 | `-o OUT.zpb` | The signed ROM. |
 | `--title` / `--dev` | ROM metadata stamped into the header at signing time. |
 | `--entry ADDR` | Override the entry point (default: the ELF's entry). |
-| `--codesize N` | Opt into code + chunked-data-manifest signing (trailer version 3, see below): the first `N` bytes of the payload are "code," the rest is bulk "data." Omit for plain single-region signing (trailer version 1). |
+| `--codesize N` | Opt into splitting the payload into "code" (the first `N` bytes) and bulk "data" (the rest), signed as trailer version 3 by default (see below). Omit for plain single-region signing (trailer version 1). |
+| `--trailer 2\|3` | With `--codesize`: `3` (the default) signs the data as per-chunk hashes checked lazily; `2` signs code and data as two whole hashes checked at boot, with no manifest and no per-chunk checks. |
 | `--selftest` | Run the SHA-256 + RSA sign/verify/tamper self-test and exit. |
 
 The payload is wrapped in the emulator's 64-byte `ZPBHeader` (see
@@ -98,7 +99,7 @@ hardware or the emulator with `--boot`) finds the trailer at `64 + romSize`.
 
 ### Trailer versions
 
-`zpbuild` produces one of two trailer versions depending on `--codesize`
+`zpbuild` produces one of three trailer versions depending on `--codesize` and `--trailer`
 (full byte layout: `ZeroPoint/docs/zpb-format.md`):
 
 - **Version 1** (default, no `--codesize`): `"ZPSG"` tag + trailer version +
@@ -119,9 +120,9 @@ hardware or the emulator with `--boot`) finds the trailer at `64 + romSize`.
   `ZeroPoint/docs/zpb-format.md`'s "Runtime chunk verification" section).
   This is what makes an 8 MB cartridge boot in seconds instead of minutes
   while still making it impossible to consume unverified data undetected.
-  (Trailer version 2, code+whole-data-BLAKE2s with no chunk manifest, exists
-  in the format spec and the verifier still accepts it, but `zpbuild` no
-  longer produces it — superseded by version 3.)
+- **Version 2** (`--codesize N --trailer 2`): the code and the whole of the data are each BLAKE2s-hashed at boot, with no
+  chunk manifest and no per-chunk checks. It is practical because the console has a BLAKE2s engine (`$D80060`), which hashes
+  cartridge ROM in the background at about 0.5 s per 8 MB; the real Boot ROM verifies a v2 ROM through it.
 
 At runtime, the raw header + trailer (magic/version/digest/signature, plus
 `codeSize` and the manifest for version 3) are mapped read-only into CPU
@@ -163,15 +164,24 @@ openssl pkeyutl -verify -pubin -inkey devpub.pem \
 
 ---
 
-## Notes / known toolchain quirks
+## Segments and payload size
 
-- `rominspect` auto-detects and reports on all three artifact formats: the ELF
-  from `zplink` (lists load segments and `.text`/`.ppu`/`.apu`/… sections),
-  the signed `.zpb` from `zpbuild` (header + payload + `ZPSG` trailer, with
-  `-c` recomputing the SHA-256 digest), and raw/headerless blobs (a rombuilder
-  flat image or a bare assembler object). It follows the authoritative
-  `include/rom.h` header layout.
-- `cpuasm`'s opcode table and the emulator's opcode map currently disagree on
-  some encodings. The linker/signer are byte-agnostic (they never interpret
-  instructions), so they are unaffected — but hand-written asm may need that
-  reconciled before it runs on the emulator.
+`zplink` places each segment at its **ROM address** in the CPU's address space: the CPU segment at `$008000` is in bank `$00`,
+the default PPU blob at `$100000` is in bank `$10`, the default APU blob at `$200000` in bank `$20`. The payload is the whole
+located image from offset 0 up to the end of the highest segment, so a tiny program with the default bases is a **2 MB** ROM:
+
+```text
+$ make -C examples/link elf rom        # a 87-byte program plus two 256-byte blobs
+ROM written: game.zpb
+  header    : 64 bytes (ZPB v2, signed)
+  payload   : 2097408 bytes  (entry 0x008000)
+  signature : RSA-2048 PKCS#1 v1.5 / SHA-256 (256 bytes)
+```
+
+Pass `--ppu FILE@ADDR` and `--apu FILE@ADDR` to move the blobs lower, and the ROM shrinks with them.
+
+## Inspecting the result
+
+`rominspect` recognises all three artifact types: the ELF from `zplink` (load segments and sections), the signed `.zpb` from
+`zpbuild` (header, trailer, and with `-c` a recomputed digest), and raw blobs. `rominspect game.zpb -c` prints the header
+fields, the signature algorithm, and the integrity check; `rominspect game.elf` lists the segments with their addresses.

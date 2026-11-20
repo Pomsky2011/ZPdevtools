@@ -13,7 +13,7 @@
 ; docs/boot-handoff.md), $FF (chunk verify - zpb-format.md) and, with the real Boot ROM or
 ; not, every signature below $F0 (the cartridge's own software interrupt via $00:FFE4).
 ;
-; C ABI (shared by zpcc and def88186cc; 16-bit mode, see docs/cpu/conventions.txt):
+; C ABI (shared by zpcc and def88186cc; 16-bit mode, see docs/sdk/abi.md):
 ;
 ;       zpu32 zp_cop32(zpu8 sig, zpu16 a, zpu16 x, zpu16 y);
 ;               A = sig, X = a, Y = x, [S+3] = y (4th argument, pushed by the caller)

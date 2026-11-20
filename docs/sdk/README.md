@@ -90,17 +90,14 @@ The loaders are written array-free (sequential register writes rather than a
 | `zp_dma.asm`     | `zp_dma_load` for hand-written asm (boot ROM, no C runtime). |
 | `zp_long.asm`    | 32-bit runtime for the C compilers (`long` add/sub/mul/div/mod, shifts, bitwise, compares). Link it into any program that does `long` arithmetic. Tested by `ZeroPoint/bin/test_zp_long`. |
 
-The C ABI (shared by both compilers) is 16-bit mode: the first three register words (A, X, Y)
-carry the leading arguments - a 32-bit argument takes two (A:X or X:Y, low word first) - and
-the first argument that does not fit, and every later one, is pushed right to left. The result
-is in A, or A:X (low, high) for a 32-bit value. `int` is 16 bits, `long` 32. `S` points at the
-next free stack byte, so the top of the stack is `S+1`. See `docs/cpu/conventions.txt`.
+The C calling convention, shared by both compilers, is in [abi.md](abi.md): 16-bit mode, the first three words of arguments in
+`A`, `X` and `Y`, the rest pushed right to left, the result in `A` (or `A:X` for 32 bits). `int` is 16 bits, `long` 32.
 
-**Compilers.** Both `zpcc` and `def88186cc` are regression-tested by `tests/cc/run.sh`, which
-compiles each test with the host gcc and with both compilers and compares what they record when
-run in the emulator. Known gaps (all three share one cause, the CPU has no register-indirect
-addressing outside bank 0): array indexing, pointer dereference and struct members only reach
-bank $00, and global variables are not supported by `def88186cc`.
+**Compilers.** Both `zpcc` and `def88186cc` are regression-tested by `tests/cc/run.sh`, which compiles each test with the host
+gcc and with both compilers and compares what they record when run in the emulator. Arrays, pointers and structs work in
+both: a pointer is a 16-bit offset into bank `$80`, and locals live in the stack frame. `zpcc` global variables are ROM
+(readable by name, not writable or addressable); `def88186cc` has no globals. Neither accepts string literals as pointers
+or struct values. The exact list for `def88186cc` is in `c_compiler/README.md`.
 
 ## COP calls — `zp_cop.h`
 
@@ -143,5 +140,5 @@ recursive macro expansion, integer suffixes) and `-I`/`-D` forwarding in
 ## Linking
 
 Once you have `main.bin` (+ PPU/APU blobs), link with
-[`zplink`](LINKER.md) into an ELF for debugging and a signed ROM for shipping.
-A complete worked example is in `examples/link/` (`make entry`, `make rom`).
+[`zplink`](linker.md) into an ELF for debugging and a signed ROM for shipping.
+A complete worked example is in `examples/link/` (`make elf` links, `make rom` signs).

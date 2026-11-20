@@ -16,7 +16,7 @@ Files:
   (the init stub that slides into `main`), DMA-loads a PPU blob, and starts the
   PPU. Assembles with `cpuasm` alone.
 - `main.c` — the same idea written against the C SDK; compiles with both `zpcc`
-  and `def88186cc -DZP_CC_DOS` (see `../../docs/SDK.md`). The Makefile does not build it.
+  and `def88186cc -DZP_CC_DOS` (see `../../docs/sdk/README.md`). The Makefile does not build it.
 - `gfx.bin` / `snd.bin` — placeholder PPU/APU asset blobs the Makefile generates (replace with
   `ppuasm`/`apuasm`/`wav2mmp` output; keep them 256-byte aligned).
 

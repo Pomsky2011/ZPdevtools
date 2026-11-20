@@ -348,7 +348,7 @@ int main() {
 
 ## Architecture Notes
 
-The compiler follows the DEF88186 calling conventions (spelled out in `../docs/cpu/conventions.txt`):
+The compiler follows the DEF88186 calling conventions (spelled out in `../docs/sdk/abi.md`):
 - The first three argument words go in A, X and Y; the rest go on the stack
 - Return value: A register
 - 16-bit mode by default (REP #$30)

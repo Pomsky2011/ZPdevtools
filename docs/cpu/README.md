@@ -18,8 +18,7 @@ comment or the 65C816 data sheet says otherwise, the emulator wins.
 | [timing.md](timing.md) | The cycle model and how many cycles you get per scanline and per frame. |
 | [programming-guide.md](programming-guide.md) | Startup, working with M/X, memory, loops, interrupts. Every example is assembled by `scripts/check_doc_asm.py`. |
 
-The C calling convention is not hardware, so it isn't here: see [conventions.txt](conventions.txt) until the SDK
-documents replace it.
+The C calling convention is not hardware, so it isn't here: see [../sdk/abi.md](../sdk/abi.md).
 
 ## Three things that will bite you
 

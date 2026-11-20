@@ -86,6 +86,8 @@ Because a sector wraps at its end and blocks hold 12 samples, a looping tone's l
 
 - `scripts/zpsnd.py` bakes sine, saw, square, noise and WAV samples, with loop points and crossfades, into a ready-made STL
   and SST image ([zpsnd.md](zpsnd.md)).
-- `wav2mmp` (`executables/wav2mmp`, `scripts/wav2mmp.py`) converts a WAV to blocks.
+- `wav2mmp` (`executables/wav2mmp`, `scripts/wav2mmp.py`) converts a WAV to blocks but is **out of date**: the assembly it writes uses
+  `SBF`, which no longer exists, and its usage comments recommend `WRH`/`WRL`, which are not implemented. Its output does not
+  assemble. Use `zpsnd.py`.
 - `examples/apu/play_sample.asm` writes a block and an STL entry by hand and starts a channel, and is the shortest complete
   example.

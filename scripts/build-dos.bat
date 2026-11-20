@@ -121,7 +121,7 @@ echo   BIN\CPUASM examples\cpu\test.asm output.bin
 echo   BIN\ROMBUILDER -cpu cpu.bin -ppu ppu.bin -o game.rom
 echo.
 echo NOTE: All tools use C89-compliant code for DOS compatibility.
-echo       See README_DOS.TXT for detailed information.
+echo       See docs\dos\README.md for detailed information.
 echo.
 goto :end
 
@@ -138,9 +138,7 @@ echo   3. Sufficient disk space (100 MB minimum)
 echo   4. Sufficient memory (2 MB minimum)
 echo.
 echo For help, see:
-echo   - README_DOS.TXT
-echo   - DOS_BUILD.MD
-echo   - C89_PORTING_GUIDE.TXT
+echo   - docs\dos\README.md
 echo.
 
 :end

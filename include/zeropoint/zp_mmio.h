@@ -16,11 +16,11 @@
 
 /* ---- Top-level 24-bit memory map (bank granularity) -------------------- */
 #define ZP_ROM_BASE     0x000000UL   /* $00-$7F : ROM        (8 MB)  */
-#define ZP_RAM_BASE     0x800000UL   /* $80-$9F : RAM        (2 MB)  */
+#define ZP_RAM_BASE     0x800000UL   /* $80-$9F : RAM        (2 MB mapped; the console has 128 KB) */
 #define ZP_APU_WIN_BASE 0xA00000UL   /* $A0     : APU window (64 KB) */
 #define ZP_PPU_WIN_BASE 0xB00000UL   /* $B0     : PPU window (64 KB) */
 #define ZP_IO_BASE      0xD80000UL   /* $D8     : I/O registers      */
-#define ZP_BOOT_BASE    0xFF0000UL   /* $FF     : Boot ROM   (64 KB) */
+#define ZP_BOOT_BASE    0xE00000UL   /* $E0     : Boot ROM   (64 KB) */
 
 /* ---- I/O register blocks (bank $D8) ------------------------------------ */
 #define ZP_IO_PPU       (ZP_IO_BASE + 0x0000UL)  /* PPU control   ($D80000) */

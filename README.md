@@ -3,7 +3,7 @@
 The toolchain for the ZeroPoint fantasy console: assemblers, two C compilers, a linker and ROM signer,
 disassemblers and a few utilities. The emulator lives in the sibling `ZeroPoint` repo.
 
-Every tool except `zpcc` (C++, needs clang) is strict C89, so the rest can also be built on MS-DOS (see `docs/dos/DOS_BUILD.md`).
+Every tool except `zpcc` (C++, needs clang) is strict C89, so the rest can also be built on MS-DOS (see `docs/dos/README.md`).
 
 ## Tools
 
@@ -60,14 +60,14 @@ python3 tests/asm/fuzz_asm.py    # assembler fuzzer (not part of make check)
 
 | | |
 |---|---|
-| `docs/DEV-TOOLS.md` | Usage of every tool |
-| `docs/LINKER.md`, `docs/SDK.md` | zplink/zpbuild and the C SDK (`include/zeropoint/`, `lib/`) |
-| `docs/ROMBUILDER_GUIDE.md`, `docs/ASM_MULTIFILE_GUIDE.md` | rombuilder, multi-file assembly |
+| `docs/README.md` | Index of all the documentation |
+| `docs/tools/` | Every tool's usage and traps, `rombuilder` (legacy), multi-file assembly |
+| `docs/sdk/` | The C SDK (`include/zeropoint/`, `lib/`), the C calling convention (`abi.md`), `zplink` and `zpbuild` (`linker.md`) |
 | `docs/cpu/` | DEF88186: architecture, addressing modes, instructions, opcode table, memory map, interrupts, timing, programming guide |
 | `spec/` | Machine-read specs: the CPU opcode map and the measured per-opcode table (see `spec/README.md`) |
 | `docs/ppu/` | PPU: architecture, instruction set, graphics (tiles, blitters, tile-row queue), `ppuasm`, programming guide, `layers.md` (BG layers + sprites microcode, in `ucode/layers/`) |
 | `docs/apu/` | APU: architecture, instruction set, mixer (MMP), sample storage, programming guide, ZPA sequencer, ADPCM player |
-| `docs/dos/` | Building on MS-DOS, C89 porting rules |
+| `docs/dos/` | Building on MS-DOS and the C89 rules |
 | `c_compiler/README.md` | What `def88186cc` accepts and refuses |
 | `llvm_compiler/README.md` | `zpcc` |
 
