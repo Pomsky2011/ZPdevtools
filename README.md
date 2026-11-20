@@ -63,7 +63,8 @@ python3 tests/asm/fuzz_asm.py    # assembler fuzzer (not part of make check)
 | `docs/DEV-TOOLS.md` | Usage of every tool |
 | `docs/LINKER.md`, `docs/SDK.md` | zplink/zpbuild and the C SDK (`include/zeropoint/`, `lib/`) |
 | `docs/ROMBUILDER_GUIDE.md`, `docs/ASM_MULTIFILE_GUIDE.md` | rombuilder, multi-file assembly |
-| `docs/cpu/` | DEF88186: instruction set, encoding, addressing, memory map, calling conventions |
+| `docs/cpu/` | DEF88186: architecture, addressing modes, instructions, opcode table, memory map, interrupts, timing, programming guide |
+| `spec/` | Machine-read specs: the CPU opcode map and the measured per-opcode table (see `spec/README.md`) |
 | `docs/ppu/` | `ucode.txt` (instruction reference), `preset-e-and-shorthands.txt`, `layers.md` (BG layers + sprites microcode, in `ucode/layers/`) |
 | `docs/apu/` | APU: `README.txt` is the index; also MMP, SST, ZPA sequencer, ADPCM |
 | `docs/dos/` | Building on MS-DOS, C89 porting rules |

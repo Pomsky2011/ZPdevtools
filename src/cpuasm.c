@@ -1037,7 +1037,7 @@ void init_instructions(void) {
     INST("CPY", AM_ABSOLUTE, 0x7A, 3, 3);
 
     /* Hardware extensions (8086-inspired) - MUL: A * operand -> A:X            */
-    /* (opcodes per docs/cpu/DEF88186.csv)                                      */
+    /* (opcodes per spec/DEF88186.csv)                                        */
     INST("MUL", AM_IMMEDIATE,          0xEF, 3, 8);
     INST("MUL", AM_ABSOLUTE,           0xF0, 3, 9);
     INST("MUL", AM_ABSOLUTE_X,         0xF1, 3, 9);
@@ -1128,7 +1128,7 @@ int assemble_line(char *line) {
     /* BNE/BPL/BVC/BCC have no real DEF88186 opcode - all 256 dispatch-table
      * entries in cpu_instructions.cpp are already assigned, so unlike a
      * documentation gap this can't be filled with a new hardware opcode.
-     * These mnemonics are used throughout ZPdevtools/docs/cpu (see the .txt
+     * These mnemonics are used throughout ZPdevtools/docs/cpu (see the .md
      * files there) and existing .def sources anyway, so synthesize them from the real
      * complementary branch plus an unconditional BRA:
      *   <complementary branch> skip   ; taken iff the real condition is false
