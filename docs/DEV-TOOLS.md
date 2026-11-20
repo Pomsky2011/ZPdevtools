@@ -103,7 +103,7 @@ ppuasm draw_pixel.asm -o draw_pixel.bin
 
 **See Also:**
 - `docs/ppu/` - PPU documentation
-- `docs/ppu/preset-e-and-shorthands.txt` - Shorthand guide
+- `docs/ppu/assembler.md` - Assembler and shorthand guide
 - `examples/ppu/` - Example microcode
 
 ---

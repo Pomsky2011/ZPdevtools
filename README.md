@@ -65,7 +65,7 @@ python3 tests/asm/fuzz_asm.py    # assembler fuzzer (not part of make check)
 | `docs/ROMBUILDER_GUIDE.md`, `docs/ASM_MULTIFILE_GUIDE.md` | rombuilder, multi-file assembly |
 | `docs/cpu/` | DEF88186: architecture, addressing modes, instructions, opcode table, memory map, interrupts, timing, programming guide |
 | `spec/` | Machine-read specs: the CPU opcode map and the measured per-opcode table (see `spec/README.md`) |
-| `docs/ppu/` | `ucode.txt` (instruction reference), `preset-e-and-shorthands.txt`, `layers.md` (BG layers + sprites microcode, in `ucode/layers/`) |
+| `docs/ppu/` | PPU: architecture, instruction set, graphics (tiles, blitters, tile-row queue), `ppuasm`, programming guide, `layers.md` (BG layers + sprites microcode, in `ucode/layers/`) |
 | `docs/apu/` | APU: architecture, instruction set, mixer (MMP), sample storage, programming guide, ZPA sequencer, ADPCM player |
 | `docs/dos/` | Building on MS-DOS, C89 porting rules |
 | `c_compiler/README.md` | What `def88186cc` accepts and refuses |
@@ -75,9 +75,9 @@ python3 tests/asm/fuzz_asm.py    # assembler fuzzer (not part of make check)
 
 ### PPU assembler notes
 
-Assembler shorthands (label jumps such as `JMR loop`, `PUSH`/`POP`/`JSR`/`RET`, `HLT`) use target registers 0 and 1
-internally. Use target registers 2 and 3 for manual `TARREG`/`SETBYTE`/`BUILD` work. Full reference:
-`docs/ppu/preset-e-and-shorthands.txt` and `docs/ppu/ucode.txt`.
+Assembler shorthands that jump to a label (`JMR loop`, `JNZ loop`, `JSR`, `HLT`) use target registers 0 and 1
+internally (`PUSH`, `POP` and `RET` do not). Use target registers 2 and 3 for manual `TARREG`/`SETBYTE`/`BUILD` work. Full reference:
+`docs/ppu/assembler.md` and `docs/ppu/instruction-set.md`.
 
 ## License
 
