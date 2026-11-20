@@ -159,9 +159,34 @@ static void trim(char *str) {
 
 static void to_upper(char *str) {
     while (*str) {
-        *str = toupper(*str);
+        *str = (char)toupper((unsigned char)*str);
         str++;
     }
+}
+
+/* Every fixed-size field (labels, operands, aliases, mnemonics) is filled
+ * through this, so an over-long name is an error, not a stack/heap overflow. */
+static void copy_field(char *dst, size_t size, const char *src, int line_num) {
+    if (strlen(src) >= size) error(line_num, "Name or operand too long");
+    strcpy(dst, src);
+}
+
+/* fgets() into a MAX_LINE_LENGTH buffer silently splits a longer line in two;
+ * refuse it instead. */
+static void check_line_fit(FILE *fp, const char *line, int line_num) {
+    size_t n = strlen(line);
+    if (n == MAX_LINE_LENGTH - 1 && line[n - 1] != '\n') {
+        int c = getc(fp);
+        if (c != EOF && c != '\n') error(line_num, "Line too long");
+    }
+}
+
+/* Next free slot in the expanded-source table. */
+static char *new_line(int line_num) {
+    if (expanded_line_count >= MAX_EXPANDED_LINES) {
+        error(line_num, "Program too large (too many lines after expansion)");
+    }
+    return expanded_lines[expanded_line_count++];
 }
 
 /* Apply aliases to a string */
@@ -180,7 +205,7 @@ static int parse_register(const char *str, int line_num) {
     char temp[64];
     int reg_num;
 
-    strcpy(temp, str);
+    copy_field(temp, sizeof(temp), str, line_num);
     to_upper(temp);
 
     /* Special registers */
@@ -221,7 +246,7 @@ static int parse_byte_selector(const char *str, int line_num) {
     char temp[64];
     int value;
 
-    strcpy(temp, str);
+    copy_field(temp, sizeof(temp), str, line_num);
     to_upper(temp);
 
     if (strcmp(temp, "LSB") == 0) return 0;
@@ -507,7 +532,7 @@ static unsigned short assemble_preset_e(Instruction *inst) {
         suboperand = (reg_x << 4) | reg_y;
     }
 
-    return (0xE << 12) | (subop << 10) | (suboperand & 0x3FF);
+    return (unsigned short)((0xE << 12) | (subop << 10) | (suboperand & 0x3FF));
 }
 
 /* Assemble preset F instruction */
@@ -560,7 +585,7 @@ static unsigned short assemble_preset_f(Instruction *inst) {
         suboperand = (reg_x << 2);
     }
 
-    return (0xF << 12) | (subop << 8) | (suboperand & 0xFF);
+    return (unsigned short)((0xF << 12) | (subop << 8) | (suboperand & 0xFF));
 }
 
 /* Assemble single instruction */
@@ -623,7 +648,7 @@ static unsigned short assemble_instruction(Instruction *inst) {
         operand = (reg_x << 6) | reg_y;
     }
 
-    return (opcode << 12) | (operand & 0xFFF);
+    return (unsigned short)((opcode << 12) | (operand & 0xFFF));
 }
 
 /* Expand shorthands before assembly */
@@ -644,6 +669,7 @@ static void expand_shorthands(FILE *fp) {
 
     while (fgets(line, sizeof(line), fp)) {
         line_num++;
+        check_line_fit(fp, line, line_num);
 
         /* Remove comments */
         p = strchr(line, ';');
@@ -651,7 +677,7 @@ static void expand_shorthands(FILE *fp) {
 
         trim(line);
         if (strlen(line) == 0) {
-            strcpy(expanded_lines[expanded_line_count++], "");
+            strcpy(new_line(line_num), "");
             continue;
         }
 
@@ -659,8 +685,9 @@ static void expand_shorthands(FILE *fp) {
         p = strstr(line, "=");
         if (p) {
             *p = 0;
-            strcpy(left, line);
-            strcpy(right, p + 1);
+            if (alias_count >= MAX_ALIASES) error(line_num, "Too many aliases");
+            copy_field(left, sizeof(left), line, line_num);
+            copy_field(right, sizeof(right), p + 1, line_num);
             trim(left);
             trim(right);
 
@@ -669,10 +696,10 @@ static void expand_shorthands(FILE *fp) {
             if (left[0] == '$') left_ptr = left + 1;
 
             /* Alias syntax: LEFT = RIGHT means "replace RIGHT with LEFT" */
-            strcpy(aliases[alias_count].from, right);  /* what to replace */
-            strcpy(aliases[alias_count].to, left_ptr); /* replace with this */
+            copy_field(aliases[alias_count].from, MAX_LABEL_LENGTH, right, line_num);  /* what to replace */
+            copy_field(aliases[alias_count].to, MAX_LABEL_LENGTH, left_ptr, line_num); /* replace with this */
             alias_count++;
-            strcpy(expanded_lines[expanded_line_count++], "");
+            strcpy(new_line(line_num), "");
             continue;
         }
 
@@ -682,7 +709,7 @@ static void expand_shorthands(FILE *fp) {
         /* Handle labels */
         label_end = strchr(temp_line, ':');
         if (label_end) {
-            strcpy(expanded_lines[expanded_line_count++], line);
+            strcpy(new_line(line_num), line);
             continue;
         }
 
@@ -692,17 +719,17 @@ static void expand_shorthands(FILE *fp) {
         op2[0] = 0;
         token = strtok(temp_line, " \t,");
         if (token) {
-            strcpy(mnemonic, token);
+            copy_field(mnemonic, sizeof(mnemonic), token, line_num);
             to_upper(mnemonic);
 
             token = strtok(NULL, " \t,");
             if (token) {
-                strcpy(op1, token);
+                copy_field(op1, sizeof(op1), token, line_num);
                 trim(op1);
 
                 token = strtok(NULL, " \t,");
                 if (token) {
-                    strcpy(op2, token);
+                    copy_field(op2, sizeof(op2), token, line_num);
                     trim(op2);
                 }
             }
@@ -718,10 +745,10 @@ static void expand_shorthands(FILE *fp) {
             if (constant_count >= MAX_CONSTANTS) {
                 error(line_num, "Too many CONST definitions");
             }
-            strcpy(constants[constant_count].name, op1);
+            copy_field(constants[constant_count].name, MAX_LABEL_LENGTH, op1, line_num);
             constants[constant_count].value = eval_expr(op2, line_num);
             constant_count++;
-            strcpy(expanded_lines[expanded_line_count++], "");
+            strcpy(new_line(line_num), "");
             continue;
         }
 
@@ -729,12 +756,12 @@ static void expand_shorthands(FILE *fp) {
         if (strcmp(mnemonic, "HLT") == 0) {
             char label[64];
             sprintf(label, "@halt_%d", auto_label_counter++);
-            sprintf(expanded_lines[expanded_line_count++], "%s:", label);
-            sprintf(expanded_lines[expanded_line_count++], "TARREG 0, LSB, PC");
-            sprintf(expanded_lines[expanded_line_count++], "TARREG 1, MSB, PC");
-            sprintf(expanded_lines[expanded_line_count++], "SETBYTE 0, %s", label);
-            sprintf(expanded_lines[expanded_line_count++], "SETBYTE 1, %s", label);
-            sprintf(expanded_lines[expanded_line_count++], "JMR");
+            sprintf(new_line(line_num), "%s:", label);
+            sprintf(new_line(line_num), "TARREG 0, LSB, PC");
+            sprintf(new_line(line_num), "TARREG 1, MSB, PC");
+            sprintf(new_line(line_num), "SETBYTE 0, %s", label);
+            sprintf(new_line(line_num), "SETBYTE 1, %s", label);
+            sprintf(new_line(line_num), "JMR");
             continue;
         }
 
@@ -745,29 +772,29 @@ static void expand_shorthands(FILE *fp) {
          * SETDP before decrementing, so they read the current top-of-stack
          * word, not where the old PUSH order wrote). */
         if (strcmp(mnemonic, "PUSH") == 0) {
-            sprintf(expanded_lines[expanded_line_count++], "INC SP");
-            sprintf(expanded_lines[expanded_line_count++], "INC SP");
-            sprintf(expanded_lines[expanded_line_count++], "SETDP SP");
-            sprintf(expanded_lines[expanded_line_count++], "MOVDP %s", op1);
+            sprintf(new_line(line_num), "INC SP");
+            sprintf(new_line(line_num), "INC SP");
+            sprintf(new_line(line_num), "SETDP SP");
+            sprintf(new_line(line_num), "MOVDP %s", op1);
             continue;
         }
 
         /* Expand POP shorthand */
         if (strcmp(mnemonic, "POP") == 0) {
-            sprintf(expanded_lines[expanded_line_count++], "SETDP SP");
-            sprintf(expanded_lines[expanded_line_count++], "DEC SP");
-            sprintf(expanded_lines[expanded_line_count++], "DEC SP");
-            sprintf(expanded_lines[expanded_line_count++], "MOV %s", op1);
+            sprintf(new_line(line_num), "SETDP SP");
+            sprintf(new_line(line_num), "DEC SP");
+            sprintf(new_line(line_num), "DEC SP");
+            sprintf(new_line(line_num), "MOV %s", op1);
             continue;
         }
 
         /* Expand RET shorthand */
         if (strcmp(mnemonic, "RET") == 0) {
-            sprintf(expanded_lines[expanded_line_count++], "SETDP SP");
-            sprintf(expanded_lines[expanded_line_count++], "DEC SP");
-            sprintf(expanded_lines[expanded_line_count++], "DEC SP");
-            sprintf(expanded_lines[expanded_line_count++], "MOV PC");
-            sprintf(expanded_lines[expanded_line_count++], "JMR");
+            sprintf(new_line(line_num), "SETDP SP");
+            sprintf(new_line(line_num), "DEC SP");
+            sprintf(new_line(line_num), "DEC SP");
+            sprintf(new_line(line_num), "MOV PC");
+            sprintf(new_line(line_num), "JMR");
             continue;
         }
 
@@ -783,20 +810,20 @@ static void expand_shorthands(FILE *fp) {
         if (strcmp(mnemonic, "JSR") == 0) {
             char ret_label[64];
             sprintf(ret_label, "@jsr_ret_%d", auto_label_counter++);
-            sprintf(expanded_lines[expanded_line_count++], "TARREG 0, LSB, PC");
-            sprintf(expanded_lines[expanded_line_count++], "TARREG 1, MSB, PC");
-            sprintf(expanded_lines[expanded_line_count++], "SETBYTE 0, %s", ret_label);
-            sprintf(expanded_lines[expanded_line_count++], "SETBYTE 1, %s", ret_label);
-            sprintf(expanded_lines[expanded_line_count++], "INC SP");
-            sprintf(expanded_lines[expanded_line_count++], "INC SP");
-            sprintf(expanded_lines[expanded_line_count++], "SETDP SP");
-            sprintf(expanded_lines[expanded_line_count++], "MOVDP PC");
-            sprintf(expanded_lines[expanded_line_count++], "TARREG 0, LSB, PC");
-            sprintf(expanded_lines[expanded_line_count++], "TARREG 1, MSB, PC");
-            sprintf(expanded_lines[expanded_line_count++], "SETBYTE 0, %s", op1);
-            sprintf(expanded_lines[expanded_line_count++], "SETBYTE 1, %s", op1);
-            sprintf(expanded_lines[expanded_line_count++], "JMR");
-            sprintf(expanded_lines[expanded_line_count++], "%s:", ret_label);
+            sprintf(new_line(line_num), "TARREG 0, LSB, PC");
+            sprintf(new_line(line_num), "TARREG 1, MSB, PC");
+            sprintf(new_line(line_num), "SETBYTE 0, %s", ret_label);
+            sprintf(new_line(line_num), "SETBYTE 1, %s", ret_label);
+            sprintf(new_line(line_num), "INC SP");
+            sprintf(new_line(line_num), "INC SP");
+            sprintf(new_line(line_num), "SETDP SP");
+            sprintf(new_line(line_num), "MOVDP PC");
+            sprintf(new_line(line_num), "TARREG 0, LSB, PC");
+            sprintf(new_line(line_num), "TARREG 1, MSB, PC");
+            sprintf(new_line(line_num), "SETBYTE 0, %s", op1);
+            sprintf(new_line(line_num), "SETBYTE 1, %s", op1);
+            sprintf(new_line(line_num), "JMR");
+            sprintf(new_line(line_num), "%s:", ret_label);
             continue;
         }
 
@@ -804,16 +831,16 @@ static void expand_shorthands(FILE *fp) {
         if ((strcmp(mnemonic, "JMR") == 0 || strcmp(mnemonic, "JMZ") == 0 ||
              strcmp(mnemonic, "JNZ") == 0 || strcmp(mnemonic, "JMG") == 0 ||
              strcmp(mnemonic, "JNG") == 0 || strcmp(mnemonic, "JML") == 0) && strlen(op1) > 0) {
-            sprintf(expanded_lines[expanded_line_count++], "TARREG 0, LSB, PC");
-            sprintf(expanded_lines[expanded_line_count++], "TARREG 1, MSB, PC");
-            sprintf(expanded_lines[expanded_line_count++], "SETBYTE 0, %s", op1);
-            sprintf(expanded_lines[expanded_line_count++], "SETBYTE 1, %s", op1);
-            sprintf(expanded_lines[expanded_line_count++], "%s", mnemonic);
+            sprintf(new_line(line_num), "TARREG 0, LSB, PC");
+            sprintf(new_line(line_num), "TARREG 1, MSB, PC");
+            sprintf(new_line(line_num), "SETBYTE 0, %s", op1);
+            sprintf(new_line(line_num), "SETBYTE 1, %s", op1);
+            sprintf(new_line(line_num), "%s", mnemonic);
             continue;
         }
 
         /* Default: copy line as-is */
-        strcpy(expanded_lines[expanded_line_count++], line);
+        strcpy(new_line(line_num), line);
     }
 }
 
@@ -825,7 +852,7 @@ static void first_pass(void) {
 
     for (i = 0; i < expanded_line_count; i++) {
         char line[MAX_LINE_LENGTH];
-        char *p, *label_end;
+        char *label_end;
 
         strcpy(line, expanded_lines[i]);
         line_num++;
@@ -837,21 +864,23 @@ static void first_pass(void) {
         label_end = strchr(line, ':');
         if (label_end) {
             char label_name[MAX_LABEL_LENGTH];
-            int label_len = label_end - line;
+            size_t label_len = (size_t)(label_end - line);
 
+            if (label_len >= sizeof(label_name)) error(line_num, "Label too long");
             strncpy(label_name, line, label_len);
             label_name[label_len] = 0;
             trim(label_name);
 
             /* Add label */
             if (strlen(label_name) > 0) {
+                if (label_count >= MAX_LABELS) error(line_num, "Too many labels");
                 strcpy(labels[label_count].name, label_name);
                 labels[label_count].address = current_addr;
                 label_count++;
             }
 
             /* Get rest of line */
-            strcpy(line, label_end + 1);
+            memmove(line, label_end + 1, strlen(label_end + 1) + 1);
             trim(line);
             if (strlen(line) == 0) continue;
         }
@@ -859,7 +888,10 @@ static void first_pass(void) {
         /* Parse instruction */
         {
             char *token;
-            Instruction *inst = &instructions[instruction_count];
+            Instruction *inst;
+
+            if (instruction_count >= MAX_INSTRUCTIONS) error(line_num, "Too many instructions");
+            inst = &instructions[instruction_count];
 
             inst->line_num = line_num;
             inst->operand_count = 0;
@@ -870,27 +902,27 @@ static void first_pass(void) {
             /* Get mnemonic */
             token = strtok(line, " \t,");
             if (token) {
-                strcpy(inst->mnemonic, token);
+                copy_field(inst->mnemonic, sizeof(inst->mnemonic), token, line_num);
                 to_upper(inst->mnemonic);
 
                 /* Get operands */
                 token = strtok(NULL, " \t,");
                 if (token) {
-                    strcpy(inst->operand1, token);
+                    copy_field(inst->operand1, sizeof(inst->operand1), token, line_num);
                     trim(inst->operand1);
                     apply_aliases(inst->operand1);
                     inst->operand_count = 1;
 
                     token = strtok(NULL, " \t,");
                     if (token) {
-                        strcpy(inst->operand2, token);
+                        copy_field(inst->operand2, sizeof(inst->operand2), token, line_num);
                         trim(inst->operand2);
                         apply_aliases(inst->operand2);
                         inst->operand_count = 2;
 
                         token = strtok(NULL, " \t,");
                         if (token) {
-                            strcpy(inst->operand3, token);
+                            copy_field(inst->operand3, sizeof(inst->operand3), token, line_num);
                             trim(inst->operand3);
                             apply_aliases(inst->operand3);
                             inst->operand_count = 3;
@@ -926,8 +958,8 @@ static void second_pass(void) {
         }
 
         /* Output as big-endian */
-        output_buffer[output_size++] = (word >> 8) & 0xFF;
-        output_buffer[output_size++] = word & 0xFF;
+        output_buffer[output_size++] = (unsigned char)((word >> 8) & 0xFF);
+        output_buffer[output_size++] = (unsigned char)(word & 0xFF);
     }
 }
 
@@ -978,6 +1010,10 @@ int main(int argc, char *argv[]) {
         output_file = argv[3];
     } else {
         char *dot;
+        if (strlen(input_file) + 5 > sizeof(default_output)) {
+            fprintf(stderr, "Error: Input file name too long\n");
+            return 1;
+        }
         strcpy(default_output, input_file);
         dot = strrchr(default_output, '.');
         if (dot) *dot = 0;

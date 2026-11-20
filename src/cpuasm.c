@@ -11,6 +11,7 @@
  * - Automatic addressing mode detection
  * - Label support with forward references
  * - Directives: .org, .byte, .word, .long, .include
+ *   (the first .org sets the load address; a later one pads with zeros up to its address, and may not go backwards)
  * - Multi-file support via .include directive
  * - Comments (;)
  * - Constant definitions (.equ)
@@ -112,6 +113,10 @@ static int num_fixups = 0;
 static uint8_t code[MAX_CODE];
 static uint16_t pc = 0;
 static uint16_t org = 0;
+/* Bytes emitted since the last .ORG. pc is a 16-bit address and wraps at $FFFF, so it cannot tell "64 KiB of code" from
+ * "no code"; this can. code[code_len] is where the next byte goes. */
+static uint32_t code_len = 0;
+static int code_overflow = 0;
 static int pass = 1;
 static int errors = 0;
 /* Output bank for label resolution (see .BANK). cpuasm's pc/org are 16-bit
@@ -210,7 +215,7 @@ int parse_number(const char *str, uint32_t *value) {
     } else {
         /* Decimal */
         char *endptr;
-        *value = strtoul(str, &endptr, 10);
+        *value = (uint32_t)strtoul(str, &endptr, 10);
         return *endptr == '\0';
     }
 }
@@ -228,7 +233,12 @@ int find_equate(const char *name) {
 
 /* Define (or redefine) a .EQU constant */
 void add_equate(const char *name, uint32_t value) {
-    int idx = find_equate(name);
+    int idx;
+    if (strlen(name) >= sizeof(equates[0].name)) {
+        error("Name too long (63 characters at most)");
+        return;
+    }
+    idx = find_equate(name);
     if (idx >= 0) {
         equates[idx].value = value;
         equates[idx].defined = 1;
@@ -236,6 +246,10 @@ void add_equate(const char *name, uint32_t value) {
     }
     if (num_equates >= MAX_LABELS) {
         error("Too many .EQU constants");
+        return;
+    }
+    if (strlen(name) >= sizeof(equates[0].name)) {
+        error("Name too long (63 characters at most)");
         return;
     }
     strcpy(equates[num_equates].name, name);
@@ -301,7 +315,12 @@ int find_label(const char *name) {
 
 /* Add a label */
 void add_label(const char *name, uint16_t addr) {
-    int idx = find_label(name);
+    int idx;
+    if (strlen(name) >= sizeof(labels[0].name)) {
+        error("Label too long (63 characters at most)");
+        return;
+    }
+    idx = find_label(name);
     if (idx >= 0) {
         if (labels[idx].defined && pass == 2) {
             error("Duplicate label");
@@ -327,6 +346,10 @@ void add_label(const char *name, uint16_t addr) {
 void add_fixup(uint16_t addr, const char *label, AddressingMode mode, int size) {
     if (num_fixups >= MAX_FIXUPS) {
         error("Too many fixups");
+        return;
+    }
+    if (strlen(label) >= sizeof(fixups[0].label)) {
+        error("Label too long (63 characters at most)");
         return;
     }
     fixups[num_fixups].address = addr;
@@ -373,8 +396,8 @@ void resolve_fixups(void) {
              * address, so a forward "PER label"/"BRL label" landed one byte
              * short of the intended target. */
             int16_t offset = (int16_t)(labels[idx].address - (f->address + 2));
-            code[f->address - org] = offset & 0xFF;
-            code[f->address - org + 1] = (offset >> 8) & 0xFF;
+            code[f->address - org] = (uint8_t)(offset & 0xFF);
+            code[f->address - org + 1] = (uint8_t)((offset >> 8) & 0xFF);
         } else if (f->size == 1) {
             code[f->address - org] = addr & 0xFF;
         } else if (f->size == 2) {
@@ -460,7 +483,7 @@ AddressingMode detect_addressing_mode(const char *operand, const char *mnemonic)
                 /* Determine if DP or absolute based on value */
                 start = operand + 1;
                 end = close;
-                len = end - start;
+                len = (int)(end - start);
                 strncpy(temp, start, len);
                 temp[len] = '\0';
 
@@ -511,7 +534,7 @@ AddressingMode detect_addressing_mode(const char *operand, const char *mnemonic)
                  * of the real 2-byte one. */
                 start = operand + 1;
                 end = close;
-                len = end - start;
+                len = (int)(end - start);
                 strncpy(temp, start, len);
                 temp[len] = '\0';
                 if (parse_number(temp, &val) && val <= 0xFF) {
@@ -616,20 +639,22 @@ const Instruction *find_instruction(const char *mnemonic, AddressingMode mode) {
 
 /* Emit a byte */
 void emit_byte(uint8_t byte) {
-    if ((uint16_t)(pc - org) >= MAX_CODE) {
-        error("Code too large");
+    if ((uint32_t)org + code_len > 0xFFFFUL) {
+        if (!code_overflow) error("Code runs past $FFFF (a 16-bit address space)");
+        code_overflow = 1;
         return;
     }
     if (pass == 2) {
-        code[pc - org] = byte;
+        code[code_len] = byte;
     }
+    code_len++;
     pc++;
 }
 
 /* Emit a word (16-bit, little-endian) */
 void emit_word(uint16_t word) {
-    emit_byte(word & 0xFF);
-    emit_byte((word >> 8) & 0xFF);
+    emit_byte((uint8_t)(word & 0xFF));
+    emit_byte((uint8_t)((word >> 8) & 0xFF));
 }
 
 /* Emit a long (24-bit, little-endian) */
@@ -1068,7 +1093,7 @@ int assemble_line(char *line) {
     char operand[MAX_LINE];
     AddressingMode mode;
     const Instruction *inst;
-    char msg[128];
+    char msg[2 * MAX_LINE + 128];
     uint32_t value;
     int is_label;
     const char *val_str;
@@ -1106,7 +1131,7 @@ int assemble_line(char *line) {
     if (!*token) return 0;
 
     /* Convert to uppercase */
-    for (t = token; *t; t++) *t = toupper(*t);
+    for (t = token; *t; t++) *t = (char)toupper((unsigned char)*t);
 
     /* BNE/BPL/BVC/BCC have no real DEF88186 opcode - all 256 dispatch-table
      * entries in cpu_instructions.cpp are already assigned, so unlike a
@@ -1142,6 +1167,10 @@ int assemble_line(char *line) {
         if (cond_bytes == 4) emit_long(skip_addr & 0xFFFFFFUL);
         else emit_word((uint16_t)(skip_addr & 0xFFFF));
 
+        if (strlen(p) + 5 > sizeof(synth)) {
+            error("Line too long");
+            return 0;
+        }
         sprintf(synth, "BRA %s", p);
         assemble_line(synth);
         return 0;
@@ -1167,8 +1196,8 @@ int assemble_line(char *line) {
             src = token;
             if (*src == '"') src++;
             strcpy(filename, src);
-            end = filename + strlen(filename) - 1;
-            if (*end == '"') *end = '\0';
+            end = filename + strlen(filename);
+            if (end > filename && *(end - 1) == '"') *(end - 1) = '\0';
 
             /* Recursively assemble the included file */
             assemble_file(filename);
@@ -1180,8 +1209,19 @@ int assemble_line(char *line) {
         p = skip_whitespace(p);
         p = parse_token(p, token);
         if (parse_number(token, &addr)) {
-            pc = addr & 0xFFFF;
-            org = addr & 0xFFFF;
+            addr &= 0xFFFF;
+            if (code_len == 0) {
+                /* Nothing emitted yet: this sets the origin, the address output byte 0 is loaded at. */
+                pc = (uint16_t)addr;
+                org = (uint16_t)addr;
+            } else if (addr < pc) {
+                /* Used to restart the output at byte 0, so a reset vector at .org $FFFC silently overwrote the
+                 * start of the code. */
+                error(".org moves backwards over code already emitted");
+            } else {
+                /* A later .org pads with zeros up to the address, like a ROM image with a vector at the top. */
+                while (pc != addr && !code_overflow) emit_byte(0);
+            }
         }
         return 0;
     }
@@ -1207,7 +1247,7 @@ int assemble_line(char *line) {
      * anywhere a numeric operand is expected, resolved immediately - a
      * .EQU must appear before its first use. */
     if (strcmp(token, ".EQU") == 0) {
-        char name[64];
+        char name[MAX_LINE];
         p = skip_whitespace(p);
         p = parse_token(p, name);
         p = skip_whitespace(p);
@@ -1467,14 +1507,24 @@ void assemble_file(const char *filename) {
     line_num = 0;
 
     while (fgets(line, sizeof(line), f)) {
+        size_t n = strlen(line);
         line_num++;
+        if (n == sizeof(line) - 1 && line[n - 1] != '\n') {
+            int c = getc(f);
+            if (c != EOF && c != '\n') {
+                fprintf(stderr, "%s:%d: ", filename, line_num);
+                error("Line too long");
+                while ((c = getc(f)) != EOF && c != '\n') {}
+                continue;
+            }
+        }
         assemble_line(line);
     }
 
     fclose(f);
 
-    printf("Pass %d: Assembled %d bytes, %d labels, %d fixups\n",
-           pass, pc, num_labels, num_fixups);
+    printf("Pass %d: Assembled %lu bytes, %d labels, %d fixups\n",
+           pass, (unsigned long)code_len, num_labels, num_fixups);
 }
 
 /* Main */
@@ -1500,12 +1550,16 @@ int main(int argc, char* argv[]) {
     /* Pass 1: Collect labels */
     pass = 1;
     pc = 0;
+    code_len = 0;
+    code_overflow = 0;
     assemble_file(input);
 
     /* Pass 2: Generate code */
     pass = 2;
     pc = 0;
     org = 0;
+    code_len = 0;
+    code_overflow = 0;
     num_fixups = 0;
     memset(code, 0, sizeof(code));
     assemble_file(input);
@@ -1525,10 +1579,10 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    fwrite(code, 1, pc - org, out);
+    fwrite(code, 1, code_len, out);
     fclose(out);
 
-    printf("\nSuccess! Wrote %d bytes to %s\n", (int)(pc - org), output);
+    printf("\nSuccess! Wrote %lu bytes to %s\n", (unsigned long)code_len, output);
 
     return 0;
 }

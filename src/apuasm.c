@@ -78,7 +78,7 @@ void trim(char* str) {
     while (isspace(*start)) start++;
     if (start != str) memmove(str, start, strlen(start) + 1);
 
-    len = strlen(str);
+    len = (int)strlen(str);
     while (len > 0 && isspace(str[len - 1])) {
         str[--len] = '\0';
     }
@@ -96,26 +96,27 @@ void tokenize(char* line) {
 }
 
 int is_label_def(const char* str) {
-    int len = strlen(str);
+    int len = (int)strlen(str);
     return len > 0 && str[len - 1] == ':';
 }
 
 void add_label(const char* name, uint16_t address) {
-    int len;
+    size_t len = strlen(name);
 
     if (label_count >= MAX_LABELS) {
         fprintf(stderr, "Too many labels\n");
         exit(1);
     }
 
-    strncpy(labels[label_count].name, name, 63);
-    labels[label_count].name[63] = '\0';
-
     /* Remove trailing colon if present */
-    len = strlen(labels[label_count].name);
-    if (len > 0 && labels[label_count].name[len - 1] == ':') {
-        labels[label_count].name[len - 1] = '\0';
+    if (len > 0 && name[len - 1] == ':') len--;
+
+    /* A longer name used to be cut to 63 chars, which can make two labels alias. */
+    if (len >= sizeof(labels[label_count].name)) {
+        error("label name too long", current_line_num);
     }
+    memcpy(labels[label_count].name, name, len);
+    labels[label_count].name[len] = '\0';
 
     labels[label_count].address = address;
     label_count++;
@@ -132,15 +133,32 @@ int find_label(const char* name) {
 }
 
 int parse_number(const char* str) {
+    const char* digits = str;
+    char* end;
+    int base = 10;
+    long value;
+
     if (str[0] == '$') {
-        return (int)strtol(str + 1, NULL, 16);
+        base = 16; digits = str + 1;
     } else if (str[0] == '0' && (str[1] == 'x' || str[1] == 'X')) {
-        return (int)strtol(str + 2, NULL, 16);
+        base = 16; digits = str + 2;
     } else if (str[0] == '0' && (str[1] == 'b' || str[1] == 'B')) {
-        return (int)strtol(str + 2, NULL, 2);
-    } else {
-        return atoi(str);
+        base = 2; digits = str + 2;
     }
+    value = strtol(digits, &end, base);
+
+    /* Anything that is not wholly a number used to come back as 0 or a prefix of itself, so a misspelt label
+     * assembled as address 0. Pass 1 still has to let a forward reference through (the label is not known yet);
+     * the final pass has seen every label, so what is left is a mistake. */
+    if (end == digits || *end != '\0') {
+        if (final_pass) {
+            char msg[MAX_LINE + 64];
+            sprintf(msg, "'%s' is neither a number nor a known label", str);
+            error(msg, current_line_num);
+        }
+        return 0;
+    }
+    return (int)value;
 }
 
 /* Resolve an operand that names an absolute address: a known label resolves
@@ -167,7 +185,7 @@ int resolve_rp_address(const char* tok) {
     int lbl = find_label(tok);
     if (lbl >= 0) {
         if (final_pass && expect_rp >= 0 && ((lbl >> 8) & 0xFF) != expect_rp) {
-            char msg[200];
+            char msg[MAX_LINE + 256];
             sprintf(msg, "label '%s' is in page $%02X but RP is $%02X here "
                          "(SRP $%02X first, or fix the .rp declaration)",
                     tok, (lbl >> 8) & 0xFF, expect_rp, (lbl >> 8) & 0xFF);
@@ -213,7 +231,7 @@ static int parse_register_raw(const char* str) {
 int parse_register(const char* str) {
     int reg = parse_register_raw(str);
     if (reg < 0 || reg > 1) {
-        char msg[200];
+        char msg[MAX_LINE + 256];
         sprintf(msg, "register '%s' cannot be used here: the APU only has X and Y "
                      "(R2-R127 are accepted only as the result register of "
                      "NOR/AND/ADD/SUB/ADC/SBC, as debug scratch)", str);
@@ -228,7 +246,7 @@ int parse_register(const char* str) {
 int parse_dest_register(const char* str) {
     int reg = parse_register_raw(str);
     if (reg < 0 || reg > 127) {
-        char msg[120];
+        char msg[MAX_LINE + 256];
         sprintf(msg, "register '%s' is out of range: R0-R127 only (and only X/Y are real)", str);
         error(msg, current_line_num);
     }
@@ -300,7 +318,7 @@ void assemble_line(char* line, int line_num) {
     strncpy(upper_mnemonic, mnemonic, 63);
     upper_mnemonic[63] = '\0';
     for (i = 0; upper_mnemonic[i]; i++) {
-        upper_mnemonic[i] = toupper(upper_mnemonic[i]);
+        upper_mnemonic[i] = (char)toupper((unsigned char)upper_mnemonic[i]);
     }
 
     /* Directives */
@@ -359,7 +377,7 @@ void assemble_line(char* line, int line_num) {
     /* Instruction encoding */
 
     if (strcmp(upper_mnemonic, "NOP") == 0) {
-        uint16_t stall = (token_count > 1) ? parse_number(tokens[1]) : 0;
+        uint16_t stall = (token_count > 1) ? (uint16_t)parse_number(tokens[1]) : 0;
         emit_instruction(encode_instruction(0x00, stall));
     }
     else if (strcmp(upper_mnemonic, "JMP") == 0) {
@@ -698,7 +716,7 @@ void assemble_line(char* line, int line_num) {
             } else {
                 offset = dist & 0x3F;
             }
-            emit_instruction(encode_instruction(0x19, ((rx & 1) << 10) | ((ry & 1) << 9) | (subop << 6) | (offset & 0x3F)));
+            emit_instruction(encode_instruction(0x19, (uint16_t)(((rx & 1) << 10) | ((ry & 1) << 9) | (subop << 6) | (offset & 0x3F))));
         }
     }
     else if (strcmp(upper_mnemonic, "BEQ") == 0) {
@@ -796,7 +814,7 @@ void assemble_line(char* line, int line_num) {
             else if (strcmp(tokens[1], "DP") == 0 || strcmp(tokens[1], "dp") == 0) target = 2;
             else if (strcmp(tokens[1], "SP") == 0 || strcmp(tokens[1], "sp") == 0) target = 3;
             else target = parse_number(tokens[1]) & 0x03;
-            emit_instruction(encode_instruction(0x16, (dec << 10) | ((target & 0x03) << 8)));
+            emit_instruction(encode_instruction(0x16, (uint16_t)((dec << 10) | ((target & 0x03) << 8))));
         }
     }
     else if (strcmp(upper_mnemonic, "MOV") == 0) {
@@ -849,7 +867,7 @@ void assemble_line(char* line, int line_num) {
         emit_instruction(encode_instruction(0x1C, 0));
     }
     else {
-        char msg[128];
+        char msg[MAX_LINE + 256];
         sprintf(msg, "Unknown instruction: %s", mnemonic);
         error(msg, line_num);
     }
@@ -872,7 +890,12 @@ static void assemble_file(const char* path) {
     }
     current_file = path;
     while (fgets(line, sizeof(line), fp)) {
+        size_t n = strlen(line);
         line_num++;
+        if (n == sizeof(line) - 1 && line[n - 1] != '\n') {
+            int c = getc(fp);
+            if (c != EOF && c != '\n') error("line too long", line_num);
+        }
         assemble_line(line, line_num);
     }
     fclose(fp);
@@ -940,6 +963,7 @@ int main(int argc, char* argv[]) {
     /* Generate output filename if not provided */
     if (!output_file) {
         strncpy(default_output, input_file, 250);
+        default_output[250] = '\0';
         dot = strrchr(default_output, '.');
         if (dot) *dot = '\0';
         strcat(default_output, ".bin");
@@ -990,8 +1014,8 @@ int main(int argc, char* argv[]) {
     /* Write instructions as 16-bit big-endian */
     for (i = 0; i < instruction_count; i++) {
         inst = instructions[i];
-        bytes[0] = (inst >> 8) & 0xFF;
-        bytes[1] = inst & 0xFF;
+        bytes[0] = (uint8_t)((inst >> 8) & 0xFF);
+        bytes[1] = (uint8_t)(inst & 0xFF);
         fwrite(bytes, 1, 2, out);
     }
 
