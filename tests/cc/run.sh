@@ -4,6 +4,7 @@
 #
 #   tests/cc/run.sh [-v] [zpcc|dos ...] [-- test.c ...]        (default: both compilers, every t*.c)
 #
+# A test with a line "/* ONLY: zpcc */" (or "dos") runs under that compiler only.
 # A test with a line "/* EXPECT: v1 v2 ... */" is checked against that list instead of a host run (SDK tests can't run
 # on the host). "/* NEEDS: boot */" tests need the real boot ROM: set BOOT=path/to/bootrom.bin or they are skipped.
 #
@@ -32,6 +33,7 @@ pass=0; fail=0
 for t in "${tests[@]}"; do
   name=$(basename "$t" .c)
   if grep -q 'NEEDS: boot' "$t" && [ -z "${BOOT:-}" ]; then echo "skip $name (needs BOOT=bootrom.bin)"; continue; fi
+  only=$(sed -n 's|^/\* ONLY: \(.*\) \*/$|\1|p' "$t" | head -1)     # a test for one compiler only
   expect=$(sed -n 's|^/\* EXPECT: \(.*\) \*/$|\1|p' "$t" | head -1)
   if [ -n "$expect" ]; then
     want="$expect "
@@ -40,13 +42,15 @@ for t in "${tests[@]}"; do
   want=$("$WORK/$name.host")
   fi
   for cc in "${ccs[@]}"; do
+    if [ -n "$only" ] && ! echo " $only " | grep -q " $cc "; then continue; fi
     asm="$WORK/$name.$cc.asm"
     if [ "$cc" = zpcc ]; then
-      "$ROOT/llvm_compiler/zpcc" -I "$ROOT/include" -I "$HERE" "$t" -o "$asm" >"$WORK/$name.$cc.log" 2>&1
+      "$ROOT/llvm_compiler/zpcc" -I "$ROOT/include" -I "$HERE" "$t" -o "$asm" >"$WORK/$name.$cc.log" 2>&1; crc=$?
     else
-      "$ROOT/c_compiler/def88186cc" -DZP_CC_DOS -I "$ROOT/include" -I "$HERE" "$t" -o "$asm" >"$WORK/$name.$cc.log" 2>&1
+      "$ROOT/c_compiler/def88186cc" -DZP_CC_DOS -I "$ROOT/include" -I "$HERE" "$t" -o "$asm" >"$WORK/$name.$cc.log" 2>&1; crc=$?
     fi
-    if [ ! -f "$asm" ]; then echo "FAIL $name [$cc]: compile error"; [ $verbose = 1 ] && tail -5 "$WORK/$name.$cc.log"; fail=$((fail+1)); continue; fi
+    # a compiler that reported an error has failed, whatever file it left behind
+    if [ $crc -ne 0 ] || [ ! -f "$asm" ]; then echo "FAIL $name [$cc]: compile error"; [ $verbose = 1 ] && tail -5 "$WORK/$name.$cc.log"; fail=$((fail+1)); continue; fi
     {
       echo ".org \$0200"; echo ".bank \$80"
       echo ".include \"$ROOT/lib/crt0_entry.asm\""

@@ -23,13 +23,22 @@
 //
 // Supported IR subset (clang -O0): alloca, load, store, getelementptr,
 // add/sub/mul/[us]div/[us]rem, and/or/xor, shl/lshr/ashr, icmp, br, ret, call,
-// zext/sext/trunc/bitcast/ptrtoint/inttoptr, select, and integer/pointer
-// globals.  Unsupported constructs are reported with a clear diagnostic.
+// zext/sext/trunc/bitcast/ptrtoint/inttoptr, select, switch, memcpy/memset, and
+// integer/pointer globals.  Unsupported constructs are reported with a clear
+// diagnostic and no output file is left behind.
+//
+// Memory model: a pointer is a 16-bit offset into bank $80, the bank holding the stack and all data; a load or
+// store through one is LDA/STA $800000,X (byte accesses in 8-bit mode), independent of the data bank register.
+// Globals live in ROM (bank $00): they can be read by name (a global array indexed in place, a constant table),
+// but their address cannot be used as a pointer value (it would be mistaken for a bank-$80 address) and they
+// cannot be written - both are reported as errors.
 
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/CFG.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/Operator.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/DataLayout.h"
@@ -43,6 +52,7 @@
 #include <cstring>
 #include <cstdarg>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 #include <unistd.h>
@@ -67,6 +77,54 @@ static void emit(const char *fmt, ...) {
 static void backendError(const std::string &msg) {
   fprintf(stderr, "zpcc: error: %s\n", msg.c_str());
   hadError = true;
+}
+
+// The global a pointer expression is rooted at (through GEPs and casts), or null.  Such a pointer addresses ROM.
+static const GlobalVariable *rootGlobal(const Value *V) {
+  V = V->stripPointerCasts();
+  while (auto *GEP = dyn_cast<GEPOperator>(V))
+    V = GEP->getPointerOperand()->stripPointerCasts();
+  return dyn_cast<GlobalVariable>(V);
+}
+
+// The only ways a global's address may be used: as the pointer of a load, as the source of a copy, or as the base of a
+// GEP / cast that is itself used that way.  Anything else would let a bank-$00 address masquerade as a bank-$80
+// pointer; a store into one would write ROM.
+static void checkGlobalUses(const GlobalVariable &GV) {
+  std::vector<const Value *> work;
+  std::set<const Value *> seen;
+  work.push_back(&GV);
+  while (!work.empty()) {
+    const Value *V = work.back();
+    work.pop_back();
+    if (!seen.insert(V).second) continue;
+    for (const Use &U : V->uses()) {
+      const User *Usr = U.getUser();
+      if (isa<LoadInst>(Usr)) continue;
+      if (isa<GEPOperator>(Usr) && U.getOperandNo() == 0) { work.push_back(Usr); continue; }
+      if (auto *CE = dyn_cast<ConstantExpr>(Usr)) {
+        if (CE->getOpcode() == Instruction::BitCast || CE->getOpcode() == Instruction::AddrSpaceCast) {
+          work.push_back(Usr);
+          continue;
+        }
+      }
+      if (isa<BitCastInst>(Usr) || isa<AddrSpaceCastInst>(Usr)) { work.push_back(Usr); continue; }
+      if (auto *MT = dyn_cast<MemTransferInst>(Usr)) {
+        if (U.get() == MT->getRawSource()) continue;
+      }
+      if (isa<StoreInst>(Usr)) {
+        if (U.getOperandNo() == 1) {
+          backendError("store to global '" + GV.getName().str() +
+                       "': globals live in ROM and are read-only (there is no writable data segment yet)");
+          return;
+        }
+      }
+      backendError("the address of global '" + GV.getName().str() +
+                   "' is used as a pointer value; ROM data cannot be reached through pointers "
+                   "(read it by name, or copy it into a local array)");
+      return;
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -115,7 +173,18 @@ struct FnLower {
   // then the register arguments the prologue pushed (arg0 lowest).  A slot offset is a byte offset from S+1.
   //
   // Operand for "off,S": the slot plus the 1 that S points below the stack top, plus whatever call setup has pushed.
-  int sp(int slotOff) const { return slotOff + 1 + spDelta; }
+  // "n,S" has a one-byte operand: a frame (every SSA value has its own slot) plus pushed arguments past 255 bytes
+  // cannot be addressed, and the assembler would refuse it - say why instead.
+  mutable bool spReported = false;
+  int sp(int slotOff) const {
+    int n = slotOff + 1 + spDelta;
+    if (n > 255 && !spReported) {
+      spReported = true;
+      backendError("function " + fnName + " needs more than 255 bytes of stack frame (zpcc gives every value its "
+                   "own slot); split the function up");
+    }
+    return n;
+  }
 
   // Assign a frame slot to every alloca (its storage) and value-producing instruction, then the arguments.
   void assignSlots() {
@@ -153,7 +222,7 @@ struct FnLower {
           off += roundWord((int)bytes);
           continue;
         }
-        if (!I.getType()->isVoidTy()) {
+        if (!I.getType()->isVoidTy() && !isDead(I)) {
           slot[&I] = off;
           off += 2 * wordsOf(&I);
         }
@@ -164,6 +233,12 @@ struct FnLower {
       if (argReg[A.getArgNo()] >= 0)
         slot[&A] = extraSize + 2 * argReg[A.getArgNo()];
     frameSize = extraSize + 2 * nRegArgs;
+  }
+
+  // An instruction nothing uses and that does nothing else (clang -O0 leaves e.g. a dead 'zext i1 to i64' behind a
+  // conditional expression): no slot, no code, and no complaint about a type it never really computes.
+  static bool isDead(const Instruction &I) {
+    return I.use_empty() && !I.mayHaveSideEffects() && !I.isTerminator() && !isa<AllocaInst>(I);
   }
 
   bool hasSlot(const Value *V) const { return slot.count(V) != 0; }
@@ -184,6 +259,10 @@ struct FnLower {
     }
     if (isa<ConstantPointerNull>(V)) {
       emit("    LDA #$0000\n");
+      return;
+    }    if (isa<UndefValue>(V)) {            // undef / poison: any value will do
+      emit("    LDA #$0000\n");
+      if (wordsOf(V) == 2) emit("    LDX #$0000\n");
       return;
     }
     if (auto *GV = dyn_cast<GlobalValue>(V)) {
@@ -209,10 +288,11 @@ struct FnLower {
           base = GEP->getPointerOperand()->stripPointerCasts();
           if (auto *GV = dyn_cast<GlobalValue>(base)) {
             long o = acc.getSExtValue();
-            if (o)
-              emit("    LDA #%s+%ld\n", GV->getName().str().c_str(), o);
-            else
-              emit("    LDA #%s\n", GV->getName().str().c_str());
+            emit("    LDA #%s\n", GV->getName().str().c_str());
+            if (o) {                       // the assembler has no label+offset operand: add the offset here
+              emit("    CLC\n");
+              emit("    ADC #$%04X\n", (unsigned)(o & 0xFFFF));
+            }
             return;
           }
         }
@@ -263,34 +343,73 @@ struct FnLower {
     // Storage reserved in the frame; nothing to emit.
   }
 
+  // Bytes a loaded/stored value occupies: 1 (i8 and narrower), 2 (i16, pointers) or 4 (i32).
+  int accessBytes(Type *T) {
+    if (auto *IT = dyn_cast<IntegerType>(T)) {
+      unsigned bw = IT->getBitWidth();
+      if (bw <= 8) return 1;
+      if (bw <= 16) return 2;
+      if (bw <= 32) return 4;
+    } else if (T->isPointerTy()) {
+      return 2;
+    }
+    backendError("load/store of an unsupported type in " + fnName);
+    return 2;
+  }
+
   void lowerLoad(LoadInst *LI) {
     Value *Ptr = LI->getPointerOperand();
-    const bool wide = wordsOf(LI) == 2;
+    const int bytes = accessBytes(LI->getType());
     if (auto *AI = dyn_cast<AllocaInst>(Ptr->stripPointerCasts())) {
-      if (wide) {
+      if (bytes == 4) {
         emit("    LDA %d,S\n", sp(slotOf(AI)) + 2);
         emit("    TAX\n");
       }
       emit("    LDA %d,S\n", sp(slotOf(AI)));
+      if (bytes == 1) emit("    AND #$00FF\n");
     } else {
-      // Direct page is the only register-indirect mode, so D is borrowed as the pointer and put back after.
-      emit("    TDC\n");
-      emit("    STA %d,S\n", sp(saveD));
+      // Anything else is an address in bank $80, except a global read in place: that is ROM, in whatever bank the
+      // code was assembled into.  The assembler can name that bank only through the global's own label, so the
+      // index is the offset from the label: LDA >label,X with X = address - label.
+      const GlobalVariable *g = rootGlobal(Ptr);
       addressToA(Ptr);
-      emit("    TCD          ; DP = pointer\n");
-      if (wide) {
-        emit("    LDA $02\n");
-        emit("    STA %d,S\n", sp(scratch1));
-      }
-      emit("    LDA $00      ; load through pointer\n");
-      emit("    TAY\n");
-      emit("    LDA %d,S\n", sp(saveD));
-      emit("    TCD          ; restore D\n");
-      if (wide) {
-        emit("    LDA %d,S\n", sp(scratch1));
+      if (g) {
+        const std::string name = g->getName().str();
+        emit("    SEC\n");
+        emit("    SBC #%s\n", name.c_str());
         emit("    TAX\n");
+        if (bytes == 1) {
+          emit("    SEP #$20\n");
+          emit("    LDA >%s,X\n", name.c_str());
+          emit("    REP #$20\n");
+          emit("    AND #$00FF\n");
+        } else if (bytes == 4) {
+          emit("    LDA >%s,X\n", name.c_str());
+          emit("    STA %d,S\n", sp(scratch0));
+          emit("    INX\n    INX\n");
+          emit("    LDA >%s,X\n", name.c_str());
+          emit("    TAY\n");
+          emit("    LDA %d,S\n", sp(scratch0));
+          emit("    TYX\n");
+        } else {
+          emit("    LDA >%s,X\n", name.c_str());
+        }
+      } else {
+        emit("    TAX\n");
+        if (bytes == 1) {
+          emit("    SEP #$20\n");
+          emit("    LDA $800000,X\n");
+          emit("    REP #$20\n");
+          emit("    AND #$00FF\n");
+        } else if (bytes == 4) {
+          emit("    LDA $800002,X\n");
+          emit("    TAY\n");
+          emit("    LDA $800000,X\n");
+          emit("    TYX\n");
+        } else {
+          emit("    LDA $800000,X\n");
+        }
       }
-      emit("    TYA\n");
     }
     storeAToResult(LI);
   }
@@ -298,33 +417,45 @@ struct FnLower {
   void lowerStore(StoreInst *SI) {
     Value *Val = SI->getValueOperand();
     Value *Ptr = SI->getPointerOperand();
-    const bool wide = wordsOf(Val) == 2;
+    const int bytes = accessBytes(Val->getType());
     if (auto *AI = dyn_cast<AllocaInst>(Ptr->stripPointerCasts())) {
       loadToA(Val);
-      emit("    STA %d,S\n", sp(slotOf(AI)));
-      if (wide) {
-        emit("    TXA\n");
-        emit("    STA %d,S\n", sp(slotOf(AI)) + 2);
+      if (bytes == 1) {
+        emit("    SEP #$20\n");
+        emit("    STA %d,S\n", sp(slotOf(AI)));
+        emit("    REP #$20\n");
+      } else {
+        emit("    STA %d,S\n", sp(slotOf(AI)));
+        if (bytes == 4) {
+          emit("    TXA\n");
+          emit("    STA %d,S\n", sp(slotOf(AI)) + 2);
+        }
       }
     } else {
+      if (rootGlobal(Ptr)) {
+        backendError("store to a global in " + fnName + ": globals live in ROM and are read-only");
+        return;
+      }
       loadToA(Val);
       emit("    STA %d,S\n", sp(scratch0));
-      if (wide) {
+      if (bytes == 4) {
         emit("    TXA\n");
         emit("    STA %d,S\n", sp(scratch1));
       }
-      emit("    TDC\n");
-      emit("    STA %d,S\n", sp(saveD));
       addressToA(Ptr);
-      emit("    TCD          ; DP = pointer\n");
-      if (wide) {
-        emit("    LDA %d,S\n", sp(scratch1));
-        emit("    STA $02\n");
-      }
+      emit("    TAX\n");
       emit("    LDA %d,S\n", sp(scratch0));
-      emit("    STA $00      ; store through pointer\n");
-      emit("    LDA %d,S\n", sp(saveD));
-      emit("    TCD          ; restore D\n");
+      if (bytes == 1) {
+        emit("    SEP #$20\n");
+        emit("    STA $800000,X\n");
+        emit("    REP #$20\n");
+      } else {
+        emit("    STA $800000,X\n");
+        if (bytes == 4) {
+          emit("    LDA %d,S\n", sp(scratch1));
+          emit("    STA $800002,X\n");
+        }
+      }
     }
   }
 
@@ -760,9 +891,119 @@ struct FnLower {
     emitEpilogue();
   }
 
+  // memcpy / memset as byte loops (the block-move opcodes are not usable here: the assembler lacks them and MVN/MVP
+  // retarget the data bank).  Pointers and the count live in scratch slots; X and Y are free inside the loop.
+  void lowerMemTransfer(MemTransferInst *MI) {
+    if (isa<MemMoveInst>(MI)) {
+      backendError("memmove is not supported (in " + fnName + ")");
+      return;
+    }
+    if (rootGlobal(MI->getRawDest())) {
+      backendError("copy into a global in " + fnName + ": globals live in ROM and are read-only");
+      return;
+    }
+    const GlobalVariable *sg = rootGlobal(MI->getRawSource());
+    addressToA(MI->getRawDest());
+    emit("    STA %d,S     ; memcpy dst\n", sp(scratch0));
+    addressToA(MI->getRawSource());
+    emit("    STA %d,S     ; memcpy src\n", sp(scratch1));
+    loadToA(MI->getLength());
+    emit("    STA %d,S     ; memcpy count\n", sp(scratch2));
+    int loop = newLabel(), done = newLabel();
+    emit(".L%s_%d:\n", fnName.c_str(), loop);
+    emit("    LDA %d,S\n", sp(scratch2));
+    emit("    CMP #$0000\n");
+    emit("    BEQ .L%s_%d\n", fnName.c_str(), done);
+    emit("    LDA %d,S\n", sp(scratch1));
+    if (sg) {                            // ROM source: index = address - label, in the label's own bank
+      emit("    SEC\n    SBC #%s\n    TAX\n", sg->getName().str().c_str());
+      emit("    SEP #$20\n");
+      emit("    LDA >%s,X\n", sg->getName().str().c_str());
+    } else {
+      emit("    TAX\n");
+      emit("    SEP #$20\n");
+      emit("    LDA $800000,X\n");
+    }
+    emit("    REP #$20\n");
+    emit("    AND #$00FF\n");
+    emit("    TAY\n");
+    emit("    LDA %d,S\n", sp(scratch0));
+    emit("    TAX\n");
+    emit("    TYA\n");
+    emit("    SEP #$20\n");
+    emit("    STA $800000,X\n");
+    emit("    REP #$20\n");
+    emit("    LDA %d,S\n    INC A\n    STA %d,S\n", sp(scratch0), sp(scratch0));
+    emit("    LDA %d,S\n    INC A\n    STA %d,S\n", sp(scratch1), sp(scratch1));
+    emit("    LDA %d,S\n    DEC A\n    STA %d,S\n", sp(scratch2), sp(scratch2));
+    emit("    BRA .L%s_%d\n", fnName.c_str(), loop);
+    emit(".L%s_%d:\n", fnName.c_str(), done);
+  }
+
+  void lowerMemSet(MemSetInst *MS) {
+    if (rootGlobal(MS->getRawDest())) {
+      backendError("memset of a global in " + fnName + ": globals live in ROM and are read-only");
+      return;
+    }
+    addressToA(MS->getRawDest());
+    emit("    STA %d,S     ; memset dst\n", sp(scratch0));
+    loadToA(MS->getValue());
+    emit("    STA %d,S     ; memset byte\n", sp(scratch1));
+    loadToA(MS->getLength());
+    emit("    STA %d,S     ; memset count\n", sp(scratch2));
+    int loop = newLabel(), done = newLabel();
+    emit(".L%s_%d:\n", fnName.c_str(), loop);
+    emit("    LDA %d,S\n", sp(scratch2));
+    emit("    CMP #$0000\n");
+    emit("    BEQ .L%s_%d\n", fnName.c_str(), done);
+    emit("    LDA %d,S\n", sp(scratch0));
+    emit("    TAX\n");
+    emit("    LDA %d,S\n", sp(scratch1));
+    emit("    SEP #$20\n");
+    emit("    STA $800000,X\n");
+    emit("    REP #$20\n");
+    emit("    LDA %d,S\n    INC A\n    STA %d,S\n", sp(scratch0), sp(scratch0));
+    emit("    LDA %d,S\n    DEC A\n    STA %d,S\n", sp(scratch2), sp(scratch2));
+    emit("    BRA .L%s_%d\n", fnName.c_str(), loop);
+    emit(".L%s_%d:\n", fnName.c_str(), done);
+  }
+
+  // switch: compare the (16-bit) selector against each case value in turn
+  void lowerSwitch(SwitchInst *SW) {
+    const BasicBlock *cur = SW->getParent();
+    if (wordsOf(SW->getCondition()) == 2) {
+      backendError("switch on a 32-bit value in " + fnName);
+      return;
+    }
+    loadToA(SW->getCondition());
+    emit("    STA %d,S     ; switch selector\n", sp(scratch0));
+    for (auto &C : SW->cases()) {
+      emit("    LDA %d,S\n", sp(scratch0));
+      emit("    CMP #$%04X\n", (unsigned)(C.getCaseValue()->getZExtValue() & 0xFFFF));
+      emit("    BEQ %s\n", edgeTarget(cur, C.getCaseSuccessor()).c_str());
+    }
+    emit("    BRA %s\n", edgeTarget(cur, SW->getDefaultDest()).c_str());
+  }
+
   void lowerCall(CallInst *CI) {
     Function *callee = CI->getCalledFunction();
     unsigned n = CI->arg_size();
+
+    if (callee && callee->isIntrinsic()) {
+      if (auto *MT = dyn_cast<MemTransferInst>(CI)) { lowerMemTransfer(MT); return; }
+      if (auto *MS = dyn_cast<MemSetInst>(CI)) { lowerMemSet(MS); return; }
+      switch (callee->getIntrinsicID()) {
+      case Intrinsic::lifetime_start:
+      case Intrinsic::lifetime_end:
+      case Intrinsic::dbg_declare:
+      case Intrinsic::dbg_value:
+      case Intrinsic::assume:
+        return;                       // no code
+      default:
+        backendError("unsupported intrinsic '" + callee->getName().str() + "' in " + fnName);
+        return;
+      }
+    }
 
     // Where each argument goes: register words (A, X, Y; a 32-bit one takes two) until one does not fit, then
     // everything from that argument on is pushed, right to left.
@@ -844,6 +1085,7 @@ struct FnLower {
   }
 
   void lowerInstruction(Instruction *I) {
+    if (isDead(*I)) return;
     if (auto *AI = dyn_cast<AllocaInst>(I)) return lowerAlloca(AI);
     if (auto *LI = dyn_cast<LoadInst>(I)) return lowerLoad(LI);
     if (auto *SI = dyn_cast<StoreInst>(I)) return lowerStore(SI);
@@ -852,6 +1094,7 @@ struct FnLower {
     if (auto *GEP = dyn_cast<GetElementPtrInst>(I)) return lowerGEP(GEP);
     if (auto *SI = dyn_cast<SelectInst>(I)) return lowerSelect(SI);
     if (auto *BI = dyn_cast<BranchInst>(I)) return lowerBranch(BI);
+    if (auto *SW = dyn_cast<SwitchInst>(I)) return lowerSwitch(SW);
     if (auto *RI = dyn_cast<ReturnInst>(I)) return lowerReturn(RI);
     if (auto *CI = dyn_cast<CallInst>(I)) return lowerCall(CI);
     if (isa<TruncInst>(I) || isa<SExtInst>(I) || isa<ZExtInst>(I) ||
@@ -880,10 +1123,12 @@ struct FnLower {
     // copies happen only on that edge.
     for (BasicBlock &BB : F) {
       auto *BI = dyn_cast<BranchInst>(BB.getTerminator());
-      if (!BI || BI->isUnconditional())
+      auto *SW = dyn_cast<SwitchInst>(BB.getTerminator());
+      if (BI ? BI->isUnconditional() : !SW)
         continue;
+      std::set<const BasicBlock *> done;
       for (BasicBlock *succ : successors(&BB)) {
-        if (hasPhi(succ)) {
+        if (hasPhi(succ) && done.insert(succ).second) {
           int lbl = newLabel();
           edgeLabel[{&BB, succ}] = lbl;
           edgeList.push_back({&BB, succ});
@@ -911,6 +1156,11 @@ struct FnLower {
     for (Argument &A : F.args()) {
       if (argReg[A.getArgNo()] >= 0) continue;
       for (int w = 0; w < wordsOf(&A); ++w) {
+        if (frameSize + 3 + stackOff > 255 && !spReported) {
+          spReported = true;
+          backendError("function " + fnName + " needs more than 255 bytes of stack frame (zpcc gives every value its "
+                       "own slot); split the function up");
+        }
         emit("    LDA %d,S     ; arg%u (stack)\n", frameSize + 3 + stackOff, A.getArgNo());
         emit("    STA %d,S\n", sp(slotOf(&A)) + 2 * w);
         stackOff += 2;
@@ -935,44 +1185,60 @@ struct FnLower {
 // ---------------------------------------------------------------------------
 // Global variables
 // ---------------------------------------------------------------------------
+// The bytes of a constant initializer, little endian, laid out as the data layout says (structs padded, arrays
+// element after element).  Returns false for anything that is not plain data (e.g. an address).
+static bool fillBytes(const Constant *C, const DataLayout &DL, std::vector<uint8_t> &buf, size_t off) {
+  Type *T = C->getType();
+  uint64_t size = DL.getTypeAllocSize(T).getFixedValue();
+  if (off + size > buf.size()) buf.resize(off + size, 0);
+  if (isa<ConstantAggregateZero>(C) || isa<ConstantPointerNull>(C) || isa<UndefValue>(C) || C->isNullValue())
+    return true;                                        // already zero
+  if (auto *CI = dyn_cast<ConstantInt>(C)) {
+    uint64_t v = CI->getZExtValue();
+    for (uint64_t i = 0; i < size && i < 8; ++i) buf[off + i] = (uint8_t)((v >> (8 * i)) & 0xFF);
+    return true;
+  }
+  if (auto *CDS = dyn_cast<ConstantDataSequential>(C)) {
+    unsigned eb = CDS->getElementByteSize();
+    if (!CDS->getElementType()->isIntegerTy()) return false;
+    for (unsigned i = 0; i < CDS->getNumElements(); ++i) {
+      uint64_t v = CDS->getElementAsInteger(i);
+      for (unsigned k = 0; k < eb; ++k) buf[off + i * eb + k] = (uint8_t)((v >> (8 * k)) & 0xFF);
+    }
+    return true;
+  }
+  if (auto *CA = dyn_cast<ConstantArray>(C)) {
+    uint64_t es = DL.getTypeAllocSize(CA->getType()->getElementType()).getFixedValue();
+    for (unsigned i = 0; i < CA->getNumOperands(); ++i)
+      if (!fillBytes(cast<Constant>(CA->getOperand(i)), DL, buf, off + i * es)) return false;
+    return true;
+  }
+  if (auto *CS = dyn_cast<ConstantStruct>(C)) {
+    const StructLayout *SL = DL.getStructLayout(cast<StructType>(CS->getType()));
+    for (unsigned i = 0; i < CS->getNumOperands(); ++i)
+      if (!fillBytes(cast<Constant>(CS->getOperand(i)), DL, buf, off + SL->getElementOffset(i))) return false;
+    return true;
+  }
+  return false;
+}
+
 static void emitGlobal(GlobalVariable &GV, const DataLayout &DL) {
   if (GV.isDeclaration())
     return;
   std::string name = GV.getName().str();
-  Type *ty = GV.getValueType();
-  Constant *init = GV.getInitializer();
-
+  std::vector<uint8_t> bytes;
   emit("%s:\n", name.c_str());
-
-  // String / byte array initializer.
-  if (auto *arr = dyn_cast<ConstantDataArray>(init)) {
-    if (arr->getElementByteSize() == 1) {
-      emit("    .byte ");
-      for (unsigned i = 0; i < arr->getNumElements(); ++i)
-        emit("%s$%02X", i ? "," : "",
-             (unsigned)(arr->getElementAsInteger(i) & 0xFF));
-      emit("\n");
-      return;
-    }
-  }
-  if (auto *ci = dyn_cast<ConstantInt>(init)) {
-    const uint64_t sz = DL.getTypeAllocSize(ty).getFixedValue();
-    if (sz == 1) {
-      emit("    .byte $%02X\n", (unsigned)(ci->getZExtValue() & 0xFF));
-    } else {
-      emit("    .word $%04X\n", (unsigned)(ci->getZExtValue() & 0xFFFF));
-      if (sz == 4)
-        emit("    .word $%04X\n", (unsigned)((ci->getZExtValue() >> 16) & 0xFFFF));
-    }
+  if (!fillBytes(GV.getInitializer(), DL, bytes, 0)) {
+    backendError("unsupported initializer for global '" + name + "'");
     return;
   }
-  if (isa<ConstantAggregateZero>(init) || init->isNullValue()) {
-    uint64_t bytes = DL.getTypeAllocSize(ty).getFixedValue();
-    for (uint64_t i = 0; i < (bytes + 1) / 2; ++i)
-      emit("    .word $0000\n");
-    return;
+  if (bytes.empty()) bytes.push_back(0);
+  for (size_t i = 0; i < bytes.size(); i += 16) {
+    emit("    .byte ");
+    for (size_t j = i; j < bytes.size() && j < i + 16; ++j)
+      emit("%s$%02X", j > i ? "," : "", (unsigned)bytes[j]);
+    emit("\n");
   }
-  emit("    .word $0000  ; unsupported global initializer\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -1001,6 +1267,8 @@ static void emitModule(Module &M) {
   emit("; ZeroPoint Fantasy Console\n\n");
   emit(".data\n");
   emit("icall_target: .word 0\n");
+  for (GlobalVariable &GV : M.globals())
+    checkGlobalUses(GV);
   for (GlobalVariable &GV : M.globals())
     emitGlobal(GV, DL);
   emit("\n.code\n");
@@ -1093,8 +1361,8 @@ int main(int argc, char **argv) {
     unlink(llFile.c_str());
 
   if (hadError) {
-    fprintf(stderr, "zpcc: compilation completed with errors; %s may be incomplete\n",
-            output.c_str());
+    unlink(output.c_str());     // never leave half-compiled assembly for the next tool to pick up
+    fprintf(stderr, "zpcc: compilation failed; no output written\n");
     return 1;
   }
   printf("Wrote %s\n", output.c_str());

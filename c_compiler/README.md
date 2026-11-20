@@ -72,6 +72,8 @@ structs live in the stack frame, word aligned; a struct puts 16-bit members on e
 - Preprocessor limits, all reported as errors when hit: 30000 bytes per logical line or macro expansion, 64 levels of
   include/macro nesting, 5000 `#include`s per file, 256 nested `#if`s, 64 macro parameters. A macro call must fit on one
   logical line. Use a backslash to continue a line.
+- **Stack frames** are limited to 255 bytes (locals, temporaries and stack arguments): `n,S` has a one-byte operand. A bigger
+  function is an error; use smaller arrays or split it.
 - **Hardware loops.** `for (i = 0; i < N; i = i + 1)` with a constant `N` of 1..32767 becomes the CPU's `LOOP`/`LPEND` pair, but only
   when it is the innermost loop, its body makes no calls, uses no `continue`/`goto`/inline asm, does not touch `i` and nothing
   in the function takes `&i`. The CPU has a single loop counter, so if an interrupt handler written in C contains such a loop
@@ -88,6 +90,8 @@ structs live in the stack frame, word aligned; a struct puts 16-bit members on e
 | `python3 tests/cc/reject_tests.py` | everything outside the subset is refused cleanly |
 | `tests/cc/examples_check.sh` | `examples/*.c` compile; `examples/unsupported/*.c` are refused |
 | `tests/c89/check.sh` | the compiler and tools are strict C89 (`gcc -std=c89 -pedantic`) |
+| `tests/asm/check.sh` | `cpuasm` rejects operands that do not fit (`LDA 256,S`) and accepts `>label` long forms |
+| `python3 tests/cc/zpcc_reject_tests.py` | the same for `zpcc`'s refusals (read-only globals, no global addresses as pointers) |
 
 The two Python test scripts and the fuzzer also run against an AddressSanitizer/UBSan build (`gcc -fsanitize=address,undefined`);
 see the header of `tests/cc/pp_tests.py`.

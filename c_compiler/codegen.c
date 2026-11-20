@@ -332,7 +332,17 @@ static void emit(const char* fmt, ...) {
  * Frame, lowest address first:   locals | three scratch words | register-argument slots | return address |
  * stack arguments.  Register arguments are pushed by the prologue (PHY/PHX/PHA) before anything touches A.
  * ==================================================================================================== */
-static int SPO(int frame_off) { return frame_off + 1 + ctx.depth; }
+/* "n,S" has a one-byte operand: anything past 255 bytes of frame, temporaries and stack arguments cannot be addressed */
+static int spo_reported = 0;
+static int SPO(int frame_off) {
+    int n = frame_off + 1 + ctx.depth;
+    if (n > 255 && !spo_reported) {
+        spo_reported = 1;
+        compile_error("Error: function '%s' needs more than 255 bytes of stack frame (locals, temporaries and stack arguments); "
+                      "split it up or use smaller arrays\n", ctx.current_function ? ctx.current_function : "?");
+    }
+    return n;
+}
 #define SCRATCH0 (ctx.scratch)
 #define SCRATCH1 (ctx.scratch + 2)
 #define SCRATCH2 (ctx.scratch + 4)
@@ -2377,6 +2387,7 @@ static void codegen_function(ASTNode* node) {
 
     ctx.current_function = node->u.func_decl.func_name;
     ctx.stack_offset = 0;
+    spo_reported = 0;
     ctx.depth = 0;
     local_var_index = 0;
     rt = type_ctype(node->u.func_decl.return_type, node->u.func_decl.return_modifiers, node->u.func_decl.return_pointer_level);
@@ -2481,12 +2492,21 @@ static void codegen_function(ASTNode* node) {
     ctx.current_function = NULL;
 }
 
+/* alignment of an object of this type (an array: of its element): chars are byte aligned, a struct or union takes the
+   largest alignment among its members, everything else is word aligned - the same rules clang uses for zpcc's 16-bit
+   data layout, so structs have the same layout in both compilers */
 static int member_align(const Ty* t) {
-    return (t->ptr == 0 && (t->base == TYPE_CHAR || t->base == TYPE_BOOL)) ? 1 : 2;
+    if (t->ptr > 0) return 2;
+    if (t->base == TYPE_CHAR || t->base == TYPE_BOOL) return 1;
+    if (t->base == TYPE_STRUCT) {
+        StructDef* sd = t->sname ? find_struct(t->sname) : NULL;
+        return sd ? sd->align : 2;
+    }
+    return 2;
 }
 
 /* lay out a struct (members one after another, 16-bit members on even offsets) or a union (all at offset 0); the
-   total size is rounded up to a whole word so that arrays of them stay aligned */
+   total size is rounded up to the struct's own alignment so that arrays of them stay aligned */
 static void layout_aggregate(const char* name, ASTNode** members, int count, int is_union) {
     StructDef sd;
     int i, j, offset = 0, maxsize = 0;
@@ -2531,7 +2551,12 @@ static void layout_aggregate(const char* name, ASTNode** members, int count, int
         }
     }
     sd.total_size = is_union ? maxsize : offset;
-    if (sd.total_size & 1) sd.total_size++;
+    sd.align = 1;
+    for (i = 0; i < count; i++) {
+        Ty mt = member_ty(&sd.members[i]);
+        if (member_align(&mt) > sd.align) sd.align = member_align(&mt);
+    }
+    if (sd.align == 2 && (sd.total_size & 1)) sd.total_size++;     /* a whole number of aligned units */
     add_struct(sd);
     emit("; %s definition: %s (size = %d bytes)\n", is_union ? "Union" : "Struct", sd.name, sd.total_size);
 }

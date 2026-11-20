@@ -7,7 +7,7 @@ model that tracks which object every pointer points into (anything that would be
 out-of-range access or pointer, a comparison between different objects, an overflow - throws the program away) and
 compares what the compiled program records in the emulator.
 
-  tests/cc/fuzz_mem.py [N [seed]]        (default: 100 programs, seed 1)
+  tests/cc/fuzz_mem.py [N [seed]]        (default: 100 programs, seed 1;  FUZZ_CC=zpcc fuzzes the clang backend, with FUZZ_SMALL=1)
 Needs what tests/cc/run.sh needs.  A failing program is kept in $FUZZ_KEEP (default /tmp/fuzz_mem_fail_<seed>_<n>.c).
 """
 import os, random, subprocess, sys, tempfile
@@ -432,7 +432,10 @@ def loopvars(stmts, acc):
 
 def make_program(rng):
     g = Gen(rng)
-    body = g.block(3, rng.randint(6, 16))
+    if os.environ.get('FUZZ_SMALL'):                  # zpcc gives every value a stack slot: keep the programs short
+        body = g.block(1, rng.randint(2, 4))
+    else:
+        body = g.block(3, rng.randint(6, 16))
     env = Env()
     for n in SCALARS: env.s[n] = rng.choice([0, 1, 2, 3, 5, 9, -1, -7, 100])
     init_vals = dict(env.s)
@@ -465,8 +468,13 @@ def run_one(text, work, name):
     c = os.path.join(work, name + '.c'); asm = os.path.join(work, name + '.asm')
     img = os.path.join(work, name + '.img.asm'); binf = os.path.join(work, name + '.bin')
     open(c, 'w').write(text)
-    r = subprocess.run([DCC, '-DZP_CC_DOS', '-I', here, c, '-o', asm], capture_output=True, text=True, timeout=60)
+    if os.environ.get('FUZZ_CC') == 'zpcc':      # fuzz the clang backend instead
+        r = subprocess.run([os.path.join(root, 'llvm_compiler', 'zpcc'), '-I', here, '-I', os.path.join(root, 'include'), c, '-o', asm],
+                           capture_output=True, text=True, timeout=120)
+    else:
+        r = subprocess.run([DCC, '-DZP_CC_DOS', '-I', here, c, '-o', asm], capture_output=True, text=True, timeout=60)
     if r.returncode != 0 or not os.path.exists(asm):
+        if 'bytes of stack frame' in (r.stdout + r.stderr): return None, 'TOOBIG'
         return None, 'compile failed: ' + (r.stdout + r.stderr)[-500:]
     with open(img, 'w') as f:
         f.write('.org $0200\n.bank $80\n')
@@ -486,7 +494,7 @@ def main():
     seed = int(sys.argv[2]) if len(sys.argv) > 2 else 1
     rng = random.Random(seed)
     work = tempfile.mkdtemp()
-    done = fails = tries = 0
+    done = fails = tries = toobig = 0
     while done < n and tries < n * 200:
         tries += 1
         try:
@@ -497,12 +505,16 @@ def main():
         done += 1
         want = ' '.join(str(v) for v in rec)
         got, err = run_one(text, work, 'p')
+        if err == 'TOOBIG':
+            toobig += 1
+            done -= 1
+            continue
         if err or got != want:
             fails += 1
             keep = os.environ.get('FUZZ_KEEP', '/tmp/fuzz_mem_fail_%d_%d.c' % (seed, done))
             open(keep, 'w').write(text)
             print('FAIL #%d (%s): %s\n  want: %s\n  got : %s' % (done, keep, err or 'wrong result', want[:200], (got or '')[:200]))
-    print('%d programs, %d failed (seed %d, %d tried)' % (done, fails, seed, tries))
+    print('%d programs, %d failed (seed %d, %d tried)%s' % (done, fails, seed, tries, (', %d skipped: frame over 255 bytes' % toobig) if toobig else ''))
     sys.exit(1 if fails else 0)
 
 

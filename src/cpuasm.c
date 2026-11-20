@@ -432,6 +432,15 @@ AddressingMode detect_addressing_mode(const char *operand, const char *mnemonic)
         return AM_IMMEDIATE;
     }
 
+    /* '>' forces the 24-bit (long) form whatever the operand is - the standard 65816 spelling, and the only way to say
+     * "label in its own bank" for a label, which would otherwise assemble as a 16-bit data-bank-relative address:
+     * LDA >label,X  /  LDA >label  /  DIV >label,Y. The label's bank is folded in when the operand is emitted. */
+    if (operand[0] == '>') {
+        if (strstr(operand, ",X")) return AM_ABSOLUTE_LONG_X;
+        if (strstr(operand, ",Y")) return AM_ABSOLUTE_LONG_Y;
+        return AM_ABSOLUTE_LONG;
+    }
+
     /* Detect various indirect modes */
     if (operand[0] == '(') {
         /* Look for closing ) */
@@ -1355,6 +1364,7 @@ int assemble_line(char *line) {
         /* Extract actual value (preserve $ for parse_number) */
         val_str = operand;
         if (*val_str == '#') val_str++;  /* Skip immediate marker */
+        if (*val_str == '>') val_str++;  /* Skip the force-long marker */
         if (*val_str == '(' || *val_str == '[') val_str++;  /* Skip indirect markers */
 
         /* Remove closing ), ], and index registers */
@@ -1389,6 +1399,22 @@ int assemble_line(char *line) {
                     /* Add fixup */
                     add_fixup(pc, clean_val, mode, inst->bytes - 1);
                 }
+            }
+        }
+
+        /* A numeric operand must fit the field it is emitted into: LDA 256,S used to assemble silently as LDA 0,S, which
+         * makes every stack slot past the first 255 bytes of a frame read the wrong data.  Labels are exempt (their
+         * value carries the bank for the long forms and the fixup code owns their range). */
+        if (!is_label && mode != AM_PC_RELATIVE_LONG) {
+            int32_t sv = (int32_t)value;
+            int nb = inst->bytes - 1;
+            int bad = 0;
+            if (nb == 1) bad = (sv < -128 || sv > 255);
+            else if (nb == 2) bad = (sv < -32768 || sv > 65535);
+            else if (nb == 3) bad = (value > 0xFFFFFFu && sv >= 0);
+            if (bad) {
+                sprintf(msg, "operand %ld does not fit in %d byte%s: %s %s", (long)sv, nb, nb == 1 ? "" : "s", token, operand);
+                error(msg);
             }
         }
 

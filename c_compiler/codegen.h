@@ -25,6 +25,7 @@ typedef struct {
     int member_count;
     int total_size;  /* Total size in bytes */
     int is_union;
+    int align;       /* alignment in bytes: 1 for a struct of chars only, else 2 */
 } StructDef;
 
 /* Symbol table entry */

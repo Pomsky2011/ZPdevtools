@@ -64,26 +64,40 @@ Identical to `def88186cc`, so the two toolchains interoperate and share `cpuasm`
 ## Supported IR subset
 
 `alloca`, `load`, `store`, `getelementptr`, `add`/`sub`/`mul`/`[us]div`/`[us]rem`,
-`and`/`or`/`xor`, `shl`/`lshr`/`ashr`, `icmp`, `br`, `ret`, `call`,
-`zext`/`sext`/`trunc`/`bitcast`/`ptrtoint`/`inttoptr`, `select`, and
-integer/pointer/byte-array (string) globals. Anything else is reported with a
-clear diagnostic instead of producing silently-wrong code.
+`and`/`or`/`xor`, `shl`/`lshr`/`ashr`, `icmp`, `br`, `switch`, `ret`, `call` (including `llvm.memcpy` and
+`llvm.memset`), `zext`/`sext`/`trunc`/`bitcast`/`ptrtoint`/`inttoptr`, `select`, and read-only
+integer/array/struct globals. Anything else is reported with a clear diagnostic, the exit status is non-zero and no
+output file is left behind.
+
+## Memory model
+
+A pointer is a 16-bit offset into **bank $80**, the bank that holds the stack and all data. Every load and store through
+one is `LDA`/`STA $800000,X` (bytes in 8-bit mode, a `long` as two words), which does not depend on the data bank
+register. Locals, arrays and structs live in the stack frame; `def88186cc` uses the same model and the same struct layout
+(clang's 16-bit data layout), so the two toolchains agree on both.
+
+Globals are **ROM** (bank $00 in a cartridge, wherever the code was assembled):
+
+- a global can be **read by name**: indexed in place (`table[i]`), through struct members, or copied into a local array
+  (`memcpy` from a constant initialiser is how `int a[4] = {1,2,3,4}` works);
+- its **address cannot be used as a pointer value** (passing it, storing it, comparing it, `"text"` as a `char *`): it
+  would be mistaken for a bank-$80 address. That is an error, not wrong code;
+- it **cannot be written**: there is no writable data segment yet. A store is an error.
 
 ## Known limitations
 
-- **Not machine-optimized.** Every SSA value gets its own stack slot, so `-O0`
-  IR produces verbose (but correct) code. The value here is clang's correctness,
-  not code size.
-- **Unsigned compares are lowered as signed** (`BMI`/`BPL`); the ISA exposes no
-  carry-based conditional branch in the classic compiler's mnemonic set.
-- **`ashr` uses `LSR`** (logical shift) — no arithmetic-right yet.
-- **Relative branches** (`BRA`/`BEQ`/…) limit the size of a single function;
-  very large functions can exceed branch range.
-- **Semantic validation is at the assembler level so far** (output assembles
-  cleanly via `cpuasm`, structure mirrors the known-good `def88186cc` ABI). End-
-  to-end execution should be validated through the full ROM/system integration
-  path, since the DEF88186 CPU runs interconnected with the PPU/APU/DMA over the
-  24-bit banked memory map rather than in isolation.
+- **Not machine-optimized.** Every SSA value gets its own stack slot, so `-O0` IR produces verbose (but correct) code.
+  A function whose frame, with its temporaries, passes **255 bytes** is an error (`n,S` has a one-byte operand; the
+  assembler now rejects what it cannot encode instead of truncating it): split it up or use smaller arrays.
+- No `memmove`, no integers wider than 32 bits, no floating point, no varargs, no struct values (by-value copy, passing
+  or returning); an indirect call through a function pointer carries at most one argument.
+- Plain `char` follows clang's MSP430 default; use `signed char` / `unsigned char` when it matters.
+
+## Testing
+
+`tests/cc/run.sh zpcc` compares it with gcc in the emulator, `FUZZ_CC=zpcc python3 tests/cc/fuzz_ops.py N SEED` and
+`FUZZ_CC=zpcc FUZZ_SMALL=1 python3 tests/cc/fuzz_mem.py N SEED` fuzz it against reference models, and
+`python3 tests/cc/zpcc_reject_tests.py` checks every refusal above.
 
 ## Examples
 

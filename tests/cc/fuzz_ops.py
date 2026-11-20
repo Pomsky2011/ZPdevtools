@@ -6,7 +6,7 @@ if/else, for, calls), evaluates them with a reference interpreter that follows C
 program in the emulator and compares what rec() recorded.  Every intermediate value is kept inside the 16-bit
 range, so the answer is the same on any C implementation and a mismatch is a miscompile.
 
-  tests/cc/fuzz_ops.py [N [seed]]        (default: 100 programs, seed 1)
+  tests/cc/fuzz_ops.py [N [seed]]        (default: 100 programs, seed 1;  FUZZ_CC=zpcc fuzzes the clang backend)
 Needs the same things as tests/cc/run.sh (zp_run_c, def88186cc, cpuasm).  A failing program is kept in
 $FUZZ_KEEP (default /tmp/fuzz_ops_fail_<seed>_<n>.c).
 """
@@ -103,6 +103,8 @@ class Gen:
     def __init__(self, rng):
         self.r = rng
         self.arrays = False
+        # FUZZ_SKIP=tern,shift,logic,div,cmp,un,switch,while,dowhile,for,brk,cont,call,if leaves a construct out (to bisect a failure)
+        self.skip = set(x for x in os.environ.get('FUZZ_SKIP', '').split(',') if x)
 
     def expr(self, vars_, depth, funcs=()):
         r = self.r
@@ -112,12 +114,17 @@ class Gen:
             if MODE['uns']: return ('num', r.choice([0, 1, 2, 3, 5, 7, 10, 16, 100, 255, 1000, 32767, 32768, 40000, 65535]))
             return ('num', r.choice([0, 1, 2, 3, 5, 7, 10, 16, 100, 255, 1000]))
         c = r.random()
-        if c < 0.10: return ('un', '!' if MODE['uns'] else r.choice('-~!'), self.expr(vars_, depth - 1, funcs))
-        if c < 0.17: return ('tern', self.expr(vars_, depth - 1, funcs), self.expr(vars_, depth - 1, funcs), self.expr(vars_, depth - 1, funcs))
-        if c < 0.24 and funcs:
+        if 'un' not in self.skip and c < 0.10: return ('un', '!' if MODE['uns'] else r.choice('-~!'), self.expr(vars_, depth - 1, funcs))
+        if 'tern' not in self.skip and 0.10 <= c < 0.17: return ('tern', self.expr(vars_, depth - 1, funcs), self.expr(vars_, depth - 1, funcs), self.expr(vars_, depth - 1, funcs))
+        if 'call' not in self.skip and 0.17 <= c < 0.24 and funcs:
             f = r.choice(funcs)
             return ('call', f[0], [self.expr(vars_, depth - 1, funcs) for _ in range(f[1])])
-        return ('bin', r.choice(BIN), self.expr(vars_, depth - 1, funcs), self.expr(vars_, depth - 1, funcs))
+        ops = [o for o in BIN
+               if not ('shift' in self.skip and o in ('<<', '>>'))
+               and not ('logic' in self.skip and o in ('&&', '||'))
+               and not ('div' in self.skip and o in ('/', '%'))
+               and not ('cmp' in self.skip and o in ('==', '!=', '<', '<=', '>', '>='))]
+        return ('bin', r.choice(ops), self.expr(vars_, depth - 1, funcs), self.expr(vars_, depth - 1, funcs))
 
     def block(self, vars_, depth, funcs, nstmt, in_loop=False):
         r = self.r
@@ -131,23 +138,23 @@ class Gen:
                 out.append(('aassign', self.expr(vars_, 2, funcs), self.expr(vars_, 3, funcs)))
             elif c < 0.52:
                 out.append(('rec', self.expr(vars_, 3, funcs)))
-            elif c < 0.62 and depth > 0:
+            elif c < 0.62 and depth > 0 and 'if' not in self.skip:
                 out.append(('if', self.expr(vars_, 2, funcs), self.block(vars_, depth - 1, funcs, r.randint(1, 3), in_loop),
                             self.block(vars_, depth - 1, funcs, r.randint(0, 2), in_loop)))
-            elif c < 0.70 and depth > 0:
+            elif c < 0.70 and depth > 0 and 'for' not in self.skip:
                 iv = 'i%d' % depth
                 out.append(('for', iv, r.randint(0, 5), self.block(vars_ + [iv], depth - 1, funcs, r.randint(1, 3), True)))
-            elif c < 0.77 and depth > 0:
+            elif c < 0.77 and depth > 0 and 'while' not in self.skip:
                 wv = 'w%d' % depth
                 out.append(('while', wv, r.randint(1, 5), self.block(vars_ + [wv], depth - 1, funcs, r.randint(1, 3), True)))
-            elif c < 0.82 and depth > 0:
+            elif c < 0.82 and depth > 0 and 'dowhile' not in self.skip:
                 dv = 'w%d' % depth
                 out.append(('dowhile', dv, r.randint(1, 4), self.block(vars_ + [dv], depth - 1, funcs, r.randint(1, 3), True)))
-            elif c < 0.88 and depth > 0:
+            elif c < 0.88 and depth > 0 and 'switch' not in self.skip:
                 ncase = r.randint(1, 3)
                 cases = [(k, self.block(vars_, depth - 1, funcs, r.randint(1, 2), False)) for k in r.sample(range(4), ncase)]
                 out.append(('switch', self.expr(vars_, 2, funcs), cases, self.block(vars_, depth - 1, funcs, r.randint(0, 2), False)))
-            elif c < 0.94 and in_loop:
+            elif c < 0.94 and in_loop and 'brk' not in self.skip:
                 out.append((r.choice(['brk', 'cont']), self.expr(vars_, 2, funcs)))
             else:
                 out.append(('rec', ('var', r.choice(vars_))))
@@ -320,9 +327,14 @@ def run_one(text, work, name):
     c = os.path.join(work, name + '.c'); asm = os.path.join(work, name + '.asm')
     img = os.path.join(work, name + '.img.asm'); binf = os.path.join(work, name + '.bin')
     open(c, 'w').write(text)
-    r = subprocess.run([DCC, '-DZP_CC_DOS', '-I', here, c, '-o', asm], capture_output=True, text=True, timeout=60)
+    if os.environ.get('FUZZ_CC') == 'zpcc':      # fuzz the clang backend instead
+        r = subprocess.run([os.environ.get('ZPCC_BIN', os.path.join(root, 'llvm_compiler', 'zpcc')), '-I', here, '-I', os.path.join(root, 'include'), c, '-o', asm],
+                           capture_output=True, text=True, timeout=120)
+    else:
+        r = subprocess.run([DCC, '-DZP_CC_DOS', '-I', here, c, '-o', asm], capture_output=True, text=True, timeout=60)
     if r.returncode != 0 or not os.path.exists(asm):
-        return None, 'compile failed: ' + (r.stdout + r.stderr)[-400:]
+        if 'bytes of stack frame' in (r.stdout + r.stderr): return None, 'TOOBIG'
+        return None, 'compile failed: ' + (r.stdout + r.stderr)[-500:]
     with open(img, 'w') as f:
         f.write('.org $0200\n.bank $80\n')
         for inc in ['lib/crt0_entry.asm']: f.write('.include "%s"\n' % os.path.join(root, inc))
@@ -340,7 +352,7 @@ def main():
     seed = int(sys.argv[2]) if len(sys.argv) > 2 else 1
     rng = random.Random(seed)
     work = tempfile.mkdtemp()
-    done = fails = 0
+    done = fails = toobig = 0
     tries = 0
     while done < n and tries < n * 50:
         tries += 1
@@ -352,12 +364,16 @@ def main():
         if not rec: done -= 1; continue
         want = ''.join('%d ' % v for v in rec).strip()
         got, err = run_one(text, work, 'p')
+        if err == 'TOOBIG':
+            toobig += 1
+            done -= 1
+            continue
         if err or got != want:
             fails += 1
             keep = os.environ.get('FUZZ_KEEP', '/tmp/fuzz_ops_fail_%d_%d.c' % (seed, done))
             open(keep, 'w').write(text)
             print('FAIL #%d (%s): %s\n  want: %s\n  got : %s' % (done, keep, err or 'wrong result', want[:160], (got or '')[:160]))
-    print('%d programs, %d failed (seed %d)' % (done, fails, seed))
+    print('%d programs, %d failed (seed %d)%s' % (done, fails, seed, (', %d skipped: frame over 255 bytes' % toobig) if toobig else ''))
     sys.exit(1 if fails else 0)
 
 if __name__ == '__main__':
