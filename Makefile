@@ -85,6 +85,10 @@ linkers: $(addprefix $(BINDIR)/,$(LINKERS))
 utilities: $(addprefix $(BINDIR)/,$(UTILITIES))
 	@echo "Utilities built: $(UTILITIES)"
 
+# Assemble the PPU demos (examples/ppu/*.asm -> *.bin; nothing built is tracked)
+examples: $(BINDIR)/ppuasm
+	for f in examples/ppu/*.asm; do $(BINDIR)/ppuasm $$f -o $${f%.asm}.bin || exit 1; done
+
 # Clean
 clean:
 	rm -f $(ALL_BINS) src/*.o examples/*/*.bin
@@ -103,6 +107,7 @@ help:
 	@echo "  disassemblers  - Build disassemblers (cpudisasm, ppudisasm, apudisasm)"
 	@echo "  rom-tools      - Build ROM tools (rombuilder, rominspect)"
 	@echo "  utilities      - Build utilities (hexview, wav2mmp)"
+	@echo "  examples       - Assemble the PPU demos in examples/ppu to .bin files"
 	@echo "  check          - Build, then run the assembler, linker, signer and disassembler tests"
 	@echo "  clean          - Remove all built files"
 	@echo "  install        - Install tools to /usr/local/bin"
@@ -124,4 +129,4 @@ check: all
 	python3 tests/link/check.py
 	python3 tests/disasm/check.py
 
-.PHONY: all assemblers disassemblers rom-tools utilities clean install help check
+.PHONY: all assemblers disassemblers rom-tools utilities examples clean install help check

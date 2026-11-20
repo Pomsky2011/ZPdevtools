@@ -45,3 +45,6 @@ __pycache__/
 tmp/
 *.wav
 *.numbers
+*.elf
+*.zpb
+*.img

@@ -72,11 +72,11 @@ done:
 ## Build & Run
 
 ```bash
-cd /Users/alexanderwhite/Documents/Code/ZPdevtools
-./ppuasm examples/ppu/white_fill.asm examples/ppu/white_fill.bin
+cd ZPdevtools
+make examples        # or: executables/ppuasm examples/ppu/white_fill.asm -o examples/ppu/white_fill.bin
 
-cd /Users/alexanderwhite/Documents/Code/ZeroPoint/build_qt
-./bin/run_demo ../../ZPdevtools/examples/ppu/white_fill.bin 2>&1 | tee white_fill_output.txt
+cd ../ZeroPoint/build
+./bin/run_demo ../../ZPdevtools/examples/ppu/white_fill.bin
 ```
 
 ## Color Values (16-bit RGBA)

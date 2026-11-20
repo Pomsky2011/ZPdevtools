@@ -31,6 +31,9 @@ V-Blank interrupt-driven gradient renderer.
 
 ## Running Demos
 
+The `.bin` files are build output (not tracked). From the ZPdevtools root, `make examples` assembles every
+demo here.
+
 ### Quick Test (headless)
 ```bash
 cd /path/to/ZeroPoint/build
