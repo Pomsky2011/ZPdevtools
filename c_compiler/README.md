@@ -30,47 +30,60 @@ def88186cc is a small compiler for a **subset** of C89, small enough to run on a
 
 **Accepted**
 
-- Types: `int`, `short` (16 bit), `long` (32 bit), `char` (8 bit), `signed`/`unsigned` forms, `void`. Pointers exist as values
-  only: you can declare and pass them but not dereference them (see below).
-- Locals with initialisers, nested blocks and shadowing, several declarators per declaration (`int a, b, c;`).
-- All C operators on variables and constants: `+ - * / % & | ^ ~ ! << >>`, comparisons, short-circuit `&& ||`, `?:`, comma,
-  `++`/`--`, and `+= -= *= /= %= &= |= ^=` (not `<<=` / `>>=`).
+- Types: `int`, `short` (16 bit), `long` (32 bit), `char` (8 bit), `signed`/`unsigned` forms, `void`, `struct` and `union`
+  (members of any of these, pointers, arrays, nested structs), pointers to all of them.
+- Local variables with initialisers, nested blocks with correct scoping, several declarators per declaration.
+- **Arrays** (up to 4 dimensions, `a[i][j]`, `int a[] = {...}`), brace initialisers with elided/nested braces and zero fill,
+  `char s[] = "text"`. **Pointers**: `&x`, `*p`, `p[i]`, `p->m`, `s.m`, `&a[i]`, `&s.m`, pointer arithmetic and comparison
+  (`p + n`, `p - q`, `p++`, `p < q`), pointers to pointers, arrays of pointers, array/pointer parameters (`int a[]`), pointer
+  results, `sizeof` of types, arrays and expressions.
+- All C operators, including `++`/`--` and every `op=` on any lvalue (`a[i] += 2`, `*p++`, `s.n--`, `p->x <<= 1`).
 - `if`/`else`, `while`, `do`/`while`, `for`, `break`, `continue`, `switch`/`case`/`default`, `goto` and labels, `return`.
-- Functions: definitions, prototypes, `f(void)`, recursion, up to 16 parameters (`int`/`long`/`char` and pointers),
-  `long` and narrow (`char`) arguments and results.
-- Casts, `sizeof`, decimal/octal/hex constants with `u`/`l` suffixes, string literals, character constants `'a'` `'\n'` `'\t'` `'\0'`,
-  `__asm__("...")`.
+- Functions: definitions, prototypes, `f(void)`, recursion, up to 16 parameters (`int`/`long`/`char`/pointers), pointer, `long`
+  and narrow (`char`) arguments and results.
+- Casts, decimal/octal/hex constants with `u`/`l` suffixes, character constants `'a'` `'\n'` `'\t'` `'\0'`, `__asm__("...")`.
 - The preprocessor: `#include`, `#define` (object- and function-like), `#undef`, `#if`/`#ifdef`/`#ifndef`/`#elif`/`#else`/
   `#endif` with full constant expressions and `defined`, `#error`, `#line`, `#pragma` (ignored), `__LINE__`, `__FILE__`, `__STDC__`.
+
+**How memory works.** A pointer is a 16-bit offset into bank $80, the bank that holds the stack and all data. `*p` compiles to
+`TAX` / `LDA $800000,X` (and `STA` for stores), which does not depend on the data bank register. Local variables, arrays and
+structs live in the stack frame, word aligned; a struct puts 16-bit members on even offsets and rounds its size up to a word.
 
 **Refused with an error** (each is a real C89 feature this compiler does not implement)
 
 - `float`, `double` and floating constants (the console has no FPU).
-- Arrays, `&`, `*p`, `p[i]`, and struct/union member access. Memory reached through a pointer goes through the direct page
-  (bank $00) while locals live on the stack (bank $80), so these would silently touch the wrong memory.
+- **String literals as pointers**: ROM data is in another bank and cannot be reached through a bank-$80 pointer, so
+  `char *s = "x"` and `f("x")` are errors. `char s[] = "x"` works (it copies the text into the array).
+- Struct/union values: assignment `a = b`, passing or returning by value. Use pointers or copy member by member.
+- `&array` (an array already is its address), pointer arithmetic on a multi-dimensional array (index it instead), `void *`
+  dereference, `op=`/`++` on an lvalue with side effects in it (`a[i++] += 1`).
 - Global variables, `static`, `extern` data, `const`/`volatile`/`register`, function pointers, bit-fields, K&R function
-  definitions, `...` varargs, `typedef`, working `enum` constants, adjacent string-literal concatenation, `# / ##` in macros,
+  definitions, `...` varargs, `typedef`, working `enum` constants, adjacent string-literal concatenation, `#` / `##` in macros,
   variadic macros.
 - Character constants other than the four above (`'\x41'`, `'\\'`, `'\''` ...).
 
 **Differences from ISO C inside the subset**
 
 - Plain `char` is unsigned. `bool`, `true`, `false` and `_Bool` are keywords, so they cannot be identifiers.
+- Integer promotions follow a 16-bit `int`: `char` of either signedness promotes to signed `int`; `unsigned short`/`unsigned`
+  stay unsigned. A 32-bit host can disagree (see `t13_u16_semantics.c`).
+- Pointer arithmetic wraps at 16 bits, and `p - q` is a 16-bit `int`.
 - `//` comments are accepted. `__DATE__` and `__TIME__` are not defined (output is reproducible).
 - Preprocessor limits, all reported as errors when hit: 30000 bytes per logical line or macro expansion, 64 levels of
   include/macro nesting, 5000 `#include`s per file, 256 nested `#if`s, 64 macro parameters. A macro call must fit on one
   logical line. Use a backslash to continue a line.
 - **Hardware loops.** `for (i = 0; i < N; i = i + 1)` with a constant `N` of 1..32767 becomes the CPU's `LOOP`/`LPEND` pair, but only
-  when it is the innermost loop, its body makes no calls, uses no `continue`/`goto`/inline asm and does not touch `i`. The CPU
-  has a single loop counter, so if an interrupt handler written in C contains such a loop and can interrupt another one,
-  build the handler's file with `--no-hwloop`.
+  when it is the innermost loop, its body makes no calls, uses no `continue`/`goto`/inline asm, does not touch `i` and nothing
+  in the function takes `&i`. The CPU has a single loop counter, so if an interrupt handler written in C contains such a loop
+  and can interrupt another one, build the handler's file with `--no-hwloop`.
 
 **Testing** (all under `tests/`)
 
 | Command | What it checks |
 |---|---|
-| `tests/cc/run.sh dos` | hand-written programs run in the emulator and compared with gcc (`t01`-`t08`: calls, operators, long, loops, narrow types) |
+| `tests/cc/run.sh dos` | hand-written programs run in the emulator and compared with gcc (`t01`-`t13`: calls, operators, long, loops, narrow types, arrays, pointers, structs, scoping and promotions) |
 | `python3 tests/cc/fuzz_ops.py N SEED` | random programs (signed and unsigned arithmetic, control flow, calls) against a reference interpreter |
+| `python3 tests/cc/fuzz_mem.py N SEED` | random programs over arrays, pointers (arithmetic, comparison, `&`), structs and pointer-taking helpers against a model that tracks every pointer's object |
 | `python3 tests/cc/pp_tests.py` | the preprocessor, including every error path |
 | `python3 tests/cc/reject_tests.py` | everything outside the subset is refused cleanly |
 | `tests/cc/examples_check.sh` | `examples/*.c` compile; `examples/unsupported/*.c` are refused |

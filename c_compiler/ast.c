@@ -227,6 +227,29 @@ ASTNode* ast_create_pre_dec(const char* var_name) {
     return node;
 }
 
+ASTNode* ast_create_index(ASTNode* base, ASTNode* index) {
+    ASTNode* node = ast_create_node(AST_INDEX);
+    node->u.index_expr.base = base;
+    node->u.index_expr.index = index;
+    return node;
+}
+
+ASTNode* ast_create_assign_lv(ASTNode* target, ASTNode* value, int op) {
+    ASTNode* node = ast_create_node(AST_ASSIGN_LV);
+    node->u.assign_lv.target = target;
+    node->u.assign_lv.value = value;
+    node->u.assign_lv.op = op;
+    return node;
+}
+
+ASTNode* ast_create_incdec_lv(ASTNode* operand, int inc, int post) {
+    ASTNode* node = ast_create_node(AST_INCDEC_LV);
+    node->u.incdec_lv.operand = operand;
+    node->u.incdec_lv.inc = inc;
+    node->u.incdec_lv.post = post;
+    return node;
+}
+
 ASTNode* ast_create_post_dec(const char* var_name) {
     ASTNode* node = ast_create_node(AST_POST_DEC);
     node->u.inc_dec.var_name = zp_strdup(var_name);
@@ -304,6 +327,7 @@ ASTNode* ast_create_func_decl(DataType return_type, const char* name, ASTNode** 
     node->u.func_decl.body = body;
     node->u.func_decl.return_modifiers = MOD_NONE;
     node->u.func_decl.storage = STORAGE_NONE;
+    node->u.func_decl.return_pointer_level = 0;
     return node;
 }
 
@@ -491,6 +515,17 @@ int ast_walk(ASTNode* node, int (*visit)(ASTNode*, void*), void* ctx) {
         case AST_ARRAY_SUBSCRIPT:
             WALK(node->u.array_subscript.index);
             break;
+        case AST_INDEX:
+            WALK(node->u.index_expr.base);
+            WALK(node->u.index_expr.index);
+            break;
+        case AST_ASSIGN_LV:
+            WALK(node->u.assign_lv.target);
+            WALK(node->u.assign_lv.value);
+            break;
+        case AST_INCDEC_LV:
+            WALK(node->u.incdec_lv.operand);
+            break;
         case AST_ARRAY_ASSIGN:
             WALK(node->u.array_assign.index);
             WALK(node->u.array_assign.value);
@@ -609,6 +644,17 @@ void ast_free(ASTNode* node) {
         case AST_ARRAY_SUBSCRIPT:
             free(node->u.array_subscript.array_name);
             ast_free(node->u.array_subscript.index);
+            break;
+        case AST_INDEX:
+            ast_free(node->u.index_expr.base);
+            ast_free(node->u.index_expr.index);
+            break;
+        case AST_ASSIGN_LV:
+            ast_free(node->u.assign_lv.target);
+            ast_free(node->u.assign_lv.value);
+            break;
+        case AST_INCDEC_LV:
+            ast_free(node->u.incdec_lv.operand);
             break;
         case AST_ARRAY_ASSIGN:
             free(node->u.array_assign.array_name);

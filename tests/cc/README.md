@@ -25,5 +25,12 @@ the host carry `/* EXPECT: ... */`; tests that need the boot ROM carry `/* NEEDS
 | `t04_long` | 32-bit arithmetic, compares, shifts, widening/narrowing, register-pair arguments and returns |
 | `t05_sdk` | the C SDK driving real peek/poke and DMA |
 | `t06_cop` | every COP signature through `zp_cop.h` |
+| `t07_loops` | counted/nested/zero-trip loops, `continue`, `break`, calls in loops |
+| `t08_narrow` | `char`/`short` stores, casts, parameters, returns |
+| `t09_arrays` | local arrays: indexing, initialisers, 2-D, char/long elements, array parameters |
+| `t10_pointers` | `&`, `*`, `p[i]`, pointer arithmetic/comparison, pointers to pointers, pointer parameters and results |
+| `t11_structs` | structs and unions: members, nesting, member arrays, arrays of structs, `->`, initialisers |
+| `t12_scope_promo` | block scoping and the integer promotions |
+| `t13_u16_semantics` | 16-bit unsigned semantics (expected values listed in the file, a 32-bit host would disagree) |
 
 `ZP_TRACE=1` / `ZP_STOP=<pc>` on `zp_run_c` print the last instructions of a hung or wild test.

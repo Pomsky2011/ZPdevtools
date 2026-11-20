@@ -3,6 +3,7 @@
 #include "zpstrdup.h"
 #include <stdlib.h>
 #include <stdarg.h>
+#include <ctype.h>
 
 static CodegenContext ctx;
 
@@ -10,10 +11,14 @@ static CodegenContext ctx;
 static void codegen_function(ASTNode* node);
 static void codegen_statement(ASTNode* node);
 static void codegen_expression(ASTNode* node);
-static void codegen_member_assign(ASTNode* node);
-static void codegen_ptr_member_assign(ASTNode* node);
 static void codegen_addr_of(ASTNode* node);
 static void codegen_deref(ASTNode* node);
+static void codegen_ptr_arith(ASTNode* node);
+static void codegen_lvalue_load(ASTNode* node);
+static void codegen_assign_lv(ASTNode* node);
+static void codegen_incdec_lv(ASTNode* node);
+static void codegen_addr(ASTNode* node);
+static void pop_symbols_to(int mark);
 
 /* Struct management functions */
 static void add_struct(StructDef def) {
@@ -127,6 +132,98 @@ static int get_type_size(DataType type, int pointer_level, const char* struct_na
     }
 }
 
+
+/* ====================================================================================================
+ * Full C types (what a value or object *is*; CType below is only what the code generator needs of a value).
+ * Pointers are 16-bit offsets into bank $80, the bank the stack and all data live in; memory behind a pointer is
+ * reached with LDA/STA $800000,X, which does not depend on the data bank register.
+ * ==================================================================================================== */
+typedef struct {
+    DataType base;        /* int, short, char, long, void, struct/union, bool */
+    TypeModifier mods;
+    int ptr;              /* levels of pointer */
+    const char* sname;    /* struct/union name */
+    int ndim;             /* array: number of dimensions ... */
+    int dims[MAX_DIMS];   /* ... and their sizes */
+} Ty;
+
+static Ty ty_make(DataType base, TypeModifier mods, int ptr, const char* sname) {
+    Ty t;
+    int i;
+    t.base = base;
+    t.mods = mods;
+    t.ptr = ptr;
+    t.sname = sname;
+    t.ndim = 0;
+    for (i = 0; i < MAX_DIMS; i++) t.dims[i] = 0;
+    return t;
+}
+
+static int ty_ptrlike(const Ty* t) { return t->ptr > 0 || t->ndim > 0; }
+
+static int ty_is_struct(const Ty* t) { return t->base == TYPE_STRUCT && t->ptr == 0 && t->ndim == 0; }
+
+/* size in bytes of an object of this type (an array: all its elements) */
+static int ty_size(const Ty* t) {
+    long n = 1;
+    int i, elem;
+    if (t->ptr > 0) elem = 2;
+    else if (t->base == TYPE_VOID) elem = 1;
+    else elem = get_type_size(t->base, 0, t->sname);
+    for (i = 0; i < t->ndim; i++) {
+        n *= t->dims[i];
+        if (n > 32767L) return 32767;
+    }
+    n *= elem;
+    return n > 32767L ? 32767 : (int)n;
+}
+
+/* the type of *p, p[i], or the element of an array */
+static Ty ty_deref(Ty t) {
+    int i;
+    if (t.ndim > 0) {
+        for (i = 1; i < t.ndim; i++) t.dims[i - 1] = t.dims[i];
+        t.ndim--;
+    } else if (t.ptr > 0) {
+        t.ptr--;
+    }
+    return t;
+}
+
+/* an array used as a value is a pointer to its first element */
+static Ty ty_decay(Ty t) {
+    if (t.ndim > 0) {
+        t.ndim = 0;
+        t.ptr++;
+    }
+    return t;
+}
+
+static StructMember* find_member(StructDef* sd, const char* name) {
+    int i;
+    for (i = 0; i < sd->member_count; i++)
+        if (strcmp(sd->members[i].name, name) == 0) return &sd->members[i];
+    return NULL;
+}
+
+static Ty member_ty(const StructMember* m) {
+    Ty t = ty_make(m->type, m->modifiers, m->pointer_level, m->struct_name);
+    int i;
+    t.ndim = m->ndim;
+    for (i = 0; i < m->ndim; i++) t.dims[i] = m->dims[i];
+    return t;
+}
+
+static Ty sym_ty_raw(const Symbol* s) {
+    Ty t = ty_make(s->type, s->modifiers, s->pointer_level, s->struct_name);
+    int i;
+    if (s->is_array) {
+        t.ndim = s->array_dimensions > MAX_DIMS ? MAX_DIMS : s->array_dimensions;
+        for (i = 0; i < t.ndim; i++) t.dims[i] = s->array_sizes[i];
+    }
+    return t;
+}
+
 static void add_symbol(const char* name, DataType type, int is_param, int param_index, int is_array, int array_size, int pointer_level, const char* struct_name) {
     if (ctx.symbol_count >= ctx.symbol_capacity) {
         ctx.symbol_capacity = ctx.symbol_capacity == 0 ? 16 : ctx.symbol_capacity * 2;
@@ -157,16 +254,10 @@ static void add_symbol(const char* name, DataType type, int is_param, int param_
         ctx.symbols[ctx.symbol_count].offset = 0;
     } else {
         /* Local variables - positive offset from SP after allocation */
-        int elem_size = get_type_size(type, pointer_level, struct_name);
-        if (is_array) {
-            /* Arrays take multiple slots */
-            ctx.symbols[ctx.symbol_count].offset = local_var_index * 2;
-            local_var_index += array_size * ((elem_size + 1) / 2);  /* Reserve space for all elements */
-        } else {
-            /* Regular variables take one slot */
-            ctx.symbols[ctx.symbol_count].offset = local_var_index * 2;
-            local_var_index += (elem_size + 1) / 2;  /* Round up to word boundary */
-        }
+        /* every local starts on a word boundary and takes a whole number of words */
+        Ty lt = sym_ty_raw(&ctx.symbols[ctx.symbol_count]);
+        ctx.symbols[ctx.symbol_count].offset = local_var_index * 2;
+        local_var_index += (ty_size(&lt) + 1) / 2;
     }
 
     ctx.symbol_count++;
@@ -174,7 +265,6 @@ static void add_symbol(const char* name, DataType type, int is_param, int param_
 
 /* Add symbol with multi-dimensional array support */
 static void add_symbol_multidim(const char* name, DataType type, int is_param, int param_index, int* array_sizes, int dimensions, int pointer_level, const char* struct_name) {
-    int i;
     if (ctx.symbol_count >= ctx.symbol_capacity) {
         ctx.symbol_capacity = ctx.symbol_capacity == 0 ? 16 : ctx.symbol_capacity * 2;
         ctx.symbols = realloc(ctx.symbols, ctx.symbol_capacity * sizeof(Symbol));
@@ -200,19 +290,9 @@ static void add_symbol_multidim(const char* name, DataType type, int is_param, i
     if (is_param) {
         ctx.symbols[ctx.symbol_count].offset = 0;
     } else {
-        int elem_size = get_type_size(type, pointer_level, struct_name);
-        if (dimensions > 0) {
-            /* Calculate total array size */
-            int total_elements = 1;
-            for (i = 0; i < dimensions; i++) {
-                total_elements *= array_sizes[i];
-            }
-            ctx.symbols[ctx.symbol_count].offset = local_var_index * 2;
-            local_var_index += total_elements * ((elem_size + 1) / 2);
-        } else {
-            ctx.symbols[ctx.symbol_count].offset = local_var_index * 2;
-            local_var_index += (elem_size + 1) / 2;
-        }
+        Ty lt = sym_ty_raw(&ctx.symbols[ctx.symbol_count]);
+        ctx.symbols[ctx.symbol_count].offset = local_var_index * 2;
+        local_var_index += (ty_size(&lt) + 1) / 2;
     }
 
     ctx.symbol_count++;
@@ -291,7 +371,7 @@ static CType usual(CType a, CType b) {
 
 #define MAX_FUNCS 512
 #define MAX_PARAMS 16
-typedef struct { char* name; CType ret; int nparams; CType params[MAX_PARAMS]; } FuncInfo;
+typedef struct { char* name; CType ret; Ty ret_ty; int nparams; CType params[MAX_PARAMS]; } FuncInfo;
 static FuncInfo func_table[MAX_FUNCS];
 static int func_count = 0;
 
@@ -308,7 +388,8 @@ static void register_func(ASTNode* node) {
     if (func_count >= MAX_FUNCS) return;
     f = &func_table[func_count++];
     f->name = node->u.func_decl.func_name;
-    f->ret = type_ctype(node->u.func_decl.return_type, node->u.func_decl.return_modifiers, 0);
+    f->ret = type_ctype(node->u.func_decl.return_type, node->u.func_decl.return_modifiers, node->u.func_decl.return_pointer_level);
+    f->ret_ty = ty_make(node->u.func_decl.return_type, node->u.func_decl.return_modifiers, node->u.func_decl.return_pointer_level, NULL);
     f->nparams = node->u.func_decl.param_count < MAX_PARAMS ? node->u.func_decl.param_count : MAX_PARAMS;
     for (i = 0; i < f->nparams; i++) {
         ASTNode* p = node->u.func_decl.params[i];
@@ -321,79 +402,132 @@ static CType sym_ctype(Symbol* sym) {
     return type_ctype(sym->type, sym->modifiers, sym->pointer_level);
 }
 
+/* the CType of a value of this type, after the integer promotions: char (any signedness) and bool become signed int,
+   unsigned short/int stay unsigned (same width), every pointer and array is an unsigned word */
+static CType ty_ctype(const Ty* t) {
+    if (ty_ptrlike(t)) return ctype(1, 1);
+    if (t->base == TYPE_LONG) return ctype(2, (t->mods & MOD_UNSIGNED) != 0);
+    if (t->base == TYPE_SHORT || t->base == TYPE_INT) return ctype(1, (t->mods & MOD_UNSIGNED) != 0);
+    return ctype(1, 0);
+}
+
+static Ty ty_from_ctype(CType c) {
+    return ty_make(c.words == 2 ? TYPE_LONG : TYPE_INT, c.uns ? MOD_UNSIGNED : MOD_NONE, 0, NULL);
+}
+
+static Ty sym_ty(Symbol* s) { return sym_ty_raw(s); }
+
+static Ty type_of(ASTNode* n);
+
 static CType expr_type(ASTNode* n) {
+    Ty t = type_of(n);
+    return ty_ctype(&t);
+}
+
+static Ty type_of(ASTNode* n) {
     Symbol* sym;
     FuncInfo* f;
-    unsigned int v;
+    StructDef* sd;
+    StructMember* m;
+    Ty t, u;
     CType a, b;
-    if (!n) return ctype(1, 0);
+    unsigned int v;
+    if (!n) return ty_make(TYPE_INT, MOD_NONE, 0, NULL);
     switch (n->type) {
         case AST_NUMBER:
             v = (unsigned int)n->u.number;
-            if (v <= 0x7FFFu) return ctype(1, 0);
-            if (v <= 0xFFFFu) return ctype(1, 1);
-            if (v <= 0x7FFFFFFFu) return ctype(2, 0);
-            return ctype(2, 1);
+            if (v <= 0x7FFFu) return ty_make(TYPE_INT, MOD_NONE, 0, NULL);
+            if (v <= 0xFFFFu) return ty_make(TYPE_INT, MOD_UNSIGNED, 0, NULL);
+            if (v <= 0x7FFFFFFFu) return ty_make(TYPE_LONG, MOD_NONE, 0, NULL);
+            return ty_make(TYPE_LONG, MOD_UNSIGNED, 0, NULL);
         case AST_IDENTIFIER:
             sym = find_symbol(n->u.identifier);
-            return sym ? sym_ctype(sym) : ctype(1, 0);
+            return sym ? sym_ty(sym) : ty_make(TYPE_INT, MOD_NONE, 0, NULL);
         case AST_STRING_LITERAL:
+            return ty_make(TYPE_CHAR, MOD_NONE, 1, NULL);
         case AST_SIZEOF:
-        case AST_ADDR_OF:
-            return ctype(1, 1);
+            return ty_make(TYPE_INT, MOD_UNSIGNED, 0, NULL);
         case AST_CAST:
-            if (n->u.cast.pointer_level > 0) return ctype(1, 1);
-            return type_ctype(n->u.cast.target_type, n->mods, 0);
+            return ty_make(n->u.cast.target_type, n->mods, n->u.cast.pointer_level, n->u.cast.type_name);
         case AST_COMMA:
-            return n->u.comma.expr_count > 0 ? expr_type(n->u.comma.expressions[n->u.comma.expr_count - 1]) : ctype(1, 0);
+            return n->u.comma.expr_count > 0 ? type_of(n->u.comma.expressions[n->u.comma.expr_count - 1])
+                                             : ty_make(TYPE_INT, MOD_NONE, 0, NULL);
         case AST_TERNARY:
-            return usual(expr_type(n->u.ternary.then_expr), expr_type(n->u.ternary.else_expr));
+            t = type_of(n->u.ternary.then_expr);
+            u = type_of(n->u.ternary.else_expr);
+            if (ty_ptrlike(&t)) return ty_decay(t);
+            if (ty_ptrlike(&u)) return ty_decay(u);
+            return ty_from_ctype(usual(ty_ctype(&t), ty_ctype(&u)));
         case AST_BINOP:
             switch (n->u.binop.op) {
                 case OP_EQ: case OP_NE: case OP_LT: case OP_GT: case OP_LE: case OP_GE:
                 case OP_AND: case OP_OR:
-                    return ctype(1, 0);
+                    return ty_make(TYPE_INT, MOD_NONE, 0, NULL);
                 case OP_SHL: case OP_SHR:
-                    a = expr_type(n->u.binop.left);
-                    return ctype(a.words, a.uns);
+                    t = type_of(n->u.binop.left);
+                    return ty_from_ctype(ty_ctype(&t));
                 default:
-                    a = expr_type(n->u.binop.left);
-                    b = expr_type(n->u.binop.right);
-                    return usual(a, b);
+                    t = type_of(n->u.binop.left);
+                    u = type_of(n->u.binop.right);
+                    if (ty_ptrlike(&t) || ty_ptrlike(&u)) {
+                        if (n->u.binop.op == OP_ADD) return ty_decay(ty_ptrlike(&t) ? t : u);
+                        if (n->u.binop.op == OP_SUB) {
+                            if (ty_ptrlike(&t) && ty_ptrlike(&u)) return ty_make(TYPE_INT, MOD_NONE, 0, NULL);
+                            return ty_decay(t);
+                        }
+                    }
+                    a = ty_ctype(&t);
+                    b = ty_ctype(&u);
+                    return ty_from_ctype(usual(a, b));
             }
         case AST_UNOP:
-            if (n->u.unop.op == OP_NOT) return ctype(1, 0);
-            if (n->u.unop.op == OP_ADDR_OF) return ctype(1, 1);
+            if (n->u.unop.op == OP_NOT) return ty_make(TYPE_INT, MOD_NONE, 0, NULL);
+            if (n->u.unop.op == OP_ADDR_OF) {
+                t = type_of(n->u.unop.operand);
+                t.ptr++;
+                return t;
+            }
             if (n->u.unop.op == OP_DEREF) {
-                if (n->u.unop.operand->type == AST_IDENTIFIER) {
-                    sym = find_symbol(n->u.unop.operand->u.identifier);
-                    if (sym && sym->pointer_level > 0)
-                        return type_ctype(sym->type, sym->modifiers, sym->pointer_level - 1);
-                }
-                return ctype(1, 0);
+                t = type_of(n->u.unop.operand);
+                return ty_ptrlike(&t) ? ty_deref(t) : ty_make(TYPE_INT, MOD_NONE, 0, NULL);
             }
-            return expr_type(n->u.unop.operand);
+            t = type_of(n->u.unop.operand);
+            return ty_from_ctype(ty_ctype(&t));
+        case AST_ADDR_OF:
+            t = type_of(n->u.unop.operand);
+            t.ptr++;
+            return t;
         case AST_DEREF:
-            if (n->u.unop.operand->type == AST_IDENTIFIER) {
-                sym = find_symbol(n->u.unop.operand->u.identifier);
-                if (sym && sym->pointer_level > 0)
-                    return type_ctype(sym->type, sym->modifiers, sym->pointer_level - 1);
+            t = type_of(n->u.unop.operand);
+            return ty_ptrlike(&t) ? ty_deref(t) : ty_make(TYPE_INT, MOD_NONE, 0, NULL);
+        case AST_INDEX:
+            t = type_of(n->u.index_expr.base);
+            return ty_ptrlike(&t) ? ty_deref(t) : ty_make(TYPE_INT, MOD_NONE, 0, NULL);
+        case AST_MEMBER_ACCESS:
+        case AST_PTR_MEMBER_ACCESS:
+            t = type_of(n->type == AST_MEMBER_ACCESS ? n->u.member_access.object : n->u.ptr_member_access.pointer);
+            if (n->type == AST_PTR_MEMBER_ACCESS) {
+                if (!ty_ptrlike(&t)) return ty_make(TYPE_INT, MOD_NONE, 0, NULL);
+                t = ty_deref(t);
             }
-            return ctype(1, 0);
+            if (!ty_is_struct(&t) || !t.sname || !(sd = find_struct(t.sname))) return ty_make(TYPE_INT, MOD_NONE, 0, NULL);
+            m = find_member(sd, n->type == AST_MEMBER_ACCESS ? n->u.member_access.member_name : n->u.ptr_member_access.member_name);
+            return m ? member_ty(m) : ty_make(TYPE_INT, MOD_NONE, 0, NULL);
         case AST_CALL:
             f = find_func(n->u.call.name);
-            return f ? f->ret : ctype(1, 0);
+            return f ? f->ret_ty : ty_make(TYPE_INT, MOD_NONE, 0, NULL);
         case AST_ASSIGN:
             sym = find_symbol(n->u.assign.var_name);
-            return sym ? sym_ctype(sym) : ctype(1, 0);
-        case AST_ARRAY_SUBSCRIPT:
-            sym = find_symbol(n->u.array_subscript.array_name);
-            return sym ? type_ctype(sym->type, sym->modifiers, sym->pointer_level) : ctype(1, 0);
+            return sym ? sym_ty(sym) : ty_make(TYPE_INT, MOD_NONE, 0, NULL);
+        case AST_ASSIGN_LV:
+            return type_of(n->u.assign_lv.target);
+        case AST_INCDEC_LV:
+            return type_of(n->u.incdec_lv.operand);
         case AST_PRE_INC: case AST_POST_INC: case AST_PRE_DEC: case AST_POST_DEC:
             sym = find_symbol(n->u.inc_dec.var_name);
-            return sym ? sym_ctype(sym) : ctype(1, 0);
+            return sym ? sym_ty(sym) : ty_make(TYPE_INT, MOD_NONE, 0, NULL);
         default:
-            return ctype(1, 0);
+            return ty_make(TYPE_INT, MOD_NONE, 0, NULL);
     }
 }
 
@@ -440,6 +574,27 @@ static void emit_narrow(int is_signed) {
     }
 }
 
+/* A = the address of the frame byte at 'off' */
+static void emit_frame_addr(int off) {
+    emit("    TSC\n    CLC\n    ADC #$%04X\n", SPO(off) & 0xFFFF);
+}
+
+static void emit_add_const(int n) {
+    if (n != 0) emit("    CLC\n    ADC #$%04X\n", n & 0xFFFF);
+}
+
+/* A *= es, an element size */
+static void emit_scale(int es) {
+    switch (es) {
+        case 1: break;
+        case 2: emit("    ASL A\n"); break;
+        case 4: emit("    ASL A\n    ASL A\n"); break;
+        default:
+            emit("    STA %d,S\n    LDA #$%04X\n    MUL %d,S\n", SPO(SCRATCH0), es & 0xFFFF, SPO(SCRATCH0));
+            break;
+    }
+}
+
 static void load_sym(Symbol* sym) {
     CType t = sym_ctype(sym);
     if (t.words == 2) {
@@ -476,36 +631,34 @@ static void codegen_identifier(ASTNode* node) {
         compile_error("Error: Undefined variable '%s'\n", node->u.identifier);
         return;
     }
+    if (sym->is_array) {                         /* an array used as a value is the address of its first element */
+        emit_frame_addr(sym->offset);
+        return;
+    }
+    if (sym->type == TYPE_STRUCT && sym->pointer_level == 0) {
+        compile_error("Error: struct '%s' cannot be used as a value (use its members)\n", sym->name);
+        return;
+    }
     load_sym(sym);
 }
 
 static void codegen_string_literal(ASTNode* node) {
-    /* Generate unique label for this string */
-    int str_id = ctx.string_counter++;
-
-    /* Load address of string into A */
-    emit("    LDA #.STR%d\n", str_id);
-
-    /* Store string in data section (will be emitted at end) */
-    /* For now, we'll emit it inline with a comment */
-    emit("    ; String literal: %s\n", node->u.string_literal);
-
-    /* Note: Full implementation would collect strings and emit them in .rodata section */
+    (void)node;
+    compile_error("Error: a string literal cannot be used as a pointer value (ROM data is not reachable through "
+                  "pointers); initialise a char array with it: char s[] = \"...\";\n");
 }
 
 static void codegen_sizeof(ASTNode* node) {
-    int size = 0;
-
+    Ty t;
+    int size;
     if (node->u.sizeof_expr.expr) {
-        CType t = expr_type(node->u.sizeof_expr.expr);
-        size = t.words * 2;
+        t = type_of(node->u.sizeof_expr.expr);        /* arrays do not decay under sizeof */
     } else {
-        size = get_type_size(node->u.sizeof_expr.size_type,
-                            node->u.sizeof_expr.pointer_level,
-                            node->u.sizeof_expr.type_name);
+        t = ty_make(node->u.sizeof_expr.size_type, MOD_NONE, node->u.sizeof_expr.pointer_level,
+                    node->u.sizeof_expr.type_name);
     }
-
-    emit("    LDA #$%04X\n", size);
+    size = ty_size(&t);
+    emit("    LDA #$%04X\n", size & 0xFFFF);
 }
 
 /* Code generation for cast expressions */
@@ -716,6 +869,11 @@ static void codegen_binop(ASTNode* node) {
     int loop, done;
 
     if (op == OP_AND || op == OP_OR) { codegen_logical(node); return; }
+    if (op == OP_ADD || op == OP_SUB) {
+        Ty plt = type_of(node->u.binop.left);
+        Ty prt = type_of(node->u.binop.right);
+        if (ty_ptrlike(&plt) || ty_ptrlike(&prt)) { codegen_ptr_arith(node); return; }
+    }
 
     lt = expr_type(node->u.binop.left);
     rt = expr_type(node->u.binop.right);
@@ -948,79 +1106,386 @@ static void codegen_assign(ASTNode* node) {
         compile_error("Error: Undefined variable '%s'\n", node->u.assign.var_name);
         return;
     }
+    if (sym->is_array || (sym->type == TYPE_STRUCT && sym->pointer_level == 0)) {
+        compile_error("Error: assignment to array, struct or union '%s' is not supported\n", sym->name);
+        return;
+    }
     codegen_expr_to(node->u.assign.value, sym_ctype(sym));
     store_sym(sym);
 }
 
-/* Memory reached through a pointer, an array index or a struct member goes through the direct page, i.e. bank $00
-   (cartridge ROM), while every local lives on the stack in bank $80: the access would silently read or write the
-   wrong memory.  Until that is fixed these constructs are refused rather than compiled into wrong code (zpcc has
-   no such limit). */
-static void unsupported_memory(const char* what) {
-    compile_error("Error: %s is not supported by def88186cc (it cannot address stack/RAM data correctly); use zpcc\n", what);
+/* ====================================================================================================
+ * Memory through pointers.  A pointer is a 16-bit offset into bank $80; an address lives in A (16 bits) and the
+ * data is reached with LDA/STA $800000,X (X = the address).
+ * ==================================================================================================== */
+
+/* is there a side effect in this expression (so evaluating it twice would be wrong)? */
+static int side_effect_visitor(ASTNode* n, void* unused) {
+    (void)unused;
+    switch (n->type) {
+    case AST_CALL: case AST_ASSIGN: case AST_ASSIGN_LV: case AST_INCDEC_LV:
+    case AST_PRE_INC: case AST_POST_INC: case AST_PRE_DEC: case AST_POST_DEC:
+    case AST_INLINE_ASM:
+        return 1;
+    default:
+        return 0;
+    }
 }
 
-static void codegen_array_subscript(ASTNode* node) {
-    (void)node;
-    unsupported_memory("array indexing");
+/* A = the address of the lvalue */
+static void codegen_addr(ASTNode* node) {
+    switch (node->type) {
+    case AST_IDENTIFIER: {
+        Symbol* sym = find_symbol(node->u.identifier);
+        if (!sym) {
+            compile_error("Error: Undefined variable '%s'\n", node->u.identifier);
+            return;
+        }
+        emit_frame_addr(sym->offset);
+        return;
+    }
+    case AST_INDEX: {
+        ASTNode* base = node->u.index_expr.base;
+        Ty bt = type_of(base);
+        Ty et;
+        int es;
+        if (!ty_ptrlike(&bt)) {
+            compile_error("Error: subscripted value is neither an array nor a pointer\n");
+            return;
+        }
+        et = ty_deref(bt);
+        if (et.base == TYPE_VOID && et.ptr == 0 && et.ndim == 0) {
+            compile_error("Error: dereferencing a void pointer\n");
+            return;
+        }
+        es = ty_size(&et);
+        if (bt.ndim > 0) codegen_addr(base);          /* an array is its own address ... */
+        else codegen_expression(base);                /* ... a pointer holds one */
+        push_a();
+        codegen_expr_to(node->u.index_expr.index, ctype(1, 0));
+        emit_scale(es);
+        emit("    CLC\n    ADC 1,S\n");
+        emit_drop_bytes(2);
+        ctx.depth -= 2;
+        return;
+    }
+    case AST_MEMBER_ACCESS:
+    case AST_PTR_MEMBER_ACCESS: {
+        int arrow = (node->type == AST_PTR_MEMBER_ACCESS);
+        ASTNode* obj = arrow ? node->u.ptr_member_access.pointer : node->u.member_access.object;
+        const char* name = arrow ? node->u.ptr_member_access.member_name : node->u.member_access.member_name;
+        Ty ot = type_of(obj);
+        StructDef* sd;
+        StructMember* m;
+        if (arrow) {
+            if (!ty_ptrlike(&ot)) {
+                compile_error("Error: '->' applied to something that is not a pointer\n");
+                return;
+            }
+            ot = ty_deref(ot);
+        }
+        if (!ty_is_struct(&ot) || !ot.sname || !(sd = find_struct(ot.sname))) {
+            compile_error("Error: member '%s' requested in something that is not a struct or union\n", name);
+            return;
+        }
+        m = find_member(sd, name);
+        if (!m) {
+            compile_error("Error: '%s' has no member named '%s'\n", ot.sname, name);
+            return;
+        }
+        if (arrow) {
+            Ty pt = type_of(obj);
+            if (pt.ndim > 0) codegen_addr(obj);
+            else codegen_expression(obj);
+        } else {
+            codegen_addr(obj);
+        }
+        emit_add_const(m->offset);
+        return;
+    }
+    case AST_DEREF: {
+        ASTNode* op = node->u.unop.operand;
+        Ty ot = type_of(op);
+        if (!ty_ptrlike(&ot)) {
+            compile_error("Error: dereferencing something that is not a pointer\n");
+            return;
+        }
+        codegen_expression(op);            /* an array decays to its address, a pointer is its value */
+        return;
+    }
+    default:
+        compile_error("Error: expression is not an lvalue\n");
+        return;
+    }
 }
 
-static void codegen_array_assign(ASTNode* node) {
-    (void)node;
-    unsupported_memory("array indexing");
+/* A holds an address: load the object of type t from it (A, and X for a long) */
+static void emit_load_from_addr(const Ty* t) {
+    int size = ty_size(t);
+    emit("    TAX\n");
+    if (size == 1) {
+        emit("    SEP #$20\n    LDA $800000,X\n    REP #$20\n");
+        emit_narrow((t->mods & MOD_SIGNED) != 0);
+    } else if (size == 4) {
+        emit("    LDA $800002,X\n    TAY\n    LDA $800000,X\n    TYX\n");
+    } else {
+        emit("    LDA $800000,X\n");
+    }
+}
+
+/* the value of an lvalue expression (arrays do not load: their value is their address) */
+static void codegen_lvalue_load(ASTNode* node) {
+    Ty t = type_of(node);
+    if (ty_is_struct(&t)) {
+        compile_error("Error: a struct or union value cannot be used as an expression (use its members)\n");
+        return;
+    }
+    if (t.base == TYPE_VOID && t.ptr == 0 && t.ndim == 0) {
+        compile_error("Error: dereferencing a void pointer\n");
+        return;
+    }
+    codegen_addr(node);
+    if (t.ndim > 0) return;
+    emit_load_from_addr(&t);
+}
+
+/* A (and X) hold a value already converted to the target's type: store it through the target's address.  Both
+   registers still hold the value afterwards. */
+static void codegen_store_lv(ASTNode* target, const Ty* tt) {
+    int size;
+    if (tt->ndim > 0 || ty_is_struct(tt)) {
+        compile_error("Error: assignment to an array, struct or union is not supported\n");
+        return;
+    }
+    if (target->type == AST_IDENTIFIER) {
+        Symbol* sym = find_symbol(target->u.identifier);
+        if (sym) store_sym(sym);
+        return;
+    }
+    size = ty_size(tt);
+    if (size == 4) push_ax(); else push_a();
+    codegen_addr(target);
+    emit("    TAX\n");
+    if (size == 4) {
+        emit("    LDA 3,S\n    STA $800002,X\n    LDA 1,S\n    STA $800000,X\n    LDA 3,S\n    TAX\n    LDA 1,S\n");
+    } else if (size == 1) {
+        emit("    LDA 1,S\n");
+        emit_narrow((tt->mods & MOD_SIGNED) != 0);
+        emit("    SEP #$20\n    STA $800000,X\n    REP #$20\n");
+    } else {
+        emit("    LDA 1,S\n    STA $800000,X\n");
+    }
+    emit_drop_bytes(size == 4 ? 4 : 2);
+    ctx.depth -= (size == 4 ? 4 : 2);
+}
+
+static void codegen_assign_lv(ASTNode* node) {
+    ASTNode* target = node->u.assign_lv.target;
+    ASTNode* value = node->u.assign_lv.value;
+    ASTNode* synth = NULL;
+    Ty tt = type_of(target);
+    if (node->u.assign_lv.op) {
+        if (ast_walk(target, side_effect_visitor, NULL)) {
+            compile_error("Error: compound assignment to an lvalue with side effects is not supported\n");
+            return;
+        }
+        synth = ast_create_binop((BinOpType)(node->u.assign_lv.op - 1), target, value);   /* target op value */
+        value = synth;
+    }
+    codegen_expr_to(value, ty_ctype(&tt));
+    free(synth);                                 /* the shell only: its children belong to the tree */
+    codegen_store_lv(target, &tt);
+}
+
+/* ++ / -- on an lvalue other than a plain variable */
+static void codegen_incdec_lv(ASTNode* node) {
+    ASTNode* target = node->u.incdec_lv.operand;
+    int inc = node->u.incdec_lv.inc;
+    int post = node->u.incdec_lv.post;
+    Ty tt = type_of(target);
+    CType ct;
+    int step = 1;
+    if (ast_walk(target, side_effect_visitor, NULL)) {
+        compile_error("Error: ++/-- on an lvalue with side effects is not supported\n");
+        return;
+    }
+    if (tt.ndim > 0 || ty_is_struct(&tt)) {
+        compile_error("Error: cannot increment or decrement an array, struct or union\n");
+        return;
+    }
+    if (tt.ptr > 0) {
+        Ty e = ty_deref(tt);
+        step = ty_size(&e);
+    }
+    ct = ty_ctype(&tt);
+    codegen_lvalue_load(target);                              /* the old value */
+    if (post) {
+        if (ct.words == 2) push_ax(); else push_a();
+    }
+    if (ct.words == 1) {
+        if (inc) emit("    CLC\n    ADC #$%04X\n", step & 0xFFFF);
+        else     emit("    SEC\n    SBC #$%04X\n", step & 0xFFFF);
+    } else if (inc) {
+        emit("    CLC\n    ADC #$%04X\n    TAY\n    TXA\n    ADC #$0000\n    TAX\n    TYA\n", step & 0xFFFF);
+    } else {
+        emit("    SEC\n    SBC #$%04X\n    TAY\n    TXA\n    SBC #$0000\n    TAX\n    TYA\n", step & 0xFFFF);
+    }
+    codegen_store_lv(target, &tt);
+    if (post) {                                               /* the value of x++ is the old value */
+        if (ct.words == 2) {
+            emit("    PLA\n    TAY\n    PLA\n    TAX\n    TYA\n");
+            ctx.depth -= 4;
+        } else {
+            pop_a();
+        }
+    }
 }
 
 static void codegen_addr_of(ASTNode* node) {
-    (void)node;
-    unsupported_memory("taking an address (&)");
+    ASTNode* op = node->u.unop.operand;
+    Ty t = type_of(op);
+    if (t.ndim > 0) {
+        compile_error("Error: the address of a whole array is not supported (an array already is an address)\n");
+        return;
+    }
+    codegen_addr(op);
 }
 
 static void codegen_deref(ASTNode* node) {
-    (void)node;
-    unsupported_memory("pointer dereference");
+    codegen_lvalue_load(node);
 }
 
-static void codegen_member_access(ASTNode* node) {
-    (void)node;
-    unsupported_memory("struct member access");
+static ASTNode* mk_cast(DataType type, TypeModifier mods, ASTNode* e) {
+    ASTNode* c = ast_create_cast(type, NULL, 0, e);
+    c->mods = mods;
+    return c;
 }
 
-static void codegen_ptr_member_access(ASTNode* node) {
-    (void)node;
-    unsupported_memory("struct member access");
-}
+/* pointer +/- integer, integer + pointer and pointer - pointer, as integer arithmetic on the unsigned address words
+   with the integer scaled by the size of the pointed-to object.  Built from throwaway nodes so every operator
+   keeps its one implementation; only the shells are freed, their children belong to the original tree. */
+static void codegen_ptr_arith(ASTNode* node) {
+    BinOpType op = node->u.binop.op;
+    ASTNode* l = node->u.binop.left;
+    ASTNode* r = node->u.binop.right;
+    Ty lt = type_of(l);
+    Ty rt = type_of(r);
+    int lp = ty_ptrlike(&lt);
+    int rp = ty_ptrlike(&rt);
+    ASTNode* p;
+    ASTNode* n;
+    ASTNode* sc;
+    ASTNode* pc;
+    ASTNode* res;
+    Ty pt, et;
+    int es;
 
-static void codegen_member_assign(ASTNode* node) {
-    (void)node;
-    unsupported_memory("struct member access");
-}
-
-static void codegen_ptr_member_assign(ASTNode* node) {
-    (void)node;
-    unsupported_memory("struct member access");
+    if ((lp && lt.ndim > 1) || (rp && rt.ndim > 1)) {
+        compile_error("Error: pointer arithmetic on a multi-dimensional array is not supported (index it instead)\n");
+        return;
+    }
+    if (lp && rp) {
+        Ty le, re;
+        ASTNode* cl;
+        ASTNode* cr;
+        ASTNode* diff;
+        ASTNode* num;
+        if (op != OP_SUB) {
+            compile_error("Error: two pointers cannot be added\n");
+            return;
+        }
+        le = ty_deref(lt);
+        re = ty_deref(rt);
+        es = ty_size(&le);
+        if (es != ty_size(&re)) {
+            compile_error("Error: subtracting pointers to objects of different sizes\n");
+            return;
+        }
+        if (le.base == TYPE_VOID && le.ptr == 0) es = 1;
+        cl = mk_cast(TYPE_INT, MOD_NONE, l);
+        cr = mk_cast(TYPE_INT, MOD_NONE, r);
+        diff = ast_create_binop(OP_SUB, cl, cr);
+        if (es > 1) {
+            num = ast_create_number(es);
+            res = ast_create_binop(OP_DIV, diff, num);
+            codegen_expression(res);
+            free(num);
+        } else {
+            res = diff;
+            codegen_expression(res);
+            diff = NULL;
+        }
+        free(res);
+        free(diff);
+        free(cl);
+        free(cr);
+        return;
+    }
+    if (lp) {
+        p = l; n = r; pt = lt;
+    } else {
+        if (op != OP_ADD) {
+            compile_error("Error: an integer minus a pointer is not valid\n");
+            return;
+        }
+        p = r; n = l; pt = rt;
+    }
+    et = ty_deref(pt);
+    es = ty_size(&et);
+    if (et.base == TYPE_VOID && et.ptr == 0 && et.ndim == 0) es = 1;     /* void *: byte arithmetic (an extension) */
+    {
+        ASTNode* cn = mk_cast(TYPE_INT, MOD_NONE, n);
+        ASTNode* num = NULL;
+        if (es == 1) {
+            sc = cn;
+        } else {
+            num = ast_create_number(es);
+            sc = ast_create_binop(OP_MUL, cn, num);
+        }
+        pc = mk_cast(TYPE_INT, MOD_UNSIGNED, p);
+        res = ast_create_binop(op, pc, sc);
+        codegen_expression(res);
+        free(res);
+        free(pc);
+        if (num) { free(sc); free(num); }
+        free(cn);
+    }
 }
 
 static void codegen_inc_dec(ASTNode* node) {
     Symbol* sym = find_symbol(node->u.inc_dec.var_name);
     CType t;
+    Ty st;
+    int step = 1;
     int inc = (node->type == AST_PRE_INC || node->type == AST_POST_INC);
     int post = (node->type == AST_POST_INC || node->type == AST_POST_DEC);
     if (!sym) {
         compile_error("Error: Undefined variable '%s'\n", node->u.inc_dec.var_name);
         return;
     }
+    st = sym_ty(sym);
+    if (st.ndim > 0 || ty_is_struct(&st)) {
+        compile_error("Error: cannot increment or decrement array, struct or union '%s'\n", sym->name);
+        return;
+    }
+    if (st.ptr > 0) {
+        Ty e = ty_deref(st);
+        step = ty_size(&e);
+    }
     t = sym_ctype(sym);
     load_sym(sym);
     if (t.words == 1) {
         if (post) emit("    TAY\n");
-        emit(inc ? "    INC A\n" : "    DEC A\n");
-        emit("    STA %d,S\n", SPO(sym->offset));
+        if (step == 1) emit(inc ? "    INC A\n" : "    DEC A\n");
+        else if (inc) emit("    CLC\n    ADC #$%04X\n", step & 0xFFFF);
+        else emit("    SEC\n    SBC #$%04X\n", step & 0xFFFF);
+        store_sym(sym);                         /* narrows a char; A keeps the new value */
         if (post) emit("    TYA\n");
         return;
     }
     if (post) push_ax();
-    if (inc) emit("    CLC\n    ADC #$0001\n    TAY\n    TXA\n    ADC #$0000\n    TAX\n    TYA\n");
-    else     emit("    SEC\n    SBC #$0001\n    TAY\n    TXA\n    SBC #$0000\n    TAX\n    TYA\n");
+    if (inc) emit("    CLC\n    ADC #$%04X\n    TAY\n    TXA\n    ADC #$0000\n    TAX\n    TYA\n", step & 0xFFFF);
+    else     emit("    SEC\n    SBC #$%04X\n    TAY\n    TXA\n    SBC #$0000\n    TAX\n    TYA\n", step & 0xFFFF);
     store_sym(sym);
     if (post) {
         /* the old value is back on the stack, low word on top */
@@ -1066,29 +1531,20 @@ static void codegen_expression(ASTNode* node) {
         case AST_ASSIGN:
             codegen_assign(node);
             break;
-        case AST_ARRAY_SUBSCRIPT:
-            codegen_array_subscript(node);
+        case AST_ASSIGN_LV:
+            codegen_assign_lv(node);
             break;
-        case AST_ARRAY_ASSIGN:
-            codegen_array_assign(node);
+        case AST_INCDEC_LV:
+            codegen_incdec_lv(node);
             break;
         case AST_ADDR_OF:
             codegen_addr_of(node);
             break;
+        case AST_INDEX:
         case AST_DEREF:
-            codegen_deref(node);
-            break;
         case AST_MEMBER_ACCESS:
-            codegen_member_access(node);
-            break;
         case AST_PTR_MEMBER_ACCESS:
-            codegen_ptr_member_access(node);
-            break;
-        case AST_MEMBER_ASSIGN:
-            codegen_member_assign(node);
-            break;
-        case AST_PTR_MEMBER_ASSIGN:
-            codegen_ptr_member_assign(node);
+            codegen_lvalue_load(node);
             break;
         case AST_PRE_INC:
         case AST_POST_INC:
@@ -1286,8 +1742,32 @@ static int hw_loop_unsafe(ASTNode* n, void* ctx) {
 
 int codegen_no_hwloop = 0;
 
+/* ast_walk visitor: remember the name of every variable that appears directly under & */
+static int collect_addr_taken(ASTNode* n, void* unused) {
+    ASTNode* op = NULL;
+    (void)unused;
+    if (n->type == AST_ADDR_OF) op = n->u.unop.operand;
+    else if (n->type == AST_UNOP && n->u.unop.op == OP_ADDR_OF) op = n->u.unop.operand;
+    if (op && op->type == AST_IDENTIFIER) {
+        char** nl = (char**)realloc(ctx.addr_taken, sizeof(char*) * (ctx.addr_taken_count + 1));
+        if (nl) {
+            ctx.addr_taken = nl;
+            ctx.addr_taken[ctx.addr_taken_count++] = zp_strdup(op->u.identifier);
+        }
+    }
+    return 0;
+}
+
+static int is_addr_taken(const char* name) {
+    int i;
+    for (i = 0; i < ctx.addr_taken_count; i++)
+        if (strcmp(ctx.addr_taken[i], name) == 0) return 1;
+    return 0;
+}
+
 static int hw_loop_ok(ASTNode* node, char* loop_var, int loop_count) {
     if (codegen_no_hwloop) return 0;
+    if (is_addr_taken(loop_var)) return 0;       /* a store through a pointer could change the counter variable */
     if (loop_count < 1 || loop_count > 32767) return 0;   /* LOOP #0 runs the body once; a negative count wraps */
     return !ast_walk(node->u.for_stmt.body, hw_loop_unsafe, loop_var);
 }
@@ -1386,68 +1866,278 @@ static void codegen_for(ASTNode* node) {
 
 static void codegen_block(ASTNode* node) {
     int i;
+    int mark = ctx.symbol_count;
+    int saved_base = ctx.scope_base;
+    ctx.scope_base = mark;
     for (i = 0; i < node->u.block.stmt_count; i++) {
         codegen_statement(node->u.block.statements[i]);
     }
+    /* the block's variables go out of scope (their frame slots stay reserved: count_locals counted them) */
+    pop_symbols_to(mark);
+    ctx.scope_base = saved_base;
+}
+
+/* ====================================================================================================
+ * Declarations and initializers
+ * ==================================================================================================== */
+
+/* the bytes of a string literal token ("..." with escapes); returns the length, without the NUL */
+static int unescape_literal(const char* tok, unsigned char* out, int max) {
+    int n = 0;
+    const char* p = tok;
+    if (*p == '"') p++;
+    while (*p && !(*p == '"' && p[1] == '\0')) {
+        int c = (unsigned char)*p++;
+        if (c == '\\' && *p) {
+            c = (unsigned char)*p++;
+            switch (c) {
+                case 'n': c = 10; break;
+                case 't': c = 9; break;
+                case 'r': c = 13; break;
+                case 'a': c = 7; break;
+                case 'b': c = 8; break;
+                case 'f': c = 12; break;
+                case 'v': c = 11; break;
+                case 'x': {
+                    int v = 0, any = 0;
+                    while (isxdigit((unsigned char)*p)) {
+                        v = v * 16 + (isdigit((unsigned char)*p) ? *p - '0' : (tolower((unsigned char)*p) - 'a' + 10));
+                        p++;
+                        any = 1;
+                    }
+                    c = any ? (v & 0xFF) : 'x';
+                    break;
+                }
+                default:
+                    if (c >= '0' && c <= '7') {
+                        int v = c - '0', cnt = 1;
+                        while (cnt < 3 && *p >= '0' && *p <= '7') { v = v * 8 + (*p - '0'); p++; cnt++; }
+                        c = v & 0xFF;
+                    }
+                    break;       /* \\ \' \" \? keep the character */
+            }
+        }
+        if (n < max) out[n] = (unsigned char)c;
+        n++;
+    }
+    return n;
+}
+
+static int is_aggregate(const Ty* t) { return t->ndim > 0 || ty_is_struct(t); }
+
+static void init_value(Ty t, int off, ASTNode** items, int n, int* pos, int dry);
+
+/* store one scalar (or zero, when the initializer ran out) into the frame at 'off' */
+static void init_scalar(const Ty* t, int off, ASTNode* item, int dry) {
+    int size;
+    if (dry) return;
+    size = ty_size(t);
+    if (item) {
+        codegen_expr_to(item, ty_ctype(t));
+    } else {
+        emit("    LDA #$0000\n");
+        if (size == 4) emit("    LDX #$0000\n");
+    }
+    if (size == 1) {
+        emit("    SEP #$20\n    STA %d,S\n    REP #$20\n", SPO(off));
+    } else if (size == 4) {
+        emit("    STA %d,S\n    TXA\n    STA %d,S\n", SPO(off), SPO(off + 2));
+    } else {
+        emit("    STA %d,S\n", SPO(off));
+    }
+}
+
+/* char array (t: array of char, dims[0] = number of elements) initialised from a string literal */
+static void init_string(const Ty* t, int off, ASTNode* lit, int dry) {
+    unsigned char buf[4];
+    unsigned char* data;
+    int len, count, i;
+    if (dry) return;
+    count = t->dims[0];
+    len = unescape_literal(lit->u.string_literal, buf, 0);
+    if (len > count) {
+        compile_error("Error: initializer string is too long for the array\n");
+        return;
+    }
+    data = (unsigned char*)malloc(len + 1);
+    if (!data) { compile_error("Error: out of memory\n"); return; }
+    unescape_literal(lit->u.string_literal, data, len);
+    i = 0;
+    while (i < count) {
+        int b0 = (i < len) ? data[i] : 0;
+        if (((off + i) & 1) == 0 && i + 1 < count) {          /* an aligned pair goes in as one word */
+            int b1 = (i + 1 < len) ? data[i + 1] : 0;
+            emit("    LDA #$%04X\n    STA %d,S\n", b0 | (b1 << 8), SPO(off + i));
+            i += 2;
+        } else {
+            emit("    SEP #$20\n    LDA #$%02X\n    STA %d,S\n    REP #$20\n", b0, SPO(off + i));
+            i++;
+        }
+    }
+    free(data);
+}
+
+/* fill an object of type t at frame offset 'off' from the sequence items[*pos..n), consuming what it needs (braces
+   may be elided, as in C) and zero-filling what the sequence does not cover */
+static void init_fill(Ty t, int off, ASTNode** items, int n, int* pos, int dry) {
+    if (t.ndim > 0) {
+        Ty e = ty_deref(t);
+        int es = ty_size(&e);
+        int k;
+        if (e.ndim == 0 && e.base == TYPE_CHAR && e.ptr == 0 && *pos < n && items[*pos]->type == AST_STRING_LITERAL) {
+            init_string(&t, off, items[*pos], dry);
+            (*pos)++;
+            return;
+        }
+        for (k = 0; k < t.dims[0]; k++) init_value(e, off + k * es, items, n, pos, dry);
+        return;
+    }
+    if (ty_is_struct(&t)) {
+        StructDef* sd = t.sname ? find_struct(t.sname) : NULL;
+        int k, nm;
+        if (!sd) return;
+        nm = sd->is_union ? (sd->member_count > 0 ? 1 : 0) : sd->member_count;     /* a union: its first member */
+        for (k = 0; k < nm; k++) {
+            Ty mt = member_ty(&sd->members[k]);
+            init_value(mt, off + sd->members[k].offset, items, n, pos, dry);
+        }
+        return;
+    }
+    {
+        ASTNode* item = NULL;
+        if (*pos < n) {
+            item = items[(*pos)++];
+            while (item && item->type == AST_INIT_LIST)               /* int x = {1}: braces around a scalar */
+                item = item->u.init_list.value_count > 0 ? item->u.init_list.values[0] : NULL;
+        }
+        init_scalar(&t, off, item, dry);
+    }
+}
+
+static void init_value(Ty t, int off, ASTNode** items, int n, int* pos, int dry) {
+    if (is_aggregate(&t) && *pos < n && items[*pos]->type == AST_INIT_LIST) {
+        ASTNode* sub = items[(*pos)++];
+        int p2 = 0;
+        init_fill(t, off, sub->u.init_list.values, sub->u.init_list.value_count, &p2, dry);
+        if (!dry && p2 < sub->u.init_list.value_count) compile_error("Error: excess elements in initializer\n");
+        return;
+    }
+    init_fill(t, off, items, n, pos, dry);
+}
+
+/* the element count of an array declared with [] */
+static int infer_first_dim(const Ty* t, ASTNode* init) {
+    Ty e = ty_deref(*t);
+    int count = 0, pos = 0;
+    if (!init) return 0;
+    if (init->type == AST_STRING_LITERAL) {
+        unsigned char b[1];
+        if (e.ndim == 0 && e.base == TYPE_CHAR && e.ptr == 0) return unescape_literal(init->u.string_literal, b, 0) + 1;
+        return 0;
+    }
+    if (init->type != AST_INIT_LIST) return 0;
+    while (pos < init->u.init_list.value_count) {
+        int before = pos;
+        init_value(e, 0, init->u.init_list.values, init->u.init_list.value_count, &pos, 1);
+        count++;
+        if (pos == before) break;
+    }
+    return count;
+}
+
+/* the declared type of a variable; an omitted first array dimension comes from the initializer */
+static Ty decl_ty(ASTNode* d) {
+    Ty t = ty_make(d->u.var_decl.var_type, d->u.var_decl.modifiers, d->u.var_decl.pointer_level, d->u.var_decl.struct_name);
+    int nd = d->u.var_decl.array_dimensions;
+    int i;
+    if (nd > MAX_DIMS) nd = MAX_DIMS;
+    t.ndim = nd;
+    for (i = 0; i < nd; i++) t.dims[i] = d->u.var_decl.array_sizes[i];
+    if (nd > 0 && t.dims[0] == 0) t.dims[0] = infer_first_dim(&t, d->u.var_decl.init_value);
+    return t;
+}
+
+static void pop_symbols_to(int mark) {
+    int i;
+    for (i = mark; i < ctx.symbol_count; i++) {
+        free(ctx.symbols[i].name);
+        if (ctx.symbols[i].array_sizes) free(ctx.symbols[i].array_sizes);
+        if (ctx.symbols[i].struct_name) free(ctx.symbols[i].struct_name);
+    }
+    ctx.symbol_count = mark;
 }
 
 static void codegen_var_decl(ASTNode* node) {
     Symbol* sym;
-    if (node->u.var_decl.is_array || node->u.var_decl.array_dimensions > 0) {
-        unsupported_memory("array variables");
+    Ty t = decl_ty(node);
+    ASTNode* init = node->u.var_decl.init_value;
+    const char* name = node->u.var_decl.var_name;
+    int i;
+
+    if (node->u.var_decl.array_dimensions > MAX_DIMS) {
+        compile_error("Error: '%s' has more than %d array dimensions\n", name, MAX_DIMS);
         return;
     }
-
-    /* Add variable to symbol table */
-    if (node->u.var_decl.array_dimensions > 0) {
-        /* Multi-dimensional array */
-        add_symbol_multidim(node->u.var_decl.var_name, node->u.var_decl.var_type, 0, 0,
-                           node->u.var_decl.array_sizes, node->u.var_decl.array_dimensions,
-                           node->u.var_decl.pointer_level, node->u.var_decl.struct_name);
-    } else {
-        /* Regular variable or 1D array (backwards compatibility) */
-        int array_size = (node->u.var_decl.array_sizes && node->u.var_decl.is_array) ?
-                         node->u.var_decl.array_sizes[0] : 0;
-        add_symbol(node->u.var_decl.var_name, node->u.var_decl.var_type, 0, 0,
-                   node->u.var_decl.is_array, array_size,
-                   node->u.var_decl.pointer_level, node->u.var_decl.struct_name);
+    if (t.base == TYPE_VOID && t.ptr == 0 && t.ndim == 0) {
+        compile_error("Error: variable '%s' declared void\n", name);
+        return;
     }
-    ctx.symbols[ctx.symbol_count - 1].modifiers = node->u.var_decl.modifiers;
-
-    /* Initialize if there's an initial value */
-    if (node->u.var_decl.init_value) {
-        sym = find_symbol(node->u.var_decl.var_name);
-        if (!sym) return;
-
-        if (node->u.var_decl.init_value->type == AST_INIT_LIST) {
-            /* Array initialization: int arr[3] = {1, 2, 3}; */
-            ASTNode* init_list = node->u.var_decl.init_value;
-            int elem_size = (node->u.var_decl.var_type == TYPE_CHAR) ? 1 : 2;
-            int i;
-
-            for (i = 0; i < init_list->u.init_list.value_count; i++) {
-                int offset;
-                /* Evaluate the expression for this element */
-                codegen_expression(init_list->u.init_list.values[i]);
-
-                /* Store to array element */
-                offset = sym->offset + (i * elem_size);
-                if (node->u.var_decl.var_type == TYPE_CHAR) {
-                    /* For char arrays, store byte */
-                    emit("    SEP #$20        ; 8-bit A\n");
-                    emit("    STA %d,S\n", SPO(offset));
-                    emit("    REP #$20        ; 16-bit A\n");
-                } else {
-                    /* For int arrays, store word */
-                    emit("    STA %d,S\n", SPO(offset));
-                }
-            }
-        } else if (!node->u.var_decl.is_array) {
-            /* Regular variable initialization */
-            codegen_expr_to(node->u.var_decl.init_value, sym_ctype(sym));
-            store_sym(sym);
+    if (t.base == TYPE_STRUCT && t.ptr == 0 && (!t.sname || !find_struct(t.sname))) {
+        compile_error("Error: variable '%s' has an unknown or incomplete struct/union type\n", name);
+        return;
+    }
+    if (t.ndim > 0 && t.dims[0] < 1) {
+        compile_error("Error: array '%s' needs a size or an initializer to take it from\n", name);
+        return;
+    }
+    for (i = 1; i < t.ndim; i++) {
+        if (t.dims[i] < 1) {
+            compile_error("Error: only the first dimension of array '%s' may be omitted\n", name);
+            return;
         }
     }
+    if (ty_size(&t) >= 32767) {
+        compile_error("Error: '%s' is too large for the stack frame\n", name);
+        return;
+    }
+    for (i = ctx.symbol_count - 1; i >= ctx.scope_base; i--) {
+        if (strcmp(ctx.symbols[i].name, name) == 0) {
+            compile_error("Error: redeclaration of '%s'\n", name);
+            return;
+        }
+    }
+
+    if (t.ndim > 0) {
+        add_symbol_multidim(name, node->u.var_decl.var_type, 0, 0, t.dims, t.ndim,
+                            node->u.var_decl.pointer_level, node->u.var_decl.struct_name);
+    } else {
+        add_symbol(name, node->u.var_decl.var_type, 0, 0, 0, 0,
+                   node->u.var_decl.pointer_level, node->u.var_decl.struct_name);
+    }
+    sym = &ctx.symbols[ctx.symbol_count - 1];
+    sym->modifiers = node->u.var_decl.modifiers;
+    if (!init) return;
+
+    if (init->type == AST_STRING_LITERAL) {
+        if (!(t.ndim == 1 && t.base == TYPE_CHAR && t.ptr == 0)) {
+            compile_error("Error: a string literal can only initialise a char array\n");
+            return;
+        }
+        init_string(&t, sym->offset, init, 0);
+        return;
+    }
+    if (init->type == AST_INIT_LIST) {
+        int pos = 0;
+        init_fill(t, sym->offset, init->u.init_list.values, init->u.init_list.value_count, &pos, 0);
+        if (pos < init->u.init_list.value_count) compile_error("Error: excess elements in initializer\n");
+        return;
+    }
+    if (t.ndim > 0 || ty_is_struct(&t)) {
+        compile_error("Error: '%s' can only be initialised with a brace list\n", name);
+        return;
+    }
+    codegen_expr_to(init, sym_ctype(sym));
+    store_sym(sym);
 }
 
 static void codegen_switch(ASTNode* node) {
@@ -1631,14 +2321,8 @@ static void codegen_statement(ASTNode* node) {
 /* Code generation for functions */
 /* Words a declaration occupies in the frame (must mirror add_symbol / add_symbol_multidim). */
 static int decl_words(ASTNode* d) {
-    int elem_size = get_type_size(d->u.var_decl.var_type, d->u.var_decl.pointer_level, d->u.var_decl.struct_name);
-    int elems = 1, i;
-    if (d->u.var_decl.array_dimensions > 0) {
-        for (i = 0; i < d->u.var_decl.array_dimensions; i++) elems *= d->u.var_decl.array_sizes[i];
-    } else if (d->u.var_decl.is_array && d->u.var_decl.array_sizes) {
-        elems = d->u.var_decl.array_sizes[0];
-    }
-    return elems * ((elem_size + 1) / 2);
+    Ty t = decl_ty(d);
+    return (ty_size(&t) + 1) / 2;
 }
 
 static int count_locals(ASTNode* node) {
@@ -1695,10 +2379,12 @@ static void codegen_function(ASTNode* node) {
     ctx.stack_offset = 0;
     ctx.depth = 0;
     local_var_index = 0;
-    rt = type_ctype(node->u.func_decl.return_type, node->u.func_decl.return_modifiers, 0);
+    rt = type_ctype(node->u.func_decl.return_type, node->u.func_decl.return_modifiers, node->u.func_decl.return_pointer_level);
     ctx.ret_words = rt.words;
     ctx.ret_uns = rt.uns;
-    ctx.ret_char = (node->u.func_decl.return_type == TYPE_CHAR);
+    ctx.ret_char = (node->u.func_decl.return_type == TYPE_CHAR && node->u.func_decl.return_pointer_level == 0);
+    if (node->u.func_decl.return_type == TYPE_STRUCT && node->u.func_decl.return_pointer_level == 0)
+        compile_error("Error: function '%s' returns a struct or union by value, which is not supported\n", node->u.func_decl.func_name);
     ctx.ret_signed = ((node->u.func_decl.return_modifiers & MOD_SIGNED) != 0);
 
     emit("\n; Function: %s\n", node->u.func_decl.func_name);
@@ -1744,6 +2430,8 @@ static void codegen_function(ASTNode* node) {
     for (i = 0; i < nparams; i++) {
         ASTNode* param = node->u.func_decl.params[i];
         Symbol* sym;
+        if (param->u.param.param_type == TYPE_STRUCT && param->u.param.pointer_level == 0)
+            compile_error("Error: parameter '%s' is a struct or union passed by value, which is not supported\n", param->u.param.param_name);
         add_symbol(param->u.param.param_name, param->u.param.param_type, 1, i, 0, 0,
                    param->u.param.pointer_level, param->u.param.struct_name);
         sym = &ctx.symbols[ctx.symbol_count - 1];
@@ -1767,6 +2455,12 @@ static void codegen_function(ASTNode* node) {
         }
     }
 
+    /* variables whose address is taken anywhere in the function (a hardware loop must not count one of them) */
+    ctx.addr_taken = NULL;
+    ctx.addr_taken_count = 0;
+    ast_walk(node->u.func_decl.body, collect_addr_taken, NULL);
+    ctx.scope_base = ctx.symbol_count;
+
     /* Generate code for function body */
     codegen_statement(node->u.func_decl.body);
 
@@ -1776,66 +2470,78 @@ static void codegen_function(ASTNode* node) {
     emit("    RTS\n");
 
     /* Clear symbols for next function */
+    {
+        int k;
+        for (k = 0; k < ctx.addr_taken_count; k++) free(ctx.addr_taken[k]);
+        free(ctx.addr_taken);
+        ctx.addr_taken = NULL;
+        ctx.addr_taken_count = 0;
+    }
     clear_symbols();
     ctx.current_function = NULL;
 }
 
-static void codegen_struct_decl(ASTNode* node) {
-    int i;
-    int offset;
-    StructDef sdef;
-    sdef.name = zp_strdup(node->u.struct_decl.struct_name);
-    sdef.member_count = node->u.struct_decl.member_count;
-    sdef.members = malloc(sizeof(StructMember) * sdef.member_count);
+static int member_align(const Ty* t) {
+    return (t->ptr == 0 && (t->base == TYPE_CHAR || t->base == TYPE_BOOL)) ? 1 : 2;
+}
 
-    offset = 0;
-    for (i = 0; i < sdef.member_count; i++) {
-        int size;
-        ASTNode* member = node->u.struct_decl.members[i];
-        sdef.members[i].name = zp_strdup(member->u.var_decl.var_name);
-        sdef.members[i].type = member->u.var_decl.var_type;
-        sdef.members[i].pointer_level = member->u.var_decl.pointer_level;
-        sdef.members[i].struct_name = member->u.var_decl.struct_name ? zp_strdup(member->u.var_decl.struct_name) : NULL;
-        sdef.members[i].offset = offset;
-
-        size = get_type_size(member->u.var_decl.var_type, member->u.var_decl.pointer_level, member->u.var_decl.struct_name);
-        offset += size;
+/* lay out a struct (members one after another, 16-bit members on even offsets) or a union (all at offset 0); the
+   total size is rounded up to a whole word so that arrays of them stay aligned */
+static void layout_aggregate(const char* name, ASTNode** members, int count, int is_union) {
+    StructDef sd;
+    int i, j, offset = 0, maxsize = 0;
+    sd.name = zp_strdup(name);
+    sd.member_count = count;
+    sd.is_union = is_union;
+    sd.members = (StructMember*)malloc(sizeof(StructMember) * (count > 0 ? count : 1));
+    for (i = 0; i < count; i++) {
+        ASTNode* m = members[i];
+        Ty mt;
+        int size, align, nd;
+        sd.members[i].name = zp_strdup(m->u.var_decl.var_name);
+        sd.members[i].type = m->u.var_decl.var_type;
+        sd.members[i].pointer_level = m->u.var_decl.pointer_level;
+        sd.members[i].struct_name = m->u.var_decl.struct_name ? zp_strdup(m->u.var_decl.struct_name) : NULL;
+        sd.members[i].modifiers = m->u.var_decl.modifiers;
+        nd = m->u.var_decl.array_dimensions;
+        if (nd > MAX_DIMS) {
+            compile_error("Error: member '%s' has more than %d array dimensions\n", m->u.var_decl.var_name, MAX_DIMS);
+            nd = MAX_DIMS;
+        }
+        sd.members[i].ndim = nd;
+        for (j = 0; j < MAX_DIMS; j++) sd.members[i].dims[j] = (j < nd) ? m->u.var_decl.array_sizes[j] : 0;
+        for (j = 0; j < nd; j++) {
+            if (sd.members[i].dims[j] < 1) {
+                compile_error("Error: member '%s' needs an array size\n", m->u.var_decl.var_name);
+                sd.members[i].dims[j] = 1;
+            }
+        }
+        mt = member_ty(&sd.members[i]);
+        if (mt.base == TYPE_STRUCT && mt.ptr == 0 && (!mt.sname || !find_struct(mt.sname)))
+            compile_error("Error: member '%s' has an incomplete struct/union type\n", m->u.var_decl.var_name);
+        size = ty_size(&mt);
+        align = member_align(&mt);
+        if (is_union) {
+            sd.members[i].offset = 0;
+            if (size > maxsize) maxsize = size;
+        } else {
+            if (align == 2 && (offset & 1)) offset++;
+            sd.members[i].offset = offset;
+            offset += size;
+        }
     }
+    sd.total_size = is_union ? maxsize : offset;
+    if (sd.total_size & 1) sd.total_size++;
+    add_struct(sd);
+    emit("; %s definition: %s (size = %d bytes)\n", is_union ? "Union" : "Struct", sd.name, sd.total_size);
+}
 
-    sdef.total_size = offset;
-    add_struct(sdef);
-
-    emit("; Struct definition: %s (size = %d bytes)\n", sdef.name, sdef.total_size);
+static void codegen_struct_decl(ASTNode* node) {
+    layout_aggregate(node->u.struct_decl.struct_name, node->u.struct_decl.members, node->u.struct_decl.member_count, 0);
 }
 
 static void codegen_union_decl(ASTNode* node) {
-    int i;
-    int max_size;
-    StructDef udef;  /* Use StructDef for unions too (same structure) */
-    udef.name = zp_strdup(node->u.union_decl.union_name);
-    udef.member_count = node->u.union_decl.member_count;
-    udef.members = malloc(sizeof(StructMember) * udef.member_count);
-
-    max_size = 0;
-    for (i = 0; i < udef.member_count; i++) {
-        int size;
-        ASTNode* member = node->u.union_decl.members[i];
-        udef.members[i].name = zp_strdup(member->u.var_decl.var_name);
-        udef.members[i].type = member->u.var_decl.var_type;
-        udef.members[i].pointer_level = member->u.var_decl.pointer_level;
-        udef.members[i].struct_name = member->u.var_decl.struct_name ? zp_strdup(member->u.var_decl.struct_name) : NULL;
-        udef.members[i].offset = 0;  /* All union members start at offset 0 */
-
-        size = get_type_size(member->u.var_decl.var_type, member->u.var_decl.pointer_level, member->u.var_decl.struct_name);
-        if (size > max_size) {
-            max_size = size;
-        }
-    }
-
-    udef.total_size = max_size;  /* Union size is the maximum member size */
-    add_struct(udef);  /* Use same struct table for unions */
-
-    emit("; Union definition: %s (size = %d bytes)\n", udef.name, udef.total_size);
+    layout_aggregate(node->u.union_decl.union_name, node->u.union_decl.members, node->u.union_decl.member_count, 1);
 }
 
 /* Code generation for program */

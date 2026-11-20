@@ -118,6 +118,8 @@ static void lex_no_float(const char* what, const char* text)
 "&="                { col_num += 2; return AND_ASSIGN; }
 "|="                { col_num += 2; return OR_ASSIGN; }
 "^="                { col_num += 2; return XOR_ASSIGN; }
+"<<="               { col_num += 3; return SHL_ASSIGN; }
+">>="               { col_num += 3; return SHR_ASSIGN; }
 
 "("                 { col_num++; return '('; }
 ")"                 { col_num++; return ')'; }

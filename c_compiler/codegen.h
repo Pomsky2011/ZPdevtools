@@ -4,6 +4,8 @@
 #include "ast.h"
 #include <stdio.h>
 
+#define MAX_DIMS 4
+
 /* Struct member information */
 typedef struct {
     char* name;
@@ -11,6 +13,9 @@ typedef struct {
     int offset;
     int pointer_level;
     char* struct_name;
+    TypeModifier modifiers;
+    int ndim;             /* array member: number of dimensions and their sizes */
+    int dims[MAX_DIMS];
 } StructMember;
 
 /* Struct definition */
@@ -19,6 +24,7 @@ typedef struct {
     StructMember* members;
     int member_count;
     int total_size;  /* Total size in bytes */
+    int is_union;
 } StructDef;
 
 /* Symbol table entry */
@@ -67,6 +73,9 @@ typedef struct {
     int ret_uns;
     int ret_char;         /* the function returns a char: values are narrowed to 8 bits on the way out */
     int ret_signed;       /* ... and sign-extended (signed char) rather than zero-extended */
+    int scope_base;       /* first symbol of the innermost block (redeclarations are errors only within it) */
+    char** addr_taken;    /* variables whose address is taken somewhere in the function being generated */
+    int addr_taken_count;
 } CodegenContext;
 
 /* Code generation functions */

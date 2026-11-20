@@ -25,6 +25,76 @@ static TypeModifier current_decl_mods;   /* signed/unsigned of the declaration b
 #define TS_TYPE(v)     ((DataType)((int)(v) & 0xFF))
 #define TS_MODS(v)     ((TypeModifier)(((int)(v) >> 8) & 0xFF))
 
+
+/* Constant integer expression (array sizes): literals, parentheses and the integer operators. *ok = 0 if it is not one. */
+static int const_eval(ASTNode* n, int* ok) {
+    int a, b;
+    if (!n) { *ok = 0; return 0; }
+    switch (n->type) {
+    case AST_NUMBER:
+        return n->u.number;
+    case AST_CAST:
+        return const_eval(n->u.cast.expr, ok);
+    case AST_UNOP:
+        a = const_eval(n->u.unop.operand, ok);
+        switch (n->u.unop.op) {
+        case OP_NEG: return -a;
+        case OP_NOT: return !a;
+        case OP_BIT_NOT: return ~a;
+        default: *ok = 0; return 0;
+        }
+    case AST_BINOP:
+        a = const_eval(n->u.binop.left, ok);
+        b = const_eval(n->u.binop.right, ok);
+        switch (n->u.binop.op) {
+        case OP_ADD: return a + b;
+        case OP_SUB: return a - b;
+        case OP_MUL: return a * b;
+        case OP_DIV: if (b == 0) { *ok = 0; return 0; } return a / b;
+        case OP_MOD: if (b == 0) { *ok = 0; return 0; } return a % b;
+        case OP_BIT_AND: return a & b;
+        case OP_BIT_OR: return a | b;
+        case OP_BIT_XOR: return a ^ b;
+        case OP_SHL: return (b >= 0 && b < 31) ? (a << b) : (*ok = 0, 0);
+        case OP_SHR: return (b >= 0 && b < 31) ? (a >> b) : (*ok = 0, 0);
+        default: *ok = 0; return 0;
+        }
+    default:
+        *ok = 0;
+        return 0;
+    }
+}
+
+/* lvalue = value / lvalue op= value (op: 0 for '=', else BinOpType + 1).  A plain variable keeps the old node. */
+static ASTNode* make_assign(ASTNode* target, int op, ASTNode* value) {
+    if (target->type == AST_IDENTIFIER) {
+        ASTNode* r;
+        if (op == 0) {
+            r = ast_create_assign(target->u.identifier, value);
+        } else {
+            ASTNode* var = ast_create_identifier(target->u.identifier);
+            r = ast_create_assign(target->u.identifier, ast_create_binop((BinOpType)(op - 1), var, value));
+        }
+        free(target->u.identifier);
+        free(target);
+        return r;
+    }
+    return ast_create_assign_lv(target, value, op);
+}
+
+/* ++ / -- on any lvalue; a plain variable keeps the old node. */
+static ASTNode* make_incdec(ASTNode* target, int inc, int post) {
+    if (target->type == AST_IDENTIFIER) {
+        ASTNode* r;
+        if (inc) r = post ? ast_create_post_inc(target->u.identifier) : ast_create_pre_inc(target->u.identifier);
+        else     r = post ? ast_create_post_dec(target->u.identifier) : ast_create_pre_dec(target->u.identifier);
+        free(target->u.identifier);
+        free(target);
+        return r;
+    }
+    return ast_create_incdec_lv(target, inc, post);
+}
+
 /* Global variables for enum enumerators */
 static char** enum_names_temp;
 static int* enum_values_temp;
@@ -53,7 +123,7 @@ static int enum_count_temp;
 %token SWITCH CASE DEFAULT GOTO SIZEOF ASM
 %token EQ NE LE GE AND OR SHL SHR ARROW INC DEC
 %token ADD_ASSIGN SUB_ASSIGN MUL_ASSIGN DIV_ASSIGN MOD_ASSIGN
-%token AND_ASSIGN OR_ASSIGN XOR_ASSIGN
+%token AND_ASSIGN OR_ASSIGN XOR_ASSIGN SHL_ASSIGN SHR_ASSIGN
 
 %type <node> program declaration function_declaration statement struct_declaration union_declaration enum_declaration typedef_declaration
 %type <node> expression primary_expression postfix_expression
@@ -65,18 +135,19 @@ static int enum_count_temp;
 %type <node> compound_statement statement_list
 %type <node> expression_statement selection_statement iteration_statement
 %type <node> jump_statement variable_declaration switch_statement
-%type <node> case_statement default_statement
+%type <node> case_statement default_statement struct_member param_decl
 %type <dtype> type_specifier base_type_specifier
 %type <number> type_modifier_list type_modifier storage_class type_qualifier_list type_qualifier
 %type <list> declaration_list parameter_list argument_list struct_member_list
-%type <list> case_list statement_list_in_case declarator_list enumerator_list initializer_list
+%type <list> case_list statement_list_in_case declarator_list enumerator_list init_items
 %type <string> struct_or_union_specifier
-%type <number> pointer enum_constant
+%type <number> pointer pointer_nonempty enum_constant assign_op
+%type <node> initializer_brace init_item
 %type <list> array_sizes
 %type <node> declarator
 
 %left ','
-%right '=' ADD_ASSIGN SUB_ASSIGN MUL_ASSIGN DIV_ASSIGN MOD_ASSIGN AND_ASSIGN OR_ASSIGN XOR_ASSIGN
+%right '=' ADD_ASSIGN SUB_ASSIGN MUL_ASSIGN DIV_ASSIGN MOD_ASSIGN AND_ASSIGN OR_ASSIGN XOR_ASSIGN SHL_ASSIGN SHR_ASSIGN
 %right '?' ':'
 %left OR
 %left AND
@@ -225,22 +296,29 @@ typedef_declaration:
     }
     ;
 
-struct_member_list:
+struct_member:
     type_specifier pointer IDENTIFIER ';' {
-        char* struct_name = (TS_TYPE($1) == TYPE_STRUCT) ? yylval.string : NULL;
-        $$.items = malloc(sizeof(ASTNode*));
-        $$.items[0] = ast_create_var_decl(TS_TYPE($1), $3, NULL, 0, 0, $2, struct_name);
-        $$.items[0]->u.var_decl.modifiers = TS_MODS($1);
-        $$.count = 1;
+        $$ = ast_create_var_decl(TS_TYPE($1), $3, NULL, 0, 0, $2, (TS_TYPE($1) == TYPE_STRUCT) ? current_decl_struct_name : NULL);
+        $$->u.var_decl.modifiers = TS_MODS($1);
         free($3);
     }
-    | struct_member_list type_specifier pointer IDENTIFIER ';' {
-        char* struct_name = (TS_TYPE($2) == TYPE_STRUCT) ? yylval.string : NULL;
+    | type_specifier pointer IDENTIFIER array_sizes ';' {
+        $$ = ast_create_var_decl_multidim(TS_TYPE($1), $3, NULL, (int*)$4.items, $4.count, $2, (TS_TYPE($1) == TYPE_STRUCT) ? current_decl_struct_name : NULL);
+        $$->u.var_decl.modifiers = TS_MODS($1);
+        free($3);
+    }
+    ;
+
+struct_member_list:
+    struct_member {
+        $$.items = malloc(sizeof(ASTNode*));
+        $$.items[0] = $1;
+        $$.count = 1;
+    }
+    | struct_member_list struct_member {
         $$.items = realloc($1.items, sizeof(ASTNode*) * ($1.count + 1));
-        $$.items[$1.count] = ast_create_var_decl(TS_TYPE($2), $4, NULL, 0, 0, $3, struct_name);
-        $$.items[$1.count]->u.var_decl.modifiers = TS_MODS($2);
+        $$.items[$1.count] = $2;
         $$.count = $1.count + 1;
-        free($4);
     }
     ;
 
@@ -293,14 +371,34 @@ enumerator_list:
     ;
 
 array_sizes:
-    '[' NUMBER ']' {
+    '[' conditional_expression ']' {
+        int ok = 1;
+        int v = const_eval($2, &ok);
+        if (!ok || v < 1 || v > 32767) {
+            yyerror("array size must be a positive integer constant");
+            v = 1;
+        }
+        ast_free($2);
         $$.items = malloc(sizeof(int));
-        ((int*)$$.items)[0] = $2;
+        ((int*)$$.items)[0] = v;
         $$.count = 1;
     }
-    | array_sizes '[' NUMBER ']' {
+    | '[' ']' {
+        /* unsized: the size comes from the initializer (first dimension only; checked by the code generator) */
+        $$.items = malloc(sizeof(int));
+        ((int*)$$.items)[0] = 0;
+        $$.count = 1;
+    }
+    | array_sizes '[' conditional_expression ']' {
+        int ok = 1;
+        int v = const_eval($3, &ok);
+        if (!ok || v < 1 || v > 32767) {
+            yyerror("array size must be a positive integer constant");
+            v = 1;
+        }
+        ast_free($3);
         $$.items = realloc($1.items, sizeof(int) * ($1.count + 1));
-        ((int*)$$.items)[$1.count] = $3;
+        ((int*)$$.items)[$1.count] = v;
         $$.count = $1.count + 1;
     }
     ;
@@ -341,16 +439,31 @@ declarator_list:
     }
     ;
 
-initializer_list:
-    assignment_expression {
+init_items:
+    init_item {
         $$.items = malloc(sizeof(ASTNode*));
         $$.items[0] = $1;
         $$.count = 1;
     }
-    | initializer_list ',' assignment_expression {
+    | init_items ',' init_item {
         $$.items = realloc($1.items, sizeof(ASTNode*) * ($1.count + 1));
         $$.items[$1.count] = $3;
         $$.count = $1.count + 1;
+    }
+    ;
+
+init_item:
+    assignment_expression { $$ = $1; }
+    | initializer_brace { $$ = $1; }
+    ;
+
+/* { a, b, {c, d}, } - a trailing comma is allowed */
+initializer_brace:
+    '{' init_items '}' {
+        $$ = ast_create_init_list($2.items, $2.count);
+    }
+    | '{' init_items ',' '}' {
+        $$ = ast_create_init_list($2.items, $2.count);
     }
     ;
 
@@ -360,7 +473,13 @@ declarator:
         $$->u.var_decl.modifiers = current_decl_mods;
         free($2);
     }
-    | pointer IDENTIFIER '=' expression {
+    | pointer IDENTIFIER '=' assignment_expression {
+        $$ = ast_create_var_decl(current_decl_type, $2, $4, 0, 0, $1, current_decl_struct_name);
+        $$->u.var_decl.modifiers = current_decl_mods;
+        free($2);
+    }
+    | pointer IDENTIFIER '=' initializer_brace {
+        /* struct initializer: struct P p = {1, 2}; */
         $$ = ast_create_var_decl(current_decl_type, $2, $4, 0, 0, $1, current_decl_struct_name);
         $$->u.var_decl.modifiers = current_decl_mods;
         free($2);
@@ -370,12 +489,18 @@ declarator:
         $$->u.var_decl.modifiers = current_decl_mods;
         free($2);
     }
-    | pointer IDENTIFIER array_sizes '=' '{' initializer_list '}' {
-        /* Array initialization: int arr[3] = {1, 2, 3}; */
-        ASTNode* init_list = ast_create_init_list($6.items, $6.count);
-        $$ = ast_create_var_decl_multidim(current_decl_type, $2, init_list, (int*)$3.items, $3.count, $1, current_decl_struct_name);
+    | pointer IDENTIFIER array_sizes '=' initializer_brace {
+        /* array initialization: int arr[3] = {1, 2, 3}; int m[2][2] = {{1,2},{3,4}}; */
+        $$ = ast_create_var_decl_multidim(current_decl_type, $2, $5, (int*)$3.items, $3.count, $1, current_decl_struct_name);
         $$->u.var_decl.modifiers = current_decl_mods;
         free($2);
+    }
+    | pointer IDENTIFIER array_sizes '=' STRING_LITERAL {
+        /* char s[] = "text"; (the code generator checks that the element type is char) */
+        $$ = ast_create_var_decl_multidim(current_decl_type, $2, ast_create_string_literal($5), (int*)$3.items, $3.count, $1, current_decl_struct_name);
+        $$->u.var_decl.modifiers = current_decl_mods;
+        free($2);
+        free($5);
     }
     ;
 
@@ -395,7 +520,6 @@ function_declaration:
         $$->u.func_decl.return_modifiers = TS_MODS($1);
         free($2);
     }
-    /* prototypes: a declaration with no body records the signature (return/parameter widths) for calls */
     | type_specifier IDENTIFIER '(' ')' ';' {
         $$ = ast_create_func_decl(TS_TYPE($1), $2, NULL, 0, NULL);
         $$->u.func_decl.return_modifiers = TS_MODS($1);
@@ -410,6 +534,42 @@ function_declaration:
         $$ = ast_create_func_decl(TS_TYPE($1), $2, $4.items, $4.count, NULL);
         $$->u.func_decl.return_modifiers = TS_MODS($1);
         free($2);
+    }
+    | type_specifier pointer_nonempty IDENTIFIER '(' ')' compound_statement {
+        $$ = ast_create_func_decl(TS_TYPE($1), $3, NULL, 0, $6);
+        $$->u.func_decl.return_modifiers = TS_MODS($1);
+        $$->u.func_decl.return_pointer_level = $2;
+        free($3);
+    }
+    | type_specifier pointer_nonempty IDENTIFIER '(' VOID ')' compound_statement {
+        $$ = ast_create_func_decl(TS_TYPE($1), $3, NULL, 0, $7);
+        $$->u.func_decl.return_modifiers = TS_MODS($1);
+        $$->u.func_decl.return_pointer_level = $2;
+        free($3);
+    }
+    | type_specifier pointer_nonempty IDENTIFIER '(' parameter_list ')' compound_statement {
+        $$ = ast_create_func_decl(TS_TYPE($1), $3, $5.items, $5.count, $7);
+        $$->u.func_decl.return_modifiers = TS_MODS($1);
+        $$->u.func_decl.return_pointer_level = $2;
+        free($3);
+    }
+    | type_specifier pointer_nonempty IDENTIFIER '(' ')' ';' {
+        $$ = ast_create_func_decl(TS_TYPE($1), $3, NULL, 0, NULL);
+        $$->u.func_decl.return_modifiers = TS_MODS($1);
+        $$->u.func_decl.return_pointer_level = $2;
+        free($3);
+    }
+    | type_specifier pointer_nonempty IDENTIFIER '(' VOID ')' ';' {
+        $$ = ast_create_func_decl(TS_TYPE($1), $3, NULL, 0, NULL);
+        $$->u.func_decl.return_modifiers = TS_MODS($1);
+        $$->u.func_decl.return_pointer_level = $2;
+        free($3);
+    }
+    | type_specifier pointer_nonempty IDENTIFIER '(' parameter_list ')' ';' {
+        $$ = ast_create_func_decl(TS_TYPE($1), $3, $5.items, $5.count, NULL);
+        $$->u.func_decl.return_modifiers = TS_MODS($1);
+        $$->u.func_decl.return_pointer_level = $2;
+        free($3);
     }
     | EXTERN type_specifier IDENTIFIER '(' ')' ';' {
         $$ = ast_create_func_decl(TS_TYPE($2), $3, NULL, 0, NULL);
@@ -426,24 +586,64 @@ function_declaration:
         $$->u.func_decl.return_modifiers = TS_MODS($2);
         free($3);
     }
+    | EXTERN type_specifier pointer_nonempty IDENTIFIER '(' ')' ';' {
+        $$ = ast_create_func_decl(TS_TYPE($2), $4, NULL, 0, NULL);
+        $$->u.func_decl.return_modifiers = TS_MODS($2);
+        $$->u.func_decl.return_pointer_level = $3;
+        free($4);
+    }
+    | EXTERN type_specifier pointer_nonempty IDENTIFIER '(' VOID ')' ';' {
+        $$ = ast_create_func_decl(TS_TYPE($2), $4, NULL, 0, NULL);
+        $$->u.func_decl.return_modifiers = TS_MODS($2);
+        $$->u.func_decl.return_pointer_level = $3;
+        free($4);
+    }
+    | EXTERN type_specifier pointer_nonempty IDENTIFIER '(' parameter_list ')' ';' {
+        $$ = ast_create_func_decl(TS_TYPE($2), $4, $6.items, $6.count, NULL);
+        $$->u.func_decl.return_modifiers = TS_MODS($2);
+        $$->u.func_decl.return_pointer_level = $3;
+        free($4);
+    }
+    ;
+
+pointer_nonempty:
+    '*' { $$ = 1; }
+    | '*' pointer_nonempty { $$ = $2 + 1; }
     ;
 
 parameter_list:
-    type_specifier pointer IDENTIFIER {
-        char* struct_name = (TS_TYPE($1) == TYPE_STRUCT) ? yylval.string : NULL;
+    param_decl {
         $$.items = malloc(sizeof(ASTNode*));
-        $$.items[0] = ast_create_param(TS_TYPE($1), $3, $2, struct_name);
-        $$.items[0]->u.param.modifiers = TS_MODS($1);
+        $$.items[0] = $1;
         $$.count = 1;
+    }
+    | parameter_list ',' param_decl {
+        $$.items = realloc($1.items, sizeof(ASTNode*) * ($1.count + 1));
+        $$.items[$1.count] = $3;
+        $$.count = $1.count + 1;
+    }
+    ;
+
+/* an array parameter is a pointer: int a[], int a[8] */
+param_decl:
+    type_specifier pointer IDENTIFIER {
+        char* struct_name = (TS_TYPE($1) == TYPE_STRUCT) ? current_decl_struct_name : NULL;
+        $$ = ast_create_param(TS_TYPE($1), $3, $2, struct_name);
+        $$->u.param.modifiers = TS_MODS($1);
         free($3);
     }
-    | parameter_list ',' type_specifier pointer IDENTIFIER {
-        char* struct_name = (TS_TYPE($3) == TYPE_STRUCT) ? yylval.string : NULL;
-        $$.items = realloc($1.items, sizeof(ASTNode*) * ($1.count + 1));
-        $$.items[$1.count] = ast_create_param(TS_TYPE($3), $5, $4, struct_name);
-        $$.items[$1.count]->u.param.modifiers = TS_MODS($3);
-        $$.count = $1.count + 1;
-        free($5);
+    | type_specifier pointer IDENTIFIER '[' ']' {
+        char* struct_name = (TS_TYPE($1) == TYPE_STRUCT) ? current_decl_struct_name : NULL;
+        $$ = ast_create_param(TS_TYPE($1), $3, $2 + 1, struct_name);
+        $$->u.param.modifiers = TS_MODS($1);
+        free($3);
+    }
+    | type_specifier pointer IDENTIFIER '[' conditional_expression ']' {
+        char* struct_name = (TS_TYPE($1) == TYPE_STRUCT) ? current_decl_struct_name : NULL;
+        ast_free($5);
+        $$ = ast_create_param(TS_TYPE($1), $3, $2 + 1, struct_name);
+        $$->u.param.modifiers = TS_MODS($1);
+        free($3);
     }
     ;
 
@@ -623,74 +823,24 @@ expression:
 
 assignment_expression:
     conditional_expression { $$ = $1; }
-    | IDENTIFIER '=' assignment_expression {
-        $$ = ast_create_assign($1, $3);
-        free($1);
+    | unary_expression assign_op assignment_expression {
+        $$ = make_assign($1, $2, $3);
     }
-    | IDENTIFIER '[' expression ']' '=' assignment_expression {
-        $$ = ast_create_array_assign($1, $3, $6);
-        free($1);
-    }
-    | IDENTIFIER ADD_ASSIGN assignment_expression {
-        ASTNode* var = ast_create_identifier($1);
-        ASTNode* add = ast_create_binop(OP_ADD, var, $3);
-        $$ = ast_create_assign($1, add);
-        free($1);
-    }
-    | IDENTIFIER SUB_ASSIGN assignment_expression {
-        ASTNode* var = ast_create_identifier($1);
-        ASTNode* sub = ast_create_binop(OP_SUB, var, $3);
-        $$ = ast_create_assign($1, sub);
-        free($1);
-    }
-    | IDENTIFIER MUL_ASSIGN assignment_expression {
-        ASTNode* var = ast_create_identifier($1);
-        ASTNode* mul = ast_create_binop(OP_MUL, var, $3);
-        $$ = ast_create_assign($1, mul);
-        free($1);
-    }
-    | IDENTIFIER DIV_ASSIGN assignment_expression {
-        ASTNode* var = ast_create_identifier($1);
-        ASTNode* div = ast_create_binop(OP_DIV, var, $3);
-        $$ = ast_create_assign($1, div);
-        free($1);
-    }
-    | IDENTIFIER MOD_ASSIGN assignment_expression {
-        ASTNode* var = ast_create_identifier($1);
-        ASTNode* mod = ast_create_binop(OP_MOD, var, $3);
-        $$ = ast_create_assign($1, mod);
-        free($1);
-    }
-    | IDENTIFIER AND_ASSIGN assignment_expression {
-        ASTNode* var = ast_create_identifier($1);
-        ASTNode* and = ast_create_binop(OP_BIT_AND, var, $3);
-        $$ = ast_create_assign($1, and);
-        free($1);
-    }
-    | IDENTIFIER OR_ASSIGN assignment_expression {
-        ASTNode* var = ast_create_identifier($1);
-        ASTNode* or = ast_create_binop(OP_BIT_OR, var, $3);
-        $$ = ast_create_assign($1, or);
-        free($1);
-    }
-    | IDENTIFIER XOR_ASSIGN assignment_expression {
-        ASTNode* var = ast_create_identifier($1);
-        ASTNode* xor = ast_create_binop(OP_BIT_XOR, var, $3);
-        $$ = ast_create_assign($1, xor);
-        free($1);
-    }
-    | IDENTIFIER '.' IDENTIFIER '=' assignment_expression {
-        ASTNode* object = ast_create_identifier($1);
-        $$ = ast_create_member_assign(object, $3, $5);
-        free($1);
-        free($3);
-    }
-    | IDENTIFIER ARROW IDENTIFIER '=' assignment_expression {
-        ASTNode* pointer = ast_create_identifier($1);
-        $$ = ast_create_ptr_member_assign(pointer, $3, $5);
-        free($1);
-        free($3);
-    }
+    ;
+
+/* 0 for plain '=', else the BinOpType of the operator + 1 */
+assign_op:
+    '=' { $$ = 0; }
+    | ADD_ASSIGN { $$ = OP_ADD + 1; }
+    | SUB_ASSIGN { $$ = OP_SUB + 1; }
+    | MUL_ASSIGN { $$ = OP_MUL + 1; }
+    | DIV_ASSIGN { $$ = OP_DIV + 1; }
+    | MOD_ASSIGN { $$ = OP_MOD + 1; }
+    | AND_ASSIGN { $$ = OP_BIT_AND + 1; }
+    | OR_ASSIGN { $$ = OP_BIT_OR + 1; }
+    | XOR_ASSIGN { $$ = OP_BIT_XOR + 1; }
+    | SHL_ASSIGN { $$ = OP_SHL + 1; }
+    | SHR_ASSIGN { $$ = OP_SHR + 1; }
     ;
 
 conditional_expression:
@@ -811,13 +961,11 @@ unary_expression:
     | '*' unary_expression %prec UDEREF {
         $$ = ast_create_deref($2);
     }
-    | INC IDENTIFIER {
-        $$ = ast_create_pre_inc($2);
-        free($2);
+    | INC unary_expression {
+        $$ = make_incdec($2, 1, 0);
     }
-    | DEC IDENTIFIER {
-        $$ = ast_create_pre_dec($2);
-        free($2);
+    | DEC unary_expression {
+        $$ = make_incdec($2, 0, 0);
     }
     | '(' type_specifier pointer ')' unary_expression {
         char* type_name = (TS_TYPE($2) == TYPE_STRUCT) ? yylval.string : NULL;
@@ -843,9 +991,8 @@ postfix_expression:
         $$ = ast_create_call($1, $3.items, $3.count);
         free($1);
     }
-    | IDENTIFIER '[' expression ']' {
-        $$ = ast_create_array_subscript($1, $3);
-        free($1);
+    | postfix_expression '[' expression ']' {
+        $$ = ast_create_index($1, $3);
     }
     | postfix_expression '.' IDENTIFIER {
         $$ = ast_create_member_access($1, $3);
@@ -855,13 +1002,11 @@ postfix_expression:
         $$ = ast_create_ptr_member_access($1, $3);
         free($3);
     }
-    | IDENTIFIER INC {
-        $$ = ast_create_post_inc($1);
-        free($1);
+    | postfix_expression INC {
+        $$ = make_incdec($1, 1, 1);
     }
-    | IDENTIFIER DEC {
-        $$ = ast_create_post_dec($1);
-        free($1);
+    | postfix_expression DEC {
+        $$ = make_incdec($1, 0, 1);
     }
     ;
 

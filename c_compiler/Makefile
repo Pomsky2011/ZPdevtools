@@ -22,6 +22,9 @@ lexer.c: lexer.l parser.tab.h
 %.o: %.c
 	$(CC) $(CFLAGS) -c $<
 
+# the objects depend on these headers (a stale object with an old ASTNode layout crashes)
+$(OBJECTS): ast.h codegen.h preprocessor.h zpstrdup.h
+
 clean:
 	rm -f $(TARGET) $(OBJECTS) $(GENERATED)
 

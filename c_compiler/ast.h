@@ -29,6 +29,9 @@ typedef enum {
     AST_POST_INC,         /* Post-increment (x++) */
     AST_PRE_DEC,          /* Pre-decrement (--x) */
     AST_POST_DEC,         /* Post-decrement (x--) */
+    AST_INDEX,            /* base[index]: base is any expression (array or pointer) */
+    AST_ASSIGN_LV,        /* lvalue = value, or lvalue op= value, for any lvalue but a plain variable */
+    AST_INCDEC_LV,        /* ++/-- on any lvalue but a plain variable */
 
     /* Statements */
     AST_EXPR_STMT,
@@ -166,11 +169,31 @@ typedef struct ASTNode {
             struct ASTNode* value;
         } assign;
 
-        /* Array subscript */
+        /* Array subscript (old named form, no longer produced by the parser) */
         struct {
             char* array_name;
             struct ASTNode* index;
         } array_subscript;
+
+        /* base[index] */
+        struct {
+            struct ASTNode* base;
+            struct ASTNode* index;
+        } index_expr;
+
+        /* Assignment to an lvalue that is not a plain variable: op is 0 for '=', else BinOpType + 1 for 'op=' */
+        struct {
+            struct ASTNode* target;
+            struct ASTNode* value;
+            int op;
+        } assign_lv;
+
+        /* ++ / -- on an lvalue that is not a plain variable */
+        struct {
+            struct ASTNode* operand;
+            int inc;
+            int post;
+        } incdec_lv;
 
         /* Array assignment */
         struct {
@@ -240,6 +263,7 @@ typedef struct ASTNode {
             int param_count;
             struct ASTNode* body;
             TypeModifier return_modifiers;  /* For return type modifiers */
+            int return_pointer_level;       /* int *f(): 1 */
             StorageClass storage;           /* static/extern functions */
         } func_decl;
 
@@ -422,6 +446,9 @@ ASTNode* ast_create_binop(BinOpType op, ASTNode* left, ASTNode* right);
 ASTNode* ast_create_unop(UnOpType op, ASTNode* operand);
 ASTNode* ast_create_call(const char* name, ASTNode** args, int arg_count);
 ASTNode* ast_create_assign(const char* var_name, ASTNode* value);
+ASTNode* ast_create_index(ASTNode* base, ASTNode* index);
+ASTNode* ast_create_assign_lv(ASTNode* target, ASTNode* value, int op);
+ASTNode* ast_create_incdec_lv(ASTNode* operand, int inc, int post);
 ASTNode* ast_create_array_subscript(const char* array_name, ASTNode* index);
 ASTNode* ast_create_array_assign(const char* array_name, ASTNode* index, ASTNode* value);
 ASTNode* ast_create_return(ASTNode* value);
