@@ -2,7 +2,7 @@
 
 `scripts/zpsnd.py` turns a text file (`.zps`) describing samples and a score into a
 ZPA pack (`.zpa`) for the APU BIOS sequencer. Stdlib-only Python 3. The format it
-writes is in zpa.txt; the SST block layout is in sst.txt.
+writes is in zpa.md; the SST block layout is in sst.md.
 
     python3 scripts/zpsnd.py bake  jingle.zps -o jingle.zpa [--listing jingle.lst]
     python3 scripts/zpsnd.py trace jingle.zpa --ticks 900 [--mailbox 700=1]

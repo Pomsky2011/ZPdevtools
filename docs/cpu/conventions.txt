@@ -691,7 +691,7 @@ count:          .word 0
 
 ================================================================================
 
-For more examples, see programming-guide.txt
-For instruction details, see instruction-set.txt
+For more examples, see programming-guide.md
+For instruction details, see opcode-table.md
 For memory layout, see memory-map.txt
 For interrupt handling, see interrupts.txt

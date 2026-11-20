@@ -681,7 +681,7 @@ void init_instructions(void) {
     /* Control */
     INST("NOP", AM_IMPLIED, 0x00, 1, 2);
     /* HLT/STP/KIL (0xFF, all the same real opcode - cpu_instructions.cpp
-     * cpu_inst_0xFF) documented in instruction-set.txt but never
+     * cpu_inst_0xFF) documented in docs/cpu/opcode-table.md but never
      * registered here. */
     INST("HLT", AM_IMPLIED, 0xFF, 1, 0);
     INST("STP", AM_IMPLIED, 0xFF, 1, 0);
@@ -754,7 +754,7 @@ void init_instructions(void) {
     INST("STA", AM_DP_INDIRECT, 0x4C, 2, 5);
     INST("STA", AM_DP_INDIRECT_Y, 0x4D, 2, 6);
     /* STA (sr,S),Y / [dp] / [dp],Y: real opcodes, documented in
-     * instruction-set.txt, but never registered here. */
+     * docs/cpu/opcode-table.md, but never registered here. */
     INST("STA", AM_SR_INDIRECT_Y, 0x4E, 2, 7);
     INST("STA", AM_DP_INDIRECT_LONG, 0x4F, 2, 6);
     INST("STA", AM_DP_INDIRECT_LONG_Y, 0x50, 2, 6);
@@ -783,7 +783,7 @@ void init_instructions(void) {
     INST("ADC", AM_DIRECT_PAGE, 0x66, 2, 3);
     INST("ADC", AM_DP_X, 0xBA, 2, 4);
     /* ADC's remaining addressing-mode variants (0xB0-0xB5, 0xBB-0xBD): real
-     * opcodes, documented in instruction-set.txt, but never registered here. */
+     * opcodes, documented in docs/cpu/opcode-table.md, but never registered here. */
     INST("ADC", AM_DP_INDIRECT_Y, 0xB0, 2, 5);
     INST("ADC", AM_DP_INDIRECT_X, 0xB1, 2, 6);
     INST("ADC", AM_DP_INDIRECT, 0xB2, 2, 5);
@@ -800,7 +800,7 @@ void init_instructions(void) {
     INST("SBC", AM_ABSOLUTE_Y, 0xE4, 3, 3);
     INST("SBC", AM_DIRECT_PAGE, 0xE5, 2, 3);
     /* SBC's remaining addressing-mode variants (0xDC-0xE0, 0xE3, 0xE6-0xE9):
-     * real opcodes, documented in instruction-set.txt, but never registered
+     * real opcodes, documented in docs/cpu/opcode-table.md, but never registered
      * here. */
     INST("SBC", AM_DP_INDIRECT_X, 0xDC, 2, 6);
     INST("SBC", AM_DP_INDIRECT_Y, 0xDD, 2, 5);
@@ -841,7 +841,7 @@ void init_instructions(void) {
     INST("AND", AM_IMMEDIATE, 0xC4, 3, 2);
     INST("AND", AM_ABSOLUTE, 0xC5, 3, 3);
     /* AND's remaining addressing-mode variants (0xBE-0xC3, 0xC6-0xCC): real
-     * opcodes, documented in instruction-set.txt, but never registered here. */
+     * opcodes, documented in docs/cpu/opcode-table.md, but never registered here. */
     INST("AND", AM_DP_INDIRECT_X, 0xBE, 2, 6);
     INST("AND", AM_DP_INDIRECT, 0xBF, 2, 5);
     INST("AND", AM_DP_INDIRECT_Y, 0xC0, 2, 5);
@@ -859,7 +859,7 @@ void init_instructions(void) {
     INST("ORA", AM_IMMEDIATE, 0xD3, 3, 2);
     INST("ORA", AM_ABSOLUTE, 0xD4, 3, 3);
     /* ORA's remaining addressing-mode variants (0xCD-0xD2, 0xD5-0xDB): real
-     * opcodes, documented in instruction-set.txt, but never registered here. */
+     * opcodes, documented in docs/cpu/opcode-table.md, but never registered here. */
     INST("ORA", AM_DP_INDIRECT_X, 0xCD, 2, 6);
     INST("ORA", AM_DP_INDIRECT, 0xCE, 2, 5);
     INST("ORA", AM_DP_INDIRECT_Y, 0xCF, 2, 5);
@@ -877,14 +877,14 @@ void init_instructions(void) {
     INST("XOR", AM_IMMEDIATE, 0xF9, 3, 2);
     INST("EOR", AM_IMMEDIATE, 0xF9, 3, 2);  /* Alias */
     /* XOR addr: real opcode (cpu_inst_0x95, commented "EOR addr" there but
-     * calls the same opXOR()), documented in instruction-set.txt, but never
+     * calls the same opXOR()), documented in docs/cpu/opcode-table.md, but never
      * registered here - only the immediate form was. */
     INST("XOR", AM_ABSOLUTE, 0x95, 3, 3);
     INST("EOR", AM_ABSOLUTE, 0x95, 3, 3);  /* Alias */
     /* XOR's remaining addressing-mode variants (0x96-0x97, 0x9D-0x9F,
      * 0xF8, 0xFA-0xFE): real opcodes (cpu_instructions.cpp inconsistently
      * comments some of these "EOR" too - same alias, same opXOR() handler),
-     * documented in instruction-set.txt, but never registered here. */
+     * documented in docs/cpu/opcode-table.md, but never registered here. */
     INST("XOR", AM_ABSOLUTE_X, 0x96, 3, 3);
     INST("EOR", AM_ABSOLUTE_X, 0x96, 3, 3);  /* Alias */
     INST("XOR", AM_ABSOLUTE_Y, 0x97, 3, 3);
@@ -904,7 +904,7 @@ void init_instructions(void) {
     INST("ASL", AM_ABSOLUTE, 0x99, 3, 3);
     /* ASL/LSR addr,X,dp,dp,X and ROL/ROR addr,X,dp: real opcodes
      * (cpu_instructions.cpp 0x8F-0x91, 0x81-0x83, 0x85-0x87, 0x9A-0x9C),
-     * documented in instruction-set.txt, but never registered here - only
+     * documented in docs/cpu/opcode-table.md, but never registered here - only
      * the accumulator/plain-absolute forms were. */
     INST("ASL", AM_ABSOLUTE_X, 0x9A, 3, 3);
     INST("ASL", AM_DIRECT_PAGE, 0x9B, 2, 5);
@@ -922,7 +922,7 @@ void init_instructions(void) {
     INST("ROR", AM_ABSOLUTE, 0x85, 3, 3);
     INST("ROR", AM_ABSOLUTE_X, 0x86, 3, 3);
     INST("ROR", AM_DIRECT_PAGE, 0x87, 2, 5);
-    /* RCL A (0x8C): real opcode, documented in instruction-set.txt, but
+    /* RCL A (0x8C): real opcode, documented in docs/cpu/opcode-table.md, but
      * never registered here. Bare "RCL" (no operand) resolves to
      * AM_ACCUMULATOR too, via detect_addressing_mode()'s implied-accumulator
      * mnemonic list, which already includes RCL. */
@@ -939,7 +939,7 @@ void init_instructions(void) {
     INST("JMP", AM_ABSOLUTE_LONG, 0x10, 4, 4);
     INST("JMP", AM_ABSOLUTE_INDEXED_INDIRECT, 0x0C, 3, 4);
     /* JMP (addr) / JMP [addr] (0x0D/0x0E): real opcodes, documented in
-     * instruction-set.txt, but never registered here. */
+     * docs/cpu/opcode-table.md, but never registered here. */
     INST("JMP", AM_ABSOLUTE_INDIRECT, 0x0D, 3, 4);
     INST("JMP", AM_ABSOLUTE_INDIRECT_LONG, 0x0E, 3, 4);
     INST("JSR", AM_ABSOLUTE, 0x12, 3, 4);
@@ -957,7 +957,7 @@ void init_instructions(void) {
     INST("BCS", AM_ABSOLUTE_LONG, 0x0A, 4, 2);
     INST("BGE", AM_ABSOLUTE_LONG, 0x0A, 4, 2);  /* Alias for BCS */
     INST("BEQ", AM_ABSOLUTE_LONG, 0x0B, 4, 2);
-    /* JML is documented (instruction-set.txt) as an alias for JMP long, but
+    /* JML is documented (docs/cpu/opcode-table.md) as an alias for JMP long, but
      * was never actually registered here. */
     INST("JML", AM_ABSOLUTE_LONG, 0x10, 4, 4);
 
@@ -971,14 +971,14 @@ void init_instructions(void) {
     INST("PLP", AM_IMPLIED, 0x33, 1, 3);  /* Alias */
     INST("PHD", AM_IMPLIED, 0x2D, 1, 4);
     INST("PHB", AM_IMPLIED, 0x2C, 1, 3);
-    /* PHK (0x2E): real opcode, documented in instruction-set.txt, but never
+    /* PHK (0x2E): real opcode, documented in docs/cpu/opcode-table.md, but never
      * registered here. */
     INST("PHK", AM_IMPLIED, 0x2E, 1, 3);
-    /* WAI (0x1C): real opcode, documented in instruction-set.txt, but never
+    /* WAI (0x1C): real opcode, documented in docs/cpu/opcode-table.md, but never
      * registered here. */
     INST("WAI", AM_IMPLIED, 0x1C, 1, 3);
     /* PUSH word / PEA addr / PEI (dp) / PER label (0x27-0x2A): real opcodes,
-     * documented in instruction-set.txt, but never registered here.
+     * documented in docs/cpu/opcode-table.md, but never registered here.
      * PUSH/PEA are functionally identical in cpu.cpp (both fetch16() a
      * literal 16-bit value and push16() it) - only the mnemonic differs, so
      * "PUSH #$1234" (immediate, x86-PUSH-style syntax) and "PEA $1234"
@@ -1021,7 +1021,7 @@ void init_instructions(void) {
     INST("CMP", AM_ABSOLUTE_X, 0xA8, 3, 3);
     INST("CMP", AM_ABSOLUTE_Y, 0xA9, 3, 3);
     /* CMP's remaining addressing-mode variants (0xA0-0xA5, 0xAA-0xAE): real
-     * opcodes, documented in instruction-set.txt, but never registered here. */
+     * opcodes, documented in docs/cpu/opcode-table.md, but never registered here. */
     INST("CMP", AM_DP_INDIRECT_X, 0xA0, 2, 6);
     INST("CMP", AM_DP_INDIRECT, 0xA1, 2, 5);
     INST("CMP", AM_DP_INDIRECT_Y, 0xA2, 2, 5);

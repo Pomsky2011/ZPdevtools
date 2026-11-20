@@ -1,7 +1,7 @@
 # ZPA: APU Sound Pack and BIOS Sequencer
 
 STATUS: implemented and tested end to end. The pack format and `zpsnd` baker (scripts/zpsnd.py,
-zpsnd.txt), the assembly engine in the APU BIOS (ZPbootROM apu/internalBIOS/engine.uas, "LLE"),
+zpsnd.md), the assembly engine in the APU BIOS (ZPbootROM apu/internalBIOS/engine.uas, "LLE"),
 the emulator's built-in C++ BIOS (ZeroPoint src/apu_hle.cpp, "HLE") and the Boot ROM upload
 (ZPbootROM def88186/gen_apu_upload.py) all exist. Tests:
 - `python3 scripts/test_zpa_engine.py`: hand-encoded scores (every op, clamping, REP nesting, WAIT,
@@ -9,7 +9,7 @@ the emulator's built-in C++ BIOS (ZeroPoint src/apu_hle.cpp, "HLE") and the Boot
   register writes must be identical tick for tick (needs ZeroPoint's build/bin/test_zpa_engine).
 - ZeroPoint `build/bin/test_boot_jingle <bootrom.bin> <cart.zpb> [--bios bios_full.bin] [--expect 1|2]`:
   boots the real ZPbootROM with a signed (or tampered) ROM and checks the jingle end to end.
-This builds on the MMP/SST behaviour in mmp.txt and sst.txt (ZeroPoint `tools/test_mmp.cpp`).
+This builds on the MMP/SST behaviour in mmp.md and sst.md (ZeroPoint `tools/test_mmp.cpp`).
 
 ## Goal
 
@@ -43,7 +43,7 @@ Decisions already made:
 - BIOS space: $8000-$8EFF (the sine table owns $8F00). The handoff code is under 128 bytes; the
   engine takes pages $81-$88 (about 2 KB) plus dispatch tables at $8E00. Jumps carry only an 8-bit
   offset, so the code is split into 256-byte pages and every routine declares its page with
-  `.rp`; apuasm refuses a jump into another page (programming-guide.txt, "Assembler directives").
+  `.rp`; apuasm refuses a jump into another page (programming-guide.md, "Assembler directives").
 
 ## Upload protocol (Boot ROM -> APU)
 
@@ -224,7 +224,7 @@ checks: the jingle starts (0.16 s after power-on) and is audible, the engine tic
 up to the verify result (the hold loops while the mailbox is 0), the result lands in $A0:1000
 (1 for a good signature, 2 for a tampered ROM), every channel is silent within 0.7 s of it (the
 hold loop polls the mailbox at its JZ events), the APU is back in the BIOS idle loop, and a
-cartridge `$0A` program is then accepted and run. A System "frame" is a 262x340 raster at the
+cartridge `$0A` program is then accepted and run. A System "frame" is a 261x340 raster at the
 68 MHz master clock (~1.3 ms), not 1/60 s; the test converts through the master clock.
 
 ## Open items

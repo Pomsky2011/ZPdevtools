@@ -141,7 +141,7 @@ apuasm play_tone.asm play_tone.bin
 
 **See Also:**
 - `docs/apu/` - Complete APU documentation
-- `docs/apu/programming-guide.txt` - Programming examples
+- `docs/apu/programming-guide.md` - Programming examples
 - `examples/apu/` - Example programs
 
 ---
@@ -440,8 +440,8 @@ wav2mmp sound.wav sound.inc
 ```
 
 **See Also:**
-- `docs/apu/mmp.txt` - MMP documentation
-- `docs/apu/sst.txt` - SST documentation
+- `docs/apu/mmp.md` - MMP documentation
+- `docs/apu/sst.md` - SST documentation
 
 ---
 

@@ -2,7 +2,7 @@
 ; Sweeps channel 1's pitch from $3000 down to $0800, then stops it. Needs the sample from play_sample.asm already in SST/STL.
 ; Assemble: ../../executables/apuasm pitch_sweep.asm
 ; Run:      ZeroPoint/build/bin/run_apu_demo <output>.bin
-; (Walked through in docs/apu/programming-guide.txt.)
+; (Walked through in docs/apu/programming-guide.md.)
 
 .org $8000
 start:

@@ -2,7 +2,7 @@
 ; Writes a 12-sample sine into SST, points STL entry 0 at it and plays it on channel 0 at about 440 Hz.
 ; Assemble: ../../executables/apuasm play_sample.asm
 ; Run:      ZeroPoint/build/bin/run_apu_demo <output>.bin
-; (Walked through in docs/apu/programming-guide.txt.)
+; (Walked through in docs/apu/programming-guide.md.)
 
 .org $8000
 start:

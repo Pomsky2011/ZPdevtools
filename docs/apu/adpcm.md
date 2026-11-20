@@ -18,7 +18,7 @@ number of 256-frame pages.
 
 ## Why it fits on the APU
 
-The APU has two 8-bit registers and ~2.1 MIPS (4.25 MIPS in fast mode, `APUCLK` $D8001A, see `docs/apu/instruction-set.txt`). Decoding costs **77.5 instructions per stereo frame**, so 44.1 kHz stereo needs ~3.4 MIPS: fast
+The APU has two 8-bit registers and ~2.1 MIPS (4.25 MIPS in fast mode, `APUCLK` $D8001A, see `docs/apu/instruction-set.md`). Decoding costs **77.5 instructions per stereo frame**, so 44.1 kHz stereo needs ~3.4 MIPS: fast
 mode only (normal mode tops out near 27 kframes/s). The cost comes from doing no arithmetic a table can do:
 
 - per magnitude `m` (0-7): `DLO_m`/`DHI_m` (the 16-bit step difference for each of the 89 step indexes) and `NEXT_m`

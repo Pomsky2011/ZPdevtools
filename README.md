@@ -23,7 +23,7 @@ Every tool except `zpcc` (C++, needs clang) is strict C89, so the rest can also 
 | | `wav2mmp` | WAV to an APU MMP sample include |
 
 Python tools in `scripts/`: the ADPCM player builder (`build_adpcm_rom.py`, `docs/apu/adpcm.md`) and the ZPA sound pack
-baker `zpsnd.py` (`docs/apu/zpsnd.txt`).
+baker `zpsnd.py` (`docs/apu/zpsnd.md`).
 
 ## Building
 
@@ -66,7 +66,7 @@ python3 tests/asm/fuzz_asm.py    # assembler fuzzer (not part of make check)
 | `docs/cpu/` | DEF88186: architecture, addressing modes, instructions, opcode table, memory map, interrupts, timing, programming guide |
 | `spec/` | Machine-read specs: the CPU opcode map and the measured per-opcode table (see `spec/README.md`) |
 | `docs/ppu/` | `ucode.txt` (instruction reference), `preset-e-and-shorthands.txt`, `layers.md` (BG layers + sprites microcode, in `ucode/layers/`) |
-| `docs/apu/` | APU: `README.txt` is the index; also MMP, SST, ZPA sequencer, ADPCM |
+| `docs/apu/` | APU: architecture, instruction set, mixer (MMP), sample storage, programming guide, ZPA sequencer, ADPCM player |
 | `docs/dos/` | Building on MS-DOS, C89 porting rules |
 | `c_compiler/README.md` | What `def88186cc` accepts and refuses |
 | `llvm_compiler/README.md` | `zpcc` |

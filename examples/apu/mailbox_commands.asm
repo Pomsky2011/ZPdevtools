@@ -2,7 +2,7 @@
 ; Polls the DEF88186 input buffer ($1000) for play/stop/volume commands from the CPU.
 ; Assemble: ../../executables/apuasm mailbox_commands.asm
 ; Run:      ZeroPoint/build/bin/run_apu_demo <output>.bin
-; (Walked through in docs/apu/programming-guide.txt.)
+; (Walked through in docs/apu/programming-guide.md.)
 
 .org $8000
 start:
