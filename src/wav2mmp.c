@@ -200,15 +200,15 @@ int read_wav(const char *filename, int16_t **samples, int *sample_count, int *sa
             if (fmt.bits_per_sample == 16) {
                 sample = (int16_t)read_uint16_le(f);
             } else {  /* 8-bit */
-                u8_sample = fgetc(f);
-                sample = ((int16_t)u8_sample - 128) * 256;
+                u8_sample = (uint8_t)fgetc(f);
+                sample = (int16_t)(((int16_t)u8_sample - 128) * 256);
             }
 
             sample_sum += sample;
         }
 
         /* Average if multiple channels */
-        (*samples)[i] = sample_sum / fmt.num_channels;
+        (*samples)[i] = (int16_t)(sample_sum / fmt.num_channels);
     }
 
     *sample_count = num_samples;
@@ -225,7 +225,7 @@ void downsample_to_8bit(int16_t *samples_16bit, int8_t *samples_8bit, int count)
     for (i = 0; i < count; i++) {
         /* Use arithmetic right shift to match Python's floor division for signed values */
         sample_8 = samples_16bit[i] >> 8;
-        samples_8bit[i] = clamp_8bit(sample_8);
+        samples_8bit[i] = (int8_t)clamp_8bit(sample_8);
     }
 }
 
@@ -308,7 +308,7 @@ void generate_inc_file(const char *output_path, SSTBlock *blocks, int num_blocks
     /* Generate SST blocks */
     for (block_idx = 0; block_idx < num_blocks; block_idx++) {
         block = &blocks[block_idx];
-        block_offset = block_idx * 16;
+        block_offset = (uint16_t)(block_idx * 16);
 
         fprintf(f, "    ; Block %d (offset $%02X)\n", block_idx, block_offset);
         fprintf(f, "    ; Header: loops=$%02X, Y/L=$%02X, V/U=$%02X, T/S=$%02X\n",

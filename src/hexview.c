@@ -77,9 +77,9 @@ static void hexdump(FILE* in, FILE* out, size_t offset, size_t count,
 
         /* Print address */
         if (hex_only) {
-            fprintf(out, "%08zX: ", offset + total_read);
+            fprintf(out, "%08lX: ", (unsigned long)(offset + total_read));
         } else {
-            fprintf(out, "%08zX (%8zu): ", offset + total_read, offset + total_read);
+            fprintf(out, "%08lX (%8lu): ", (unsigned long)(offset + total_read), (unsigned long)(offset + total_read));
         }
 
         /* Print hex bytes */
@@ -114,7 +114,7 @@ static void hexdump(FILE* in, FILE* out, size_t offset, size_t count,
 
     /* Summary */
     if (!hex_only) {
-        fprintf(out, "\nTotal bytes displayed: %zu (0x%zX)\n", total_read, total_read);
+        fprintf(out, "\nTotal bytes displayed: %lu (0x%lX)\n", (unsigned long)total_read, (unsigned long)total_read);
     }
 }
 
@@ -142,7 +142,7 @@ static void analyze_file(FILE* f) {
     }
 
     printf("=== File Statistics ===\n");
-    printf("Total bytes: %zu (0x%zX)\n", total, total);
+    printf("Total bytes: %lu (0x%lX)\n", (unsigned long)total, (unsigned long)total);
     printf("\nMost common bytes:\n");
 
     /* Find top 10 most common bytes */
@@ -159,9 +159,9 @@ static void analyze_file(FILE* f) {
 
         if (max_count == 0) break;
 
-        printf("  0x%02X (%3d): %zu times (%.2f%%)\n",
-               max_byte, max_byte, max_count,
-               (max_count * 100.0) / total);
+        printf("  0x%02X (%3d): %lu times (%.2f%%)\n",
+               max_byte, max_byte, (unsigned long)max_count,
+               ((double)max_count * 100.0) / (double)total);
 
         byte_counts[max_byte] = 0;  /* Remove for next pass */
     }
@@ -253,7 +253,7 @@ int main(int argc, char* argv[]) {
     rewind(in);
 
     printf("File: %s\n", input_file);
-    printf("Size: %zu bytes (0x%zX)\n\n", file_size, file_size);
+    printf("Size: %lu bytes (0x%lX)\n\n", (unsigned long)file_size, (unsigned long)file_size);
 
     /* Analyze if requested */
     if (analyze) {

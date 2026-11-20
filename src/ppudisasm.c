@@ -194,7 +194,7 @@ static void disassemble_instruction(uint8_t* data, size_t offset, size_t max_siz
             case 1: {
                 /* SETBYTE T, $imm - encoding: TT XXXXXXXX */
                 uint8_t T = (suboperand >> 8) & 0x3;
-                uint8_t imm = suboperand & 0xFF;
+                uint8_t imm = (uint8_t)(suboperand & 0xFF);
                 fprintf(out, " %d, $%02X", T, imm);
                 break;
             }
@@ -218,7 +218,7 @@ static void disassemble_instruction(uint8_t* data, size_t offset, size_t max_siz
     } else if (opcode == 0xF) {
         /* Preset F: subop = bits 11-8 (4 bits), param = bits 7-0 (8 bits) */
         uint8_t subop = (operand >> 8) & 0xF;
-        uint8_t param = operand & 0xFF;
+        uint8_t param = (uint8_t)(operand & 0xFF);
 
         fprintf(out, "%-12s", preset_f_names[subop]);
 
@@ -310,8 +310,8 @@ int main(int argc, char* argv[]) {
     if (!data) return 1;
 
     /* Adjust end address */
-    if (end_addr > file_size) end_addr = file_size;
-    if (start_addr > file_size) start_addr = file_size;
+    if (end_addr > file_size) end_addr = (uint32_t)file_size;
+    if (start_addr > file_size) start_addr = (uint32_t)file_size;
 
     /* Open output */
     out = stdout;
@@ -326,12 +326,12 @@ int main(int argc, char* argv[]) {
 
     /* Header */
     fprintf(out, "; PPU Disassembly of %s\n", input_file);
-    fprintf(out, "; Size: %zu bytes (0x%zX)\n", file_size, file_size);
+    fprintf(out, "; Size: %lu bytes (0x%lX)\n", (unsigned long)file_size, (unsigned long)file_size);
     fprintf(out, "; Range: $%04X - $%04X\n\n", start_addr, end_addr);
 
     /* Disassemble (PPU instructions are 2 bytes each) */
     offset = start_addr;
-    addr = start_addr;
+    addr = (uint16_t)start_addr;
 
     while (offset + 1 < end_addr && offset + 1 < file_size) {
         disassemble_instruction(data, offset, file_size, out,

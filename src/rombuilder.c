@@ -285,12 +285,12 @@ int main(int argc, char* argv[]) {
     }
 
     /* Calculate actual ROM size (highest byte written + 1) */
-    rom_size = config.apu_base + get_file_size(config.apu_file);
+    rom_size = config.apu_base + (uint32_t)get_file_size(config.apu_file);
     if (config.cpu_base + get_file_size(config.cpu_file) > rom_size) {
-        rom_size = config.cpu_base + get_file_size(config.cpu_file);
+        rom_size = config.cpu_base + (uint32_t)get_file_size(config.cpu_file);
     }
     if (config.ppu_base + get_file_size(config.ppu_file) > rom_size) {
-        rom_size = config.ppu_base + get_file_size(config.ppu_file);
+        rom_size = config.ppu_base + (uint32_t)get_file_size(config.ppu_file);
     }
 
     /* Write ROM file */

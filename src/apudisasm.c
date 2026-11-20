@@ -325,7 +325,7 @@ static void disassemble_instruction(uint8_t* data, size_t offset, size_t max_siz
                     int b = (operand >> 8) & 1;
                     sprintf(buf, "SDP %d, $%02X", b, operand & 0xFF);
                 } else {
-                    uint8_t low = operand & 0xFF;
+                    uint8_t low = (uint8_t)(operand & 0xFF);
                     if (low == 0x42)      sprintf(buf, "PODP");
                     else if (low == 0x41) sprintf(buf, "PUDP");
                     else if (low == 0x40) sprintf(buf, "RET");

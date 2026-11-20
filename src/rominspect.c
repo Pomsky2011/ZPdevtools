@@ -116,7 +116,7 @@ static int inspect_zpb(const uint8_t *d, size_t size, Opts *o)
 
     printf("=== ZeroPoint ROM (ZPB) ===\n\n");
     printf("File:         %s\n", o->input);
-    printf("Size:         %lu bytes (%.2f KB)\n\n", (unsigned long)size, size / 1024.0);
+    printf("Size:         %lu bytes (%.2f KB)\n\n", (unsigned long)size, (double)size / 1024.0);
     printf("--- Header ---\n");
     printf("Magic:        ZPB (valid)\n");
     printf("Version:      %u\n", version);
@@ -234,7 +234,7 @@ static int inspect_elf(const uint8_t *d, size_t size, Opts *o)
 
     printf("=== ZeroPoint image (ELF32) ===\n\n");
     printf("File:         %s\n", o->input);
-    printf("Size:         %lu bytes (%.2f KB)\n\n", (unsigned long)size, size / 1024.0);
+    printf("Size:         %lu bytes (%.2f KB)\n\n", (unsigned long)size, (double)size / 1024.0);
     printf("--- ELF header ---\n");
     printf("Type:         %s\n", e_type == 2 ? "EXEC" : "?");
     if (e_machine == 0x5A50) printf("Machine:      0x5A50 (ZP, ZeroPoint)\n");
@@ -344,7 +344,7 @@ static int inspect_raw(const uint8_t *d, size_t size, Opts *o)
 {
     printf("=== Raw binary (no ZPB/ELF header) ===\n\n");
     printf("File:         %s\n", o->input);
-    printf("Size:         %lu bytes (%.2f KB)\n", (unsigned long)size, size / 1024.0);
+    printf("Size:         %lu bytes (%.2f KB)\n", (unsigned long)size, (double)size / 1024.0);
     printf("Checksum:     0x%08lX\n", (unsigned long)checksum(d, size));
     if (size) print_hex_preview(d, size);
     printf("\n");

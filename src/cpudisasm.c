@@ -707,8 +707,8 @@ int main(int argc, char* argv[]) {
     if (!data) return 1;
 
     /* Adjust end address */
-    if (end_addr > file_size) end_addr = file_size;
-    if (start_addr > file_size) start_addr = file_size;
+    if (end_addr > file_size) end_addr = (uint32_t)file_size;
+    if (start_addr > file_size) start_addr = (uint32_t)file_size;
 
     /* Open output */
     out = stdout;
@@ -723,7 +723,7 @@ int main(int argc, char* argv[]) {
 
     /* Header */
     fprintf(out, "; Disassembly of %s\n", input_file);
-    fprintf(out, "; Size: %zu bytes (0x%zX)\n", file_size, file_size);
+    fprintf(out, "; Size: %lu bytes (0x%lX)\n", (unsigned long)file_size, (unsigned long)file_size);
     fprintf(out, "; Range: $%06X - $%06X\n\n", start_addr, end_addr);
 
     /* Disassemble */
