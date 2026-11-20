@@ -150,7 +150,7 @@ INC addr                  0x6A    Absolute               3 bytes      3 cycles  
 INC addr,X                0x6B    Absolute Indexed,X     3 bytes      3 cycles       N-----Z-
 INC dp                    0x6C    Direct Page            2 bytes      5[2][4] cycles N-----Z-
 INC dp,X                  0x6D    DP Indexed,X           2 bytes      6[2][4] cycles N-----Z-
-INC long                  0x6E    Absolute Long          4 bytes      6[4] cycles    N-----Z-
+INC.L addr                0x6E    Absolute               3 bytes      6 cycles       N-----Z-
 INX                       0x6F    Implied                1 byte       2 cycles       N-----Z-
 INY                       0x70    Implied                1 byte       2 cycles       N-----Z-
 
@@ -161,7 +161,7 @@ DEC addr                  0x72    Absolute               3 bytes      3 cycles  
 DEC addr,X                0x73    Absolute Indexed,X     3 bytes      3 cycles       N-----Z-
 DEC dp                    0x74    Direct Page            2 bytes      5[2][4] cycles N-----Z-
 DEC dp,X                  0x75    DP Indexed,X           2 bytes      6[2][4] cycles N-----Z-
-DEC long                  0x76    Absolute Long          4 bytes      6[4] cycles    N-----Z-
+DEC.L addr                0x76    Absolute               3 bytes      6 cycles       N-----Z-
 DEX                       0x77    Implied                1 byte       2 cycles       N-----Z-
 DEY                       0x78    Implied                1 byte       2 cycles       N-----Z-
 

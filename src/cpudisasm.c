@@ -195,7 +195,7 @@ static const InstrInfo instructions[256] = {
     {"INC", AM_ABSOLUTE_X, 3},  /* 0x6B: INC addr,X */
     {"INC", AM_DIRECT_PAGE, 2},  /* 0x6C: INC dp */
     {"INC", AM_DP_X, 2},  /* 0x6D: INC dp,X */
-    {"INC", AM_ABSOLUTE, 3},  /* 0x6E: INC addr - commented "INC long" in cpu_instructions.cpp but actually calls addrAbsolute() (3 bytes, not 4); a functionally-redundant duplicate of 0x6A at a different (higher) cycle cost */
+    {"INC.L", AM_ABSOLUTE, 3},  /* 0x6E: commented "INC long" in cpu_instructions.cpp but actually calls addrAbsolute() (3 bytes, not 4): the same operation as 0x6A at 6 cycles instead of 3, so it has its own spelling, INC.L, to reassemble to the same byte */
     {"INX", AM_IMPLIED, 1},  /* 0x6F: INX */
     {"INY", AM_IMPLIED, 1},  /* 0x70: INY */
     {"DEC", AM_ACCUMULATOR, 1},  /* 0x71: DEC A */
@@ -203,7 +203,7 @@ static const InstrInfo instructions[256] = {
     {"DEC", AM_ABSOLUTE_X, 3},  /* 0x73: DEC addr,X */
     {"DEC", AM_DIRECT_PAGE, 2},  /* 0x74: DEC dp */
     {"DEC", AM_DP_X, 2},  /* 0x75: DEC dp,X */
-    {"DEC", AM_ABSOLUTE, 3},  /* 0x76: DEC addr - commented "DEC long" in cpu_instructions.cpp but actually calls addrAbsolute() (3 bytes, not 4); mirrors 0x6E above */
+    {"DEC.L", AM_ABSOLUTE, 3},  /* 0x76: DEC addr, the 6-cycle duplicate of 0x72 (see 0x6E above); spelled DEC.L */
     {"DEX", AM_IMPLIED, 1},  /* 0x77: DEX */
     {"DEY", AM_IMPLIED, 1},  /* 0x78: DEY */
     {"CPX", AM_ABSOLUTE, 3},  /* 0x79: CPX addr */
@@ -401,7 +401,12 @@ static uint32_t parse_hex(const char* str) {
  * many operand bytes as detect_addressing_mode()/find_instruction() on the
  * assembler side would actually consume are ever touched here, matching
  * `length - 1` for every mode except the three register forms. Leaves buf
- * empty ("") for AM_IMPLIED/AM_REG_XY, which take no operand text at all. */
+ * empty ("") for AM_IMPLIED, which takes no operand text at all.
+ *
+ * The text has to read back as the same instruction: cpuasm picks direct page / absolute / long from the VALUE, so
+ * an absolute operand of $00FF or less is printed with the '!' (force absolute) prefix and a long operand of $FFFF or
+ * less with '>' (force long). Without them `ADC $0005` (opcode B7, 16-bit address) reassembles as the direct-page
+ * ADC (opcode 66) - a different instruction, and one that always reads bank 0 whatever DB says. */
 static void format_operand(char *buf, AddressingMode mode, const uint8_t *data,
                             size_t offset, size_t max_size, uint32_t addr, int length) {
     uint32_t w;
@@ -413,7 +418,10 @@ static void format_operand(char *buf, AddressingMode mode, const uint8_t *data,
 
     switch (mode) {
         case AM_IMPLIED:
+            break;
+
         case AM_REG_XY:
+            strcpy(buf, " X,Y");     /* cpuasm requires the operands: DIV X,Y */
             break;
 
         case AM_ACCUMULATOR:
@@ -446,21 +454,21 @@ static void format_operand(char *buf, AddressingMode mode, const uint8_t *data,
         case AM_ABSOLUTE:
             if (offset + 2 < max_size) {
                 w = (uint32_t)data[offset + 1] | ((uint32_t)data[offset + 2] << 8);
-                sprintf(buf, " $%04X", w);
+                sprintf(buf, " %s$%04X", (w <= 0xFFu ? "!" : ""), w);
             }
             break;
 
         case AM_ABSOLUTE_X:
             if (offset + 2 < max_size) {
                 w = (uint32_t)data[offset + 1] | ((uint32_t)data[offset + 2] << 8);
-                sprintf(buf, " $%04X,X", w);
+                sprintf(buf, " %s$%04X,X", (w <= 0xFFu ? "!" : ""), w);
             }
             break;
 
         case AM_ABSOLUTE_Y:
             if (offset + 2 < max_size) {
                 w = (uint32_t)data[offset + 1] | ((uint32_t)data[offset + 2] << 8);
-                sprintf(buf, " $%04X,Y", w);
+                sprintf(buf, " %s$%04X,Y", (w <= 0xFFu ? "!" : ""), w);
             }
             break;
 
@@ -468,7 +476,7 @@ static void format_operand(char *buf, AddressingMode mode, const uint8_t *data,
             if (offset + 3 < max_size) {
                 l = (uint32_t)data[offset + 1] | ((uint32_t)data[offset + 2] << 8) |
                     ((uint32_t)data[offset + 3] << 16);
-                sprintf(buf, " $%06X", l);
+                sprintf(buf, " %s$%06X", (l <= 0xFFFFu ? ">" : ""), l);
             }
             break;
 
@@ -476,7 +484,7 @@ static void format_operand(char *buf, AddressingMode mode, const uint8_t *data,
             if (offset + 3 < max_size) {
                 l = (uint32_t)data[offset + 1] | ((uint32_t)data[offset + 2] << 8) |
                     ((uint32_t)data[offset + 3] << 16);
-                sprintf(buf, " $%06X,X", l);
+                sprintf(buf, " %s$%06X,X", (l <= 0xFFFFu ? ">" : ""), l);
             }
             break;
 
@@ -484,7 +492,7 @@ static void format_operand(char *buf, AddressingMode mode, const uint8_t *data,
             if (offset + 3 < max_size) {
                 l = (uint32_t)data[offset + 1] | ((uint32_t)data[offset + 2] << 8) |
                     ((uint32_t)data[offset + 3] << 16);
-                sprintf(buf, " $%06X,Y", l);
+                sprintf(buf, " %s$%06X,Y", (l <= 0xFFFFu ? ">" : ""), l);
             }
             break;
 
@@ -539,7 +547,7 @@ static void format_operand(char *buf, AddressingMode mode, const uint8_t *data,
         case AM_ABSOLUTE_INDIRECT:
             if (offset + 2 < max_size) {
                 w = (uint32_t)data[offset + 1] | ((uint32_t)data[offset + 2] << 8);
-                sprintf(buf, " ($%04X)", w);
+                sprintf(buf, " %s($%04X)", (w <= 0xFFu ? "!" : ""), w);
             }
             break;
 
@@ -549,14 +557,14 @@ static void format_operand(char *buf, AddressingMode mode, const uint8_t *data,
              * mnemonic says "long" - 2 operand bytes, not 3. */
             if (offset + 2 < max_size) {
                 w = (uint32_t)data[offset + 1] | ((uint32_t)data[offset + 2] << 8);
-                sprintf(buf, " [$%04X]", w);
+                sprintf(buf, " %s[$%04X]", (w <= 0xFFu ? "!" : ""), w);
             }
             break;
 
         case AM_ABSOLUTE_INDEXED_INDIRECT:
             if (offset + 2 < max_size) {
                 w = (uint32_t)data[offset + 1] | ((uint32_t)data[offset + 2] << 8);
-                sprintf(buf, " ($%04X,X)", w);
+                sprintf(buf, " %s($%04X,X)", (w <= 0xFFu ? "!" : ""), w);
             }
             break;
 

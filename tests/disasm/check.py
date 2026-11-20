@@ -9,9 +9,10 @@
 
   tests/disasm/check.py [bindir]        (default: executables/)
 
-Not covered, on purpose: cpudisasm prints a branch/JSR target as a bare number, and cpuasm reads a small literal as
-direct-page (which JSR/BRA do not have), so control flow does not always reassemble; the cpu round trip therefore
-sticks to sources without it.
+The cpu round trip is exhaustive: every opcode with a spread of operand values (either side of the $FF / $FFFF
+boundaries cpuasm picks direct page / absolute / long by) must reassemble to the same bytes, which is why cpudisasm
+prints '!' (force absolute) and '>' (force long) where the bare text would be read as another instruction. Opcodes
+$6E and $76, the 6-cycle duplicates of INC/DEC absolute ($6A, $72), are spelled INC.L / DEC.L so that they survive too.
 """
 import glob, os, re, subprocess, sys, tempfile
 
@@ -85,14 +86,21 @@ for cpu, (src, want) in GOLD.items():
     check(assemble(cpu, cpu + '_rt.asm', cpu + '_rt.bin') and open(path(cpu + '_rt.bin'), 'rb').read() == open(path(cpu + '.bin'), 'rb').read(),
           '%s golden: the disassembly reassembles to the same bytes' % cpu)
 
+FORMS = ['LDA !$0005', 'LDA !$0005,X', 'LDA !$0005,Y', 'JMP !($0005)', 'JMP !($0005,X)', 'JMP ![$0005]', 'JMP [$1234]',
+         'JMP $1234', 'JMP >$001234', 'LDA >$000005', 'LDA >$000005,X', 'LDA $05', 'LDA $0105', 'LDA $010000', 'CPX !$0005',
+         'BRA !$0005', 'BEQ >$000005', 'CALL >$000005', 'MVN $01,$02', 'MVP $7E,$7F', 'DIV X,Y', 'DIV $123456,X', 'SHL X', 'SHR Y', 'INC $1234', 'INC.L $1234', 'DEC $1234', 'DEC.L $1234',
+         'INC.L !$0005', 'DEC.L !$0010']
+write('forms.asm', '.org $0200\n' + '\n'.join(FORMS) + '\n')
+check(assemble('cpu', 'forms.asm', 'forms.bin'), 'cpu forms: the snippet assembles')
+rc, out = disasm('cpu', 'forms.bin')
+check(rc == 0 and instr_lines(out) == FORMS,
+      'cpu forms: !/> prefixes, block moves and DIV X,Y are printed as written\n   got  %s' % instr_lines(out))
+
 # ---- round trip over the example sources ----------------------------------------------------------------------
 EXAMPLES = os.path.join(ROOT, 'examples')
-CPU_STANDALONE = ['hardware.asm', 'math_lib.asm', 'simple_test.asm']
 passed = {'cpu': 0, 'apu': 0, 'ppu': 0}
 for cpu in ('cpu', 'apu', 'ppu'):
     for src in sorted(glob.glob(os.path.join(EXAMPLES, cpu, '*.asm'))):
-        if cpu == 'cpu' and os.path.basename(src) not in CPU_STANDALONE:
-            continue
         d, b = os.path.dirname(src), os.path.basename(src)
         if not assemble(cpu, b, path('x.bin'), cwd=d) or os.path.getsize(path('x.bin')) > 8192:
             continue   # some PPU examples no longer assemble (stale), others are huge padded images
@@ -101,9 +109,29 @@ for cpu in ('cpu', 'apu', 'ppu'):
         ok = rc == 0 and assemble(cpu, 'x_rt.asm', 'x_rt.bin') and open(path('x.bin'), 'rb').read() == open(path('x_rt.bin'), 'rb').read()
         check(ok, 'round trip: %s/%s' % (cpu, b))
         passed[cpu] += ok
-check(passed['cpu'] == len(CPU_STANDALONE), 'round trip: all %d standalone cpu examples ran (%d)' % (len(CPU_STANDALONE), passed['cpu']))
+check(passed['cpu'] >= 5, 'round trip: at least 5 cpu examples ran (%d)' % passed['cpu'])
 check(passed['apu'] >= 5, 'round trip: at least 5 apu examples ran (%d)' % passed['apu'])
 check(passed['ppu'] >= 10, 'round trip: at least 10 ppu examples ran (%d)' % passed['ppu'])
+
+# ---- every cpu opcode, round trip -----------------------------------------------------------------------------
+TAILS = [(0x34, 0x12, 0x00, 0x56), (0x05, 0x00, 0x00, 0x00), (0xFF, 0x00, 0x00, 0x00), (0x00, 0x01, 0x00, 0x00),
+         (0xFF, 0xFF, 0x00, 0x00), (0x00, 0x00, 0x01, 0x00), (0xF0, 0x80, 0x00, 0x00), (0xFE, 0xFF, 0x80, 0x00)]
+broken = []
+for op in range(256):
+    for tail in TAILS:
+        data = bytes([op]) + bytes(tail)
+        write('op.bin', data)
+        rc, out = disasm('cpu', 'op.bin')
+        starts = [int(m.group(1), 16) for m in re.finditer(r'^([0-9A-Fa-f]+):', out, re.M)]
+        first, size = instr_lines(out)[0], (starts[1] if len(starts) > 1 else len(data))
+        write('op.asm', first + '\n')
+        if os.path.exists(path('op_rt.bin')):
+            os.remove(path('op_rt.bin'))
+        ok = assemble('cpu', 'op.asm', 'op_rt.bin') and open(path('op_rt.bin'), 'rb').read() == data[:size]
+        if not ok:
+            broken.append('%02X %s (%s)' % (op, first, data[:size].hex()))
+            break
+check(not broken, 'cpu: every opcode reassembles to itself from its own disassembly (%d fail, first: %s)' % (len(broken), broken[:6]))
 
 # ---- opcode coverage -------------------------------------------------------------------------------------------
 BAD = re.compile(r'unknown|illegal|invalid|\?\?\?|\.byte|\.db', re.I)

@@ -819,18 +819,11 @@ void init_instructions(void) {
     INST("INC", AM_ABSOLUTE_X, 0x6B, 3, 3);
     INST("INC", AM_DIRECT_PAGE, 0x6C, 2, 5);
     INST("INC", AM_DP_X, 0x6D, 2, 6);
-    /* 0x6E (cpu_inst_0x6E) is commented "INC long" in cpu_instructions.cpp
-     * but actually calls addrAbsolute() - a plain 2-byte/3-byte-instruction
-     * absolute operand, not a real 24-bit long form (that would need
-     * addrAbsoluteLong()/fetch24()). Its addressing syntax is therefore
-     * identical to 0x6A's (both "INC $1234"), just at a higher fixed cycle
-     * cost (6 vs 3) - functionally a redundant duplicate encoding. Registered
-     * here for documentation/table completeness and so cpudisasm.c's byte
-     * count agrees with this file, but find_instruction() always returns the
-     * first AM_ABSOLUTE match (0x6A), so this entry is unreachable from
-     * plain "INC $1234" source - that's expected, not a bug: there is no
-     * addressing-mode distinction between the two encodings to key off of. */
-    INST("INC", AM_ABSOLUTE, 0x6E, 3, 6);
+    /* 0x6E (cpu_inst_0x6E) is commented "INC long" in cpu_instructions.cpp but calls addrAbsolute(): the same 16-bit
+     * data-bank address operand as 0x6A, 3 bytes, just at a fixed 6 cycles instead of 3 - a redundant duplicate
+     * encoding. It has its own spelling, INC.L, so that it is not shadowed by 0x6A (find_instruction() returns the
+     * first match) and a disassembly reassembles to the same bytes. DEC.L is 0x76 below. */
+    INST("INC.L", AM_ABSOLUTE, 0x6E, 3, 6);
     INST("INX", AM_IMPLIED, 0x6F, 1, 2);
     INST("INY", AM_IMPLIED, 0x70, 1, 2);
 
@@ -839,9 +832,8 @@ void init_instructions(void) {
     INST("DEC", AM_ABSOLUTE_X, 0x73, 3, 3);
     INST("DEC", AM_DIRECT_PAGE, 0x74, 2, 5);
     INST("DEC", AM_DP_X, 0x75, 2, 6);
-    /* 0x76 mirrors 0x6E above ("DEC long" comment, actually addrAbsolute(),
-     * same shadowed-duplicate situation vs 0x72). */
-    INST("DEC", AM_ABSOLUTE, 0x76, 3, 6);
+    /* 0x76 mirrors 0x6E above: DEC.L, the 6-cycle duplicate of DEC absolute (0x72). */
+    INST("DEC.L", AM_ABSOLUTE, 0x76, 3, 6);
     INST("DEX", AM_IMPLIED, 0x77, 1, 2);
     INST("DEY", AM_IMPLIED, 0x78, 1, 2);
 
@@ -1343,6 +1335,27 @@ int assemble_line(char *line) {
             error("DIV expects 'X,Y', 'long,X' or 'long,Y'");
             return -1;
         }
+    } else if (strcmp(token, "MVN") == 0 || strcmp(token, "MVP") == 0) {
+        /* MVN/MVP srcbank,destbank: the opcode, then the two bank bytes in the order written (CPU::opMVN fetches the
+         * source bank first). Block moves are not an operand shape detect_addressing_mode() can produce, so - like
+         * DIV X,Y and SHL/SHR - they are dispatched on the operand text here; they could not be assembled at all. */
+        char *comma2 = strchr(operand, ',');
+        uint32_t srcbank = 0, destbank = 0;
+        int good = 0;
+        if (comma2) {
+            *comma2 = '\0';
+            end = operand + strlen(operand);
+            while (end > operand && isspace((unsigned char)*(end - 1))) *--end = '\0';
+            good = parse_number(skip_whitespace(operand), &srcbank) && parse_number(skip_whitespace(comma2 + 1), &destbank);
+        }
+        if (!good || srcbank > 0xFF || destbank > 0xFF) {
+            error("MVN/MVP expect 'srcbank,destbank' (two byte values)");
+            return -1;
+        }
+        emit_byte(token[2] == 'N' ? 0x67 : 0x68);
+        emit_byte((uint8_t)srcbank);
+        emit_byte((uint8_t)destbank);
+        return 0;
     } else if (strcmp(token, "SHL") == 0 || strcmp(token, "SHR") == 0) {
         /* SHL/SHR X,Y (0x88-0x8B): each mnemonic covers two opcodes - one
          * per register - selected by the bare register name in the operand
@@ -1379,6 +1392,10 @@ int assemble_line(char *line) {
                 case AM_DP_Y:                mode = AM_ABSOLUTE_Y; break;
                 case AM_DP_INDIRECT:         mode = AM_ABSOLUTE_INDIRECT; break;
                 case AM_DP_INDIRECT_X:       mode = AM_ABSOLUTE_INDEXED_INDIRECT; break;
+                case AM_DP_INDIRECT_LONG:
+                    /* JMP ![$0005]: only JMP has the absolute form (a 16-bit pointer); LDA [$10] and the rest stay DP. */
+                    if (find_instruction(token, AM_ABSOLUTE_INDIRECT_LONG)) mode = AM_ABSOLUTE_INDIRECT_LONG;
+                    break;
                 default: break;  /* already absolute/long, or not DP-family */
             }
         }
