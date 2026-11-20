@@ -36,6 +36,8 @@ void print_usage(const char* prog_name) {
     fprintf(stderr, "  -D <macro>     Define preprocessor macro\n");
     fprintf(stderr, "  -D <macro>=<v> Define preprocessor macro with value\n");
     fprintf(stderr, "  -bin           Compile, link, and assemble to binary (.bin)\n");
+    fprintf(stderr, "  --no-hwloop    Never use the hardware LOOP/LPEND counter (the CPU has only one, so an\n");
+    fprintf(stderr, "                 interrupt handler's loop can corrupt the interrupted code's loop)\n");
     fprintf(stderr, "  -h, --help     Show this help message\n\n");
     fprintf(stderr, "Examples:\n");
     fprintf(stderr, "  %s main.c                    # Compile to main.asm\n", prog_name);
@@ -49,9 +51,9 @@ void parse_args(int argc, char** argv, CompilerOptions* opts) {
     opts->input_files = malloc(sizeof(char*) * argc);
     opts->input_count = 0;
     opts->output_file = NULL;
-    opts->include_paths = malloc(sizeof(char*) * 32);
+    opts->include_paths = malloc(sizeof(char*) * argc);   /* at most one per argument */
     opts->include_count = 0;
-    opts->defines = malloc(sizeof(char*) * 32);
+    opts->defines = malloc(sizeof(char*) * argc);
     opts->define_count = 0;
     opts->compile_only = 1;  /* Default: compile to .asm */
     opts->preprocess_only = 0;
@@ -74,6 +76,8 @@ void parse_args(int argc, char** argv, CompilerOptions* opts) {
                 opts->defines[opts->define_count++] = argv[++i];
             } else if (strncmp(argv[i], "-D", 2) == 0) {
                 opts->defines[opts->define_count++] = argv[i] + 2;
+            } else if (strcmp(argv[i], "--no-hwloop") == 0) {
+                codegen_no_hwloop = 1;
             } else if (strcmp(argv[i], "-bin") == 0) {
                 opts->link = 1;
                 opts->compile_only = 0;
@@ -111,6 +115,7 @@ char* preprocess_file(const char* input_file, CompilerOptions* opts) {
     if (opts->preprocess_only) {
         /* Output to stdout */
         PreprocessorContext* pp_ctx = preprocessor_create(input, stdout);
+        preprocessor_set_file(pp_ctx, input_file);
 
         /* Add include paths */
         for (i = 0; i < opts->include_count; i++) {
@@ -160,6 +165,7 @@ char* preprocess_file(const char* input_file, CompilerOptions* opts) {
         }
 
         pp_ctx = preprocessor_create(input, temp);
+        preprocessor_set_file(pp_ctx, input_file);
 
         /* Add include paths */
         for (i = 0; i < opts->include_count; i++) {
@@ -205,8 +211,9 @@ int compile_to_asm(const char* input_file, const char* output_file) {
         return 0;
     }
 
+    compile_error_count = 0;
     printf("Parsing %s...\n", input_file);
-    if (yyparse() != 0) {
+    if (yyparse() != 0 || compile_error_count > 0) {
         fprintf(stderr, "Parse failed\n");
         fclose(yyin);
         return 0;
@@ -232,6 +239,13 @@ int compile_to_asm(const char* input_file, const char* output_file) {
     ast_free(ast_root);
     ast_root = NULL;
 
+    if (compile_error_count > 0) {
+        /* never leave half-compiled assembly behind for the next tool to pick up */
+        remove(output_file);
+        fprintf(stderr, "%d error(s); no output written\n", compile_error_count);
+        return 0;
+    }
+
     return 1;
 }
 
@@ -252,7 +266,7 @@ int main(int argc, char** argv) {
         const char* input_file = opts.input_files[i];
 
         /* Preprocess */
-        printf("Preprocessing %s...\n", input_file);
+        fprintf(opts.preprocess_only ? stderr : stdout, "Preprocessing %s...\n", input_file);
         preprocessed = preprocess_file(input_file, &opts);
         if (!preprocessed) {
             fprintf(stderr, "Preprocessing failed for %s\n", input_file);

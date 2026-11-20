@@ -20,6 +20,65 @@ The DEF88186 C Compiler is a full-featured compiler toolchain that translates a 
 - **Stack Management**: Automatic stack frame allocation and cleanup
 - **Register Optimization**: Efficient use of A, X, Y registers and direct page addressing
 
+## What the compiler accepts today (read this first)
+
+def88186cc is a small compiler for a **subset** of C89, small enough to run on a DOS machine. It makes two promises:
+
+1. **Anything outside the subset is refused.** The compiler prints an error, exits non-zero and writes no output file.
+   It never emits code for a construct it cannot compile correctly. (`zpcc`, the clang-based compiler, covers full C.)
+2. **Anything it accepts behaves as C does.** This is checked by gcc-compared tests in the emulator (see *Testing*).
+
+**Accepted**
+
+- Types: `int`, `short` (16 bit), `long` (32 bit), `char` (8 bit), `signed`/`unsigned` forms, `void`. Pointers exist as values
+  only: you can declare and pass them but not dereference them (see below).
+- Locals with initialisers, nested blocks and shadowing, several declarators per declaration (`int a, b, c;`).
+- All C operators on variables and constants: `+ - * / % & | ^ ~ ! << >>`, comparisons, short-circuit `&& ||`, `?:`, comma,
+  `++`/`--`, and `+= -= *= /= %= &= |= ^=` (not `<<=` / `>>=`).
+- `if`/`else`, `while`, `do`/`while`, `for`, `break`, `continue`, `switch`/`case`/`default`, `goto` and labels, `return`.
+- Functions: definitions, prototypes, `f(void)`, recursion, up to 16 parameters (`int`/`long`/`char` and pointers),
+  `long` and narrow (`char`) arguments and results.
+- Casts, `sizeof`, decimal/octal/hex constants with `u`/`l` suffixes, string literals, character constants `'a'` `'\n'` `'\t'` `'\0'`,
+  `__asm__("...")`.
+- The preprocessor: `#include`, `#define` (object- and function-like), `#undef`, `#if`/`#ifdef`/`#ifndef`/`#elif`/`#else`/
+  `#endif` with full constant expressions and `defined`, `#error`, `#line`, `#pragma` (ignored), `__LINE__`, `__FILE__`, `__STDC__`.
+
+**Refused with an error** (each is a real C89 feature this compiler does not implement)
+
+- `float`, `double` and floating constants (the console has no FPU).
+- Arrays, `&`, `*p`, `p[i]`, and struct/union member access. Memory reached through a pointer goes through the direct page
+  (bank $00) while locals live on the stack (bank $80), so these would silently touch the wrong memory.
+- Global variables, `static`, `extern` data, `const`/`volatile`/`register`, function pointers, bit-fields, K&R function
+  definitions, `...` varargs, `typedef`, working `enum` constants, adjacent string-literal concatenation, `# / ##` in macros,
+  variadic macros.
+- Character constants other than the four above (`'\x41'`, `'\\'`, `'\''` ...).
+
+**Differences from ISO C inside the subset**
+
+- Plain `char` is unsigned. `bool`, `true`, `false` and `_Bool` are keywords, so they cannot be identifiers.
+- `//` comments are accepted. `__DATE__` and `__TIME__` are not defined (output is reproducible).
+- Preprocessor limits, all reported as errors when hit: 30000 bytes per logical line or macro expansion, 64 levels of
+  include/macro nesting, 5000 `#include`s per file, 256 nested `#if`s, 64 macro parameters. A macro call must fit on one
+  logical line. Use a backslash to continue a line.
+- **Hardware loops.** `for (i = 0; i < N; i = i + 1)` with a constant `N` of 1..32767 becomes the CPU's `LOOP`/`LPEND` pair, but only
+  when it is the innermost loop, its body makes no calls, uses no `continue`/`goto`/inline asm and does not touch `i`. The CPU
+  has a single loop counter, so if an interrupt handler written in C contains such a loop and can interrupt another one,
+  build the handler's file with `--no-hwloop`.
+
+**Testing** (all under `tests/`)
+
+| Command | What it checks |
+|---|---|
+| `tests/cc/run.sh dos` | hand-written programs run in the emulator and compared with gcc (`t01`-`t08`: calls, operators, long, loops, narrow types) |
+| `python3 tests/cc/fuzz_ops.py N SEED` | random programs (signed and unsigned arithmetic, control flow, calls) against a reference interpreter |
+| `python3 tests/cc/pp_tests.py` | the preprocessor, including every error path |
+| `python3 tests/cc/reject_tests.py` | everything outside the subset is refused cleanly |
+| `tests/cc/examples_check.sh` | `examples/*.c` compile; `examples/unsupported/*.c` are refused |
+| `tests/c89/check.sh` | the compiler and tools are strict C89 (`gcc -std=c89 -pedantic`) |
+
+The two Python test scripts and the fuzzer also run against an AddressSanitizer/UBSan build (`gcc -fsanitize=address,undefined`);
+see the header of `tests/cc/pp_tests.py`.
+
 ## System Architecture
 
 ```mermaid
@@ -189,7 +248,10 @@ sequenceDiagram
 - **Hardware Optimization**: Automatic `LOOP`/`LPEND` for counted loops, hardware `MUL`/`DIV`
 - **ABI Compliant**: Follows DEF88186 calling conventions for interoperability
 
-## Supported C Subset
+## Supported C Subset (original design notes)
+
+> The section *What the compiler accepts today* above is authoritative. Where this older reference promises more
+> (arrays, pointers, structs, unions, enums, typedefs), those features are currently refused.
 
 ### Data Types
 - `int` - 16-bit signed integer
@@ -553,18 +615,8 @@ LPEND            ; Auto-decrement and branch
 
 ## Limitations
 
-- No floating point arithmetic
-- Type qualifiers (const, volatile) and storage classes (static, extern) are parsed but not enforced in code generation
-- No preprocessor (use cpp separately)
-- No inline assembly
-- No function pointers (yet)
-- No variadic functions (printf-style)
-- Struct initialization partially implemented
-- Pointer arithmetic is basic (no complex expressions)
-- Multi-dimensional array access (`matrix[i][j]`) requires workaround with pointer arithmetic
-- String literals have basic support (not full string table implementation)
-- Typedef'd types documented but not fully integrated into type system
-- Member access in rvalue context has parser regression (being investigated)
+See *What the compiler accepts today* at the top of this file: that section lists exactly what is accepted, what is refused
+with an error, and where the compiler differs from ISO C.
 
 ## Performance Considerations
 

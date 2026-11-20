@@ -407,6 +407,13 @@ typedef struct ASTNode {
     } u;
 } ASTNode;
 
+/* Diagnostics: every error goes through compile_error() so the driver can refuse to emit output after any of them */
+extern int compile_error_count;
+void compile_error(const char* fmt, ...);
+
+/* Pre-order walk; visit() returns nonzero to stop and that value is returned */
+int ast_walk(ASTNode* node, int (*visit)(ASTNode*, void*), void* ctx);
+
 /* AST creation functions */
 ASTNode* ast_create_number(int value);
 ASTNode* ast_create_identifier(const char* name);

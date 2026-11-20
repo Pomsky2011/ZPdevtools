@@ -1,7 +1,18 @@
 #include "ast.h"
 #include <string.h>
 #include "zpstrdup.h"
+#include <stdarg.h>
 #include <stdio.h>
+
+int compile_error_count = 0;
+
+void compile_error(const char* fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+    compile_error_count++;
+}
 
 static ASTNode* ast_create_node(ASTNodeType type) {
     ASTNode* node = (ASTNode*)malloc(sizeof(ASTNode));
@@ -451,6 +462,122 @@ ASTNode* ast_create_union_decl(const char* name, ASTNode** members, int member_c
     node->u.union_decl.members = members;
     node->u.union_decl.member_count = member_count;
     return node;
+}
+
+/* Pre-order walk over a tree.  visit() returns nonzero to stop the walk; that value is returned. */
+int ast_walk(ASTNode* node, int (*visit)(ASTNode*, void*), void* ctx) {
+    int i, r;
+    if (!node) return 0;
+    r = visit(node, ctx);
+    if (r) return r;
+
+#define WALK(child) do { r = ast_walk((child), visit, ctx); if (r) return r; } while (0)
+    switch (node->type) {
+        case AST_BINOP:
+            WALK(node->u.binop.left);
+            WALK(node->u.binop.right);
+            break;
+        case AST_UNOP:
+        case AST_ADDR_OF:
+        case AST_DEREF:
+            WALK(node->u.unop.operand);
+            break;
+        case AST_CALL:
+            for (i = 0; i < node->u.call.arg_count; i++) WALK(node->u.call.args[i]);
+            break;
+        case AST_ASSIGN:
+            WALK(node->u.assign.value);
+            break;
+        case AST_ARRAY_SUBSCRIPT:
+            WALK(node->u.array_subscript.index);
+            break;
+        case AST_ARRAY_ASSIGN:
+            WALK(node->u.array_assign.index);
+            WALK(node->u.array_assign.value);
+            break;
+        case AST_RETURN:
+            WALK(node->u.ret.value);
+            break;
+        case AST_IF:
+            WALK(node->u.if_stmt.condition);
+            WALK(node->u.if_stmt.then_stmt);
+            WALK(node->u.if_stmt.else_stmt);
+            break;
+        case AST_WHILE:
+            WALK(node->u.while_stmt.condition);
+            WALK(node->u.while_stmt.body);
+            break;
+        case AST_DO_WHILE:
+            WALK(node->u.do_while_stmt.condition);
+            WALK(node->u.do_while_stmt.body);
+            break;
+        case AST_FOR:
+            WALK(node->u.for_stmt.init);
+            WALK(node->u.for_stmt.condition);
+            WALK(node->u.for_stmt.increment);
+            WALK(node->u.for_stmt.body);
+            break;
+        case AST_BLOCK:
+            for (i = 0; i < node->u.block.stmt_count; i++) WALK(node->u.block.statements[i]);
+            break;
+        case AST_VAR_DECL:
+            WALK(node->u.var_decl.init_value);
+            break;
+        case AST_VAR_DECL_LIST:
+            for (i = 0; i < node->u.var_decl_list.decl_count; i++) WALK(node->u.var_decl_list.declarations[i]);
+            break;
+        case AST_MEMBER_ACCESS:
+            WALK(node->u.member_access.object);
+            break;
+        case AST_PTR_MEMBER_ACCESS:
+            WALK(node->u.ptr_member_access.pointer);
+            break;
+        case AST_MEMBER_ASSIGN:
+            WALK(node->u.member_assign.object);
+            WALK(node->u.member_assign.value);
+            break;
+        case AST_PTR_MEMBER_ASSIGN:
+            WALK(node->u.ptr_member_assign.pointer);
+            WALK(node->u.ptr_member_assign.value);
+            break;
+        case AST_EXPR_STMT:
+            WALK(node->u.expr_stmt.expr);
+            break;
+        case AST_SIZEOF:
+            WALK(node->u.sizeof_expr.expr);
+            break;
+        case AST_CAST:
+            WALK(node->u.cast.expr);
+            break;
+        case AST_COMMA:
+            for (i = 0; i < node->u.comma.expr_count; i++) WALK(node->u.comma.expressions[i]);
+            break;
+        case AST_TERNARY:
+            WALK(node->u.ternary.condition);
+            WALK(node->u.ternary.then_expr);
+            WALK(node->u.ternary.else_expr);
+            break;
+        case AST_SWITCH:
+            WALK(node->u.switch_stmt.expr);
+            for (i = 0; i < node->u.switch_stmt.case_count; i++) WALK(node->u.switch_stmt.cases[i]);
+            break;
+        case AST_CASE:
+            for (i = 0; i < node->u.case_stmt.stmt_count; i++) WALK(node->u.case_stmt.statements[i]);
+            break;
+        case AST_DEFAULT:
+            for (i = 0; i < node->u.default_stmt.stmt_count; i++) WALK(node->u.default_stmt.statements[i]);
+            break;
+        case AST_INIT_LIST:
+            for (i = 0; i < node->u.init_list.value_count; i++) WALK(node->u.init_list.values[i]);
+            break;
+        case AST_LABEL:
+            WALK(node->u.label_stmt.statement);
+            break;
+        default:
+            break;
+    }
+#undef WALK
+    return 0;
 }
 
 void ast_free(ASTNode* node) {

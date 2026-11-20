@@ -10,7 +10,6 @@ static CodegenContext ctx;
 static void codegen_function(ASTNode* node);
 static void codegen_statement(ASTNode* node);
 static void codegen_expression(ASTNode* node);
-static void codegen_member_address(ASTNode* node);
 static void codegen_member_assign(ASTNode* node);
 static void codegen_ptr_member_assign(ASTNode* node);
 static void codegen_addr_of(ASTNode* node);
@@ -428,6 +427,19 @@ static void codegen_truth(ASTNode* n) {
         emit("    PHA\n    TXA\n    ORA 1,S\n    TAY\n    PLA\n    TYA\n");
 }
 
+/* A holds a value being stored into an 8-bit type: keep the low byte, sign-extending it for signed char (plain char is
+   unsigned here).  Every other 16-bit-or-wider value is already exact. */
+static void emit_narrow(int is_signed) {
+    emit("    AND #$00FF    ; narrow to 8 bits\n");
+    if (is_signed) {
+        int ok = new_label();
+        emit("    CMP #$0080\n");
+        emit("    BCC .L%d\n", ok);
+        emit("    ORA #$FF00\n");
+        emit(".L%d:\n", ok);
+    }
+}
+
 static void load_sym(Symbol* sym) {
     CType t = sym_ctype(sym);
     if (t.words == 2) {
@@ -440,6 +452,8 @@ static void load_sym(Symbol* sym) {
 /* Store A (and X) into sym, converted by the caller to its type; A (and X) still hold the value afterwards. */
 static void store_sym(Symbol* sym) {
     CType t = sym_ctype(sym);
+    if (sym->type == TYPE_CHAR && sym->pointer_level == 0 && !sym->is_array)
+        emit_narrow((sym->modifiers & MOD_SIGNED) != 0);
     emit("    STA %d,S\n", SPO(sym->offset));
     if (t.words == 2) {
         emit("    TXA\n");
@@ -459,7 +473,7 @@ static void codegen_number(ASTNode* node) {
 static void codegen_identifier(ASTNode* node) {
     Symbol* sym = find_symbol(node->u.identifier);
     if (!sym) {
-        fprintf(stderr, "Error: Undefined variable '%s'\n", node->u.identifier);
+        compile_error("Error: Undefined variable '%s'\n", node->u.identifier);
         return;
     }
     load_sym(sym);
@@ -509,14 +523,7 @@ static void codegen_cast(ASTNode* node) {
 
     switch (node->u.cast.target_type) {
         case TYPE_CHAR:
-            emit("    AND #$00FF    ; Cast to char (truncate to 8 bits)\n");
-            if (node->mods & MOD_SIGNED) {          /* signed char: sign-extend bit 7 */
-                ok = new_label();
-                emit("    CMP #$0080\n");
-                emit("    BCC .L%d\n", ok);
-                emit("    ORA #$FF00\n");
-                emit(".L%d:\n", ok);
-            }
+            emit_narrow((node->mods & MOD_SIGNED) != 0);   /* truncate to 8 bits; signed char sign-extends bit 7 */
             break;
 
         case TYPE_BOOL:
@@ -872,7 +879,7 @@ static void codegen_call(ASTNode* node) {
     int regs_used = 0, stack_from, i, base_depth;
 
     if (n > MAX_PARAMS) {
-        fprintf(stderr, "Error: too many arguments in call to '%s'\n", node->u.call.name);
+        compile_error("Error: too many arguments in call to '%s'\n", node->u.call.name);
         n = MAX_PARAMS;
     }
     for (i = 0; i < n; i++) {
@@ -938,295 +945,59 @@ static void codegen_call(ASTNode* node) {
 static void codegen_assign(ASTNode* node) {
     Symbol* sym = find_symbol(node->u.assign.var_name);
     if (!sym) {
-        fprintf(stderr, "Error: Undefined variable '%s'\n", node->u.assign.var_name);
+        compile_error("Error: Undefined variable '%s'\n", node->u.assign.var_name);
         return;
     }
     codegen_expr_to(node->u.assign.value, sym_ctype(sym));
     store_sym(sym);
 }
 
+/* Memory reached through a pointer, an array index or a struct member goes through the direct page, i.e. bank $00
+   (cartridge ROM), while every local lives on the stack in bank $80: the access would silently read or write the
+   wrong memory.  Until that is fixed these constructs are refused rather than compiled into wrong code (zpcc has
+   no such limit). */
+static void unsupported_memory(const char* what) {
+    compile_error("Error: %s is not supported by def88186cc (it cannot address stack/RAM data correctly); use zpcc\n", what);
+}
+
 static void codegen_array_subscript(ASTNode* node) {
-    Symbol* sym = find_symbol(node->u.array_subscript.array_name);
-    if (!sym) {
-        fprintf(stderr, "Error: Undefined array '%s'\n", node->u.array_subscript.array_name);
-        return;
-    }
-
-    if (!sym->is_array) {
-        fprintf(stderr, "Error: '%s' is not an array\n", node->u.array_subscript.array_name);
-        return;
-    }
-
-    /* Calculate address: base + (index * 2) */
-    /* First, evaluate index expression */
-    codegen_expression(node->u.array_subscript.index);
-
-    /* A now contains the index */
-    /* Multiply by 2 (shift left once for 16-bit elements) */
-    emit("    ASL A\n");  /* A = index * 2 */
-
-    /* Add base offset */
-    emit("    CLC\n");
-    emit("    ADC #$%04X\n", SPO(sym->offset));  /* A = base + (index * 2) */
-
-    /* Now A contains the offset from SP */
-    /* Calculate effective address: SP + A */
-    emit("    STA %d,S\n", SPO(SCRATCH0));      /* Save offset */
-    emit("    TSC\n");           /* A = SP */
-    emit("    CLC\n");
-    emit("    ADC %d,S\n", SPO(SCRATCH0));      /* A = SP + offset */
-    emit("    TAX\n");           /* X = effective address */
-
-    /* Load from address in X (using absolute indexed by 0) */
-    /* DEF88186 doesn't have (X) addressing, so we need to use DP */
-    /* Set DP = X, then load from (DP) */
-    emit("    TXA\n");
-    emit("    TCD\n");           /* DP = address */
-    emit("    LDA $00\n");       /* Load from (DP) */
-
-    /* (D is left pointing at the element: arrays and pointers still go through the direct page - see docs) */
+    (void)node;
+    unsupported_memory("array indexing");
 }
 
 static void codegen_array_assign(ASTNode* node) {
-    Symbol* sym = find_symbol(node->u.array_assign.array_name);
-    if (!sym) {
-        fprintf(stderr, "Error: Undefined array '%s'\n", node->u.array_assign.array_name);
-        return;
-    }
-
-    if (!sym->is_array) {
-        fprintf(stderr, "Error: '%s' is not an array\n", node->u.array_assign.array_name);
-        return;
-    }
-
-    /* Generate code for value (result in A) */
-    codegen_expression(node->u.array_assign.value);
-    push_a();  /* Save value on stack */
-
-    /* Calculate address: base + (index * 2) */
-    codegen_expression(node->u.array_assign.index);
-
-    /* A now contains the index */
-    emit("    ASL A\n");  /* A = index * 2 */
-
-    /* Add base offset */
-    emit("    CLC\n");
-    emit("    ADC #$%04X\n", SPO(sym->offset));  /* A = base + (index * 2) */
-
-    /* Now A contains the offset from SP */
-    emit("    TAX\n");           /* X = offset */
-
-    /* Restore value from stack */
-    pop_a();           /* A = value */
-
-    /* Store to SP + X */
-    emit("    STA 0,S,X\n");     /* Store to [SP + X] */
+    (void)node;
+    unsupported_memory("array indexing");
 }
 
 static void codegen_addr_of(ASTNode* node) {
-    /* Calculate address of operand and leave it in A */
-    ASTNode* operand = node->u.unop.operand;
-
-    if (operand->type == AST_IDENTIFIER) {
-        Symbol* sym = find_symbol(operand->u.identifier);
-        if (!sym) {
-            fprintf(stderr, "Error: Undefined variable '%s'\n", operand->u.identifier);
-            return;
-        }
-
-        /* Calculate address: SP + 1 + offset (+ anything pushed) */
-        emit("    TSC\n");           /* A = SP */
-        emit("    CLC\n");
-        emit("    ADC #$%04X\n", SPO(sym->offset));
-        /* A now contains the address */
-    } else if (operand->type == AST_ARRAY_SUBSCRIPT) {
-        /* Address of array element - similar to array subscript code */
-        Symbol* sym = find_symbol(operand->u.array_subscript.array_name);
-        if (!sym) {
-            fprintf(stderr, "Error: Undefined array '%s'\n", operand->u.array_subscript.array_name);
-            return;
-        }
-
-        codegen_expression(operand->u.array_subscript.index);
-        emit("    ASL A\n");  /* A = index * 2 */
-        emit("    CLC\n");
-        emit("    ADC #$%04X\n", SPO(sym->offset));
-        emit("    STA %d,S\n", SPO(SCRATCH0));
-        emit("    TSC\n");
-        emit("    CLC\n");
-        emit("    ADC %d,S\n", SPO(SCRATCH0));  /* A = SP + offset + (index * 2) */
-    } else if (operand->type == AST_DEREF) {
-        /* &(*ptr) = ptr, so just evaluate the pointer */
-        codegen_expression(operand->u.unop.operand);
-    } else if (operand->type == AST_MEMBER_ACCESS) {
-        /* Address of struct member */
-        codegen_member_address(operand);
-    } else {
-        fprintf(stderr, "Error: Cannot take address of this expression\n");
-    }
+    (void)node;
+    unsupported_memory("taking an address (&)");
 }
 
 static void codegen_deref(ASTNode* node) {
-    /* Evaluate pointer expression (result in A = address) */
-    codegen_expression(node->u.unop.operand);
-
-    /* Load value from address in A */
-    emit("    TAX\n");           /* X = address */
-    emit("    TXA\n");
-    emit("    TCD\n");           /* DP = address */
-    emit("    LDA $00\n");       /* Load from (DP) */
-}
-
-static void codegen_member_address(ASTNode* node) {
-    int i;
-    /* Calculate address of struct member */
-    if (node->type == AST_MEMBER_ACCESS) {
-        /* Get base object address */
-        if (node->u.member_access.object->type == AST_IDENTIFIER) {
-            StructDef* sdef;
-            int member_offset;
-            Symbol* sym = find_symbol(node->u.member_access.object->u.identifier);
-            if (!sym || sym->type != TYPE_STRUCT) {
-                fprintf(stderr, "Error: Not a struct variable\n");
-                return;
-            }
-
-            sdef = find_struct(sym->struct_name);
-            if (!sdef) {
-                fprintf(stderr, "Error: Struct type '%s' not found\n", sym->struct_name);
-                return;
-            }
-
-            /* Find member offset */
-            member_offset = -1;
-            for (i = 0; i < sdef->member_count; i++) {
-                if (strcmp(sdef->members[i].name, node->u.member_access.member_name) == 0) {
-                    member_offset = sdef->members[i].offset;
-                    break;
-                }
-            }
-
-            if (member_offset < 0) {
-                fprintf(stderr, "Error: Member '%s' not found in struct\n", node->u.member_access.member_name);
-                return;
-            }
-
-            /* Calculate address: SP + var_offset + member_offset */
-            emit("    TSC\n");
-            emit("    CLC\n");
-            emit("    ADC #$%04X\n", SPO(sym->offset + member_offset));
-        } else {
-            fprintf(stderr, "Error: Complex member access not yet supported\n");
-        }
-    }
+    (void)node;
+    unsupported_memory("pointer dereference");
 }
 
 static void codegen_member_access(ASTNode* node) {
-    /* Get address of member, then load value */
-    codegen_member_address(node);
-    emit("    TAX\n");
-    emit("    TXA\n");
-    emit("    TCD\n");
-    emit("    LDA $00\n");
+    (void)node;
+    unsupported_memory("struct member access");
 }
 
 static void codegen_ptr_member_access(ASTNode* node) {
-    /* ptr->member is equivalent to (*ptr).member */
-    /* First evaluate pointer to get address */
-    codegen_expression(node->u.ptr_member_access.pointer);
-
-    /* A now contains the base address of the struct */
-    /* Need to add member offset */
-
-    /* Get struct type from pointer expression */
-    /* This is simplified - in full implementation would need type tracking */
-    fprintf(stderr, "Warning: Pointer member access not fully implemented\n");
-
-    /* For now, just load from the address (member offset 0) */
-    emit("    TAX\n");
-    emit("    TXA\n");
-    emit("    TCD\n");
-    emit("    LDA $00\n");
+    (void)node;
+    unsupported_memory("struct member access");
 }
 
 static void codegen_member_assign(ASTNode* node) {
-    int i;
-    /* Evaluate the value to assign (result in A) */
-    codegen_expression(node->u.member_assign.value);
-
-    /* Push value onto stack to preserve it */
-    push_a();
-
-    /* Calculate address of member */
-    if (node->u.member_assign.object->type == AST_IDENTIFIER) {
-        StructDef* sdef;
-        int member_offset;
-        Symbol* sym = find_symbol(node->u.member_assign.object->u.identifier);
-        if (!sym || sym->type != TYPE_STRUCT) {
-            fprintf(stderr, "Error: Not a struct variable\n");
-            return;
-        }
-
-        sdef = find_struct(sym->struct_name);
-        if (!sdef) {
-            fprintf(stderr, "Error: Struct type '%s' not found\n", sym->struct_name);
-            return;
-        }
-
-        /* Find member offset */
-        member_offset = -1;
-        for (i = 0; i < sdef->member_count; i++) {
-            if (strcmp(sdef->members[i].name, node->u.member_assign.member_name) == 0) {
-                member_offset = sdef->members[i].offset;
-                break;
-            }
-        }
-
-        if (member_offset < 0) {
-            fprintf(stderr, "Error: Member '%s' not found in struct\n", node->u.member_assign.member_name);
-            return;
-        }
-
-        /* Calculate address: SP + var_offset + member_offset */
-        emit("    TSC\n");
-        emit("    CLC\n");
-        emit("    ADC #$%04X\n", SPO(sym->offset + member_offset));
-
-        /* Store address in X, then use it via direct page */
-        emit("    TAX\n");
-        emit("    TXA\n");
-        emit("    TCD\n");
-
-        /* Pop value and store it */
-        pop_a();
-        emit("    STA $00\n");
-    } else {
-        fprintf(stderr, "Error: Complex member assignment not yet supported\n");
-    }
+    (void)node;
+    unsupported_memory("struct member access");
 }
 
 static void codegen_ptr_member_assign(ASTNode* node) {
-    /* ptr->member = value */
-    /* Evaluate the value to assign (result in A) */
-    codegen_expression(node->u.ptr_member_assign.value);
-
-    /* Push value onto stack to preserve it */
-    push_a();
-
-    /* Evaluate pointer to get base address */
-    codegen_expression(node->u.ptr_member_assign.pointer);
-
-    /* For now, assume member offset is 0 (simplified) */
-    fprintf(stderr, "Warning: Pointer member assignment not fully implemented\n");
-
-    /* Store address in X, then use it via direct page */
-    emit("    TAX\n");
-    emit("    TXA\n");
-    emit("    TCD\n");
-
-    /* Pop value and store it */
-    pop_a();
-    emit("    STA $00\n");
+    (void)node;
+    unsupported_memory("struct member access");
 }
 
 static void codegen_inc_dec(ASTNode* node) {
@@ -1235,7 +1006,7 @@ static void codegen_inc_dec(ASTNode* node) {
     int inc = (node->type == AST_PRE_INC || node->type == AST_POST_INC);
     int post = (node->type == AST_POST_INC || node->type == AST_POST_DEC);
     if (!sym) {
-        fprintf(stderr, "Error: Undefined variable '%s'\n", node->u.inc_dec.var_name);
+        compile_error("Error: Undefined variable '%s'\n", node->u.inc_dec.var_name);
         return;
     }
     t = sym_ctype(sym);
@@ -1326,15 +1097,17 @@ static void codegen_expression(ASTNode* node) {
             codegen_inc_dec(node);
             break;
         default:
-            fprintf(stderr, "Error: Unsupported expression type %d\n", node->type);
+            compile_error("Error: Unsupported expression type %d\n", node->type);
             break;
     }
 }
 
 /* Code generation for statements */
 static void codegen_return(ASTNode* node) {
-    if (node->u.ret.value)
+    if (node->u.ret.value) {
         codegen_expr_to(node->u.ret.value, ctype(ctx.ret_words, ctx.ret_uns));
+        if (ctx.ret_char) emit_narrow(ctx.ret_signed);
+    }
 
     /* Epilogue: pop the frame and anything still pushed (a switch value), keeping A and X */
     emit_drop_bytes(ctx.frame_total + ctx.depth);
@@ -1399,10 +1172,11 @@ static void codegen_while(ASTNode* node) {
 /* Code generation for do-while statements */
 static void codegen_do_while(ASTNode* node) {
     int loop_label = new_label();
+    int cond_label = new_label();
     int done_label = new_label();
 
-    /* Push loop context for break/continue */
-    push_loop(done_label, loop_label);
+    /* break leaves the loop; continue goes to the condition test, not back to the top of the body */
+    push_loop(done_label, cond_label);
 
     emit(".L%d:\n", loop_label);
 
@@ -1410,6 +1184,7 @@ static void codegen_do_while(ASTNode* node) {
     codegen_statement(node->u.do_while_stmt.body);
 
     /* Evaluate condition */
+    emit(".L%d:\n", cond_label);
     codegen_truth(node->u.do_while_stmt.condition);
 
     /* Branch back if true (using BEQ + BRA since DEF88186 has no BNE) */
@@ -1482,6 +1257,41 @@ static int is_simple_counted_loop(ASTNode* init, ASTNode* cond, ASTNode* incr,
     return 1;  /* This is a simple counted loop! */
 }
 
+/* The CPU has ONE hardware loop counter (loopCounter/loopStart), so LOOP/LPEND is only correct for an innermost loop that
+   nothing else can disturb, and only when the loop does exactly what the counter does: N iterations of the body
+   with the variable stepping 0..N-1.  Anything else must use an ordinary compare-and-branch loop. */
+static int hw_loop_unsafe(ASTNode* n, void* ctx) {
+    const char* var = (const char*)ctx;
+    switch (n->type) {
+    case AST_CALL:          /* the callee may use the loop counter itself */
+    case AST_FOR:           /* nested loops share the single counter */
+    case AST_WHILE:
+    case AST_DO_WHILE:
+    case AST_CONTINUE:      /* would skip the increment and LPEND */
+    case AST_GOTO:          /* can leave or enter the loop body */
+    case AST_LABEL:
+    case AST_INLINE_ASM:    /* unknown instructions */
+        return 1;
+    case AST_ASSIGN:        /* the loop variable must only be stepped by the loop itself */
+        return strcmp(n->u.assign.var_name, var) == 0;
+    case AST_PRE_INC:
+    case AST_POST_INC:
+    case AST_PRE_DEC:
+    case AST_POST_DEC:
+        return strcmp(n->u.inc_dec.var_name, var) == 0;
+    default:
+        return 0;
+    }
+}
+
+int codegen_no_hwloop = 0;
+
+static int hw_loop_ok(ASTNode* node, char* loop_var, int loop_count) {
+    if (codegen_no_hwloop) return 0;
+    if (loop_count < 1 || loop_count > 32767) return 0;   /* LOOP #0 runs the body once; a negative count wraps */
+    return !ast_walk(node->u.for_stmt.body, hw_loop_unsafe, loop_var);
+}
+
 static void codegen_for(ASTNode* node) {
     int done_label;
     int loop_label;
@@ -1491,7 +1301,8 @@ static void codegen_for(ASTNode* node) {
 
     /* Try to use hardware LOOP/LPEND for simple counted loops */
     if (is_simple_counted_loop(node->u.for_stmt.init, node->u.for_stmt.condition,
-                                node->u.for_stmt.increment, &loop_var, &loop_count)) {
+                                node->u.for_stmt.increment, &loop_var, &loop_count) &&
+        hw_loop_ok(node, loop_var, loop_count)) {
                                     int done_label;
                                     int loop_start;
 
@@ -1582,6 +1393,11 @@ static void codegen_block(ASTNode* node) {
 
 static void codegen_var_decl(ASTNode* node) {
     Symbol* sym;
+    if (node->u.var_decl.is_array || node->u.var_decl.array_dimensions > 0) {
+        unsupported_memory("array variables");
+        return;
+    }
+
     /* Add variable to symbol table */
     if (node->u.var_decl.array_dimensions > 0) {
         /* Multi-dimensional array */
@@ -1708,7 +1524,7 @@ static void codegen_expr_stmt(ASTNode* node) {
 static void codegen_break(ASTNode* node) {
     LoopContext* loop = current_loop();
     if (!loop) {
-        fprintf(stderr, "Error: break statement outside of loop\n");
+        compile_error("Error: break statement outside of loop\n");
         return;
     }
     if (ctx.depth > loop->break_depth) {       /* leave a switch value etc. behind: the target expects this depth */
@@ -1723,7 +1539,7 @@ static void codegen_continue(ASTNode* node) {
     /* a switch has no continue of its own: use the innermost real loop's */
     for (i = ctx.loop_depth - 1; i >= 0 && ctx.loop_stack[i].continue_label < 0; i--) { }
     if (i < 0) {
-        fprintf(stderr, "Error: continue statement outside of loop\n");
+        compile_error("Error: continue statement outside of loop\n");
         return;
     }
     loop = &ctx.loop_stack[i];
@@ -1802,7 +1618,7 @@ static void codegen_statement(ASTNode* node) {
             emit("    %s\n", node->u.inline_asm.asm_code);
             break;
         default:
-            fprintf(stderr, "Error: Unsupported statement type\n");
+            compile_error("Error: Unsupported statement type\n");
             break;
     }
 }
@@ -1882,6 +1698,8 @@ static void codegen_function(ASTNode* node) {
     rt = type_ctype(node->u.func_decl.return_type, node->u.func_decl.return_modifiers, 0);
     ctx.ret_words = rt.words;
     ctx.ret_uns = rt.uns;
+    ctx.ret_char = (node->u.func_decl.return_type == TYPE_CHAR);
+    ctx.ret_signed = ((node->u.func_decl.return_modifiers & MOD_SIGNED) != 0);
 
     emit("\n; Function: %s\n", node->u.func_decl.func_name);
     emit("%s:\n", node->u.func_decl.func_name);
@@ -1889,7 +1707,10 @@ static void codegen_function(ASTNode* node) {
     /* Set to 16-bit mode */
     emit("    REP #$30        ; 16-bit A, X, Y\n");
 
-    if (nparams > MAX_PARAMS) nparams = MAX_PARAMS;
+    if (nparams > MAX_PARAMS) {
+        compile_error("Error: function '%s' has more than %d parameters\n", node->u.func_decl.func_name, MAX_PARAMS);
+        nparams = MAX_PARAMS;
+    }
 
     /* where each parameter arrives: register words (A, X, Y) first, a 32-bit one taking two; once one does not
      * fit, it and everything after it is on the stack */
@@ -1932,6 +1753,17 @@ static void codegen_function(ASTNode* node) {
         } else {
             sym->offset = ctx.frame_total + 2 + stack_words * 2;    /* above the 2-byte return address */
             stack_words += param_words(param);
+        }
+    }
+
+    /* an 8-bit parameter arrives as whatever word the caller pushed (or an assembly caller left): make it exact */
+    for (i = 0; i < nparams; i++) {
+        ASTNode* param = node->u.func_decl.params[i];
+        if (param->u.param.param_type == TYPE_CHAR && param->u.param.pointer_level == 0) {
+            Symbol* sym = &ctx.symbols[ctx.symbol_count - nparams + i];
+            emit("    LDA %d,S\n", SPO(sym->offset));
+            emit_narrow((param->u.param.modifiers & MOD_SIGNED) != 0);
+            emit("    STA %d,S\n", SPO(sym->offset));
         }
     }
 

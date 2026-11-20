@@ -385,6 +385,11 @@ function_declaration:
         $$->u.func_decl.return_modifiers = TS_MODS($1);
         free($2);
     }
+    | type_specifier IDENTIFIER '(' VOID ')' compound_statement {
+        $$ = ast_create_func_decl(TS_TYPE($1), $2, NULL, 0, $6);
+        $$->u.func_decl.return_modifiers = TS_MODS($1);
+        free($2);
+    }
     | type_specifier IDENTIFIER '(' parameter_list ')' compound_statement {
         $$ = ast_create_func_decl(TS_TYPE($1), $2, $4.items, $4.count, $6);
         $$->u.func_decl.return_modifiers = TS_MODS($1);
@@ -396,12 +401,22 @@ function_declaration:
         $$->u.func_decl.return_modifiers = TS_MODS($1);
         free($2);
     }
+    | type_specifier IDENTIFIER '(' VOID ')' ';' {
+        $$ = ast_create_func_decl(TS_TYPE($1), $2, NULL, 0, NULL);
+        $$->u.func_decl.return_modifiers = TS_MODS($1);
+        free($2);
+    }
     | type_specifier IDENTIFIER '(' parameter_list ')' ';' {
         $$ = ast_create_func_decl(TS_TYPE($1), $2, $4.items, $4.count, NULL);
         $$->u.func_decl.return_modifiers = TS_MODS($1);
         free($2);
     }
     | EXTERN type_specifier IDENTIFIER '(' ')' ';' {
+        $$ = ast_create_func_decl(TS_TYPE($2), $3, NULL, 0, NULL);
+        $$->u.func_decl.return_modifiers = TS_MODS($2);
+        free($3);
+    }
+    | EXTERN type_specifier IDENTIFIER '(' VOID ')' ';' {
         $$ = ast_create_func_decl(TS_TYPE($2), $3, NULL, 0, NULL);
         $$->u.func_decl.return_modifiers = TS_MODS($2);
         free($3);
@@ -886,5 +901,5 @@ primary_expression:
 %%
 
 void yyerror(const char* s) {
-    fprintf(stderr, "Parse error at line %d, column %d: %s\n", line_num, col_num, s);
+    compile_error("Parse error at line %d, column %d: %s\n", line_num, col_num, s);
 }

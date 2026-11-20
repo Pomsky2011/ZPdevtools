@@ -4,9 +4,30 @@
 #include "zpstrdup.h"
 #include "ast.h"
 #include "parser.tab.h"
+#include <errno.h>
+#include <stdlib.h>
 
 int line_num = 1;
 int col_num = 1;
+
+/* the value of an integer constant; anything that does not fit 32 bits is an error, not a silent wrap */
+static int lex_int(const char* text, int base)
+{
+    unsigned long v;
+    errno = 0;
+    v = strtoul(text, NULL, base);
+    if (errno == ERANGE || v > 0xFFFFFFFFUL) {
+        compile_error("Error at line %d, col %d: integer constant '%s' is too large\n", line_num, col_num, text);
+        return 0;
+    }
+    return (int)v;
+}
+
+static void lex_no_float(const char* what, const char* text)
+{
+    compile_error("Error at line %d, col %d: %s '%s' is not supported (the console has no FPU)\n",
+                  line_num, col_num, what, text);
+}
 %}
 
 %option noyywrap
@@ -59,13 +80,19 @@ int col_num = 1;
 "case"              { col_num += yyleng; return CASE; }
 "default"           { col_num += yyleng; return DEFAULT; }
 "goto"              { col_num += yyleng; return GOTO; }
+"float"|"double"   { col_num += yyleng; lex_no_float("floating-point type", yytext); return INT; }
 "sizeof"            { col_num += yyleng; return SIZEOF; }
 "__asm__"           { col_num += yyleng; return ASM; }
 "asm"               { col_num += yyleng; return ASM; }
 
 [a-zA-Z_][a-zA-Z0-9_]* { col_num += yyleng; yylval.string = zp_strdup(yytext); return IDENTIFIER; }
-[0-9]+[uUlL]*              { col_num += yyleng; yylval.number = (int)strtoul(yytext, NULL, 10); return NUMBER; }
-"0x"[0-9a-fA-F]+[uUlL]*    { col_num += yyleng; yylval.number = (int)strtoul(yytext, NULL, 16); return NUMBER; }
+0[0-7]*[uUlL]*             { col_num += yyleng; yylval.number = lex_int(yytext, 8); return NUMBER; }
+0[0-9]+[uUlL]*             { col_num += yyleng; compile_error("Error at line %d, col %d: invalid octal constant '%s'\n", line_num, col_num, yytext); yylval.number = 0; return NUMBER; }
+[1-9][0-9]*[uUlL]*         { col_num += yyleng; yylval.number = lex_int(yytext, 10); return NUMBER; }
+0[xX][0-9a-fA-F]+[uUlL]*   { col_num += yyleng; yylval.number = lex_int(yytext + 2, 16); return NUMBER; }
+[0-9]+"."[0-9]*([eE][+-]?[0-9]+)?[fFlL]?   { col_num += yyleng; lex_no_float("floating-point constant", yytext); yylval.number = 0; return NUMBER; }
+"."[0-9]+([eE][+-]?[0-9]+)?[fFlL]?         { col_num += yyleng; lex_no_float("floating-point constant", yytext); yylval.number = 0; return NUMBER; }
+[0-9]+[eE][+-]?[0-9]+[fFlL]?               { col_num += yyleng; lex_no_float("floating-point constant", yytext); yylval.number = 0; return NUMBER; }
 \"([^"\\]|\\.)*\"   { col_num += yyleng; yylval.string = zp_strdup(yytext); return STRING_LITERAL; }
 '.'                 { col_num += yyleng; yylval.number = yytext[1]; return CHAR_LITERAL; }
 '\\n'               { col_num += yyleng; yylval.number = '\n'; return CHAR_LITERAL; }
@@ -117,6 +144,6 @@ int col_num = 1;
 "?"                 { col_num++; return '?'; }
 ":"                 { col_num++; return ':'; }
 
-.                   { fprintf(stderr, "Error at line %d, col %d: Unexpected character '%s'\n", line_num, col_num, yytext); col_num++; }
+.                   { compile_error("Error at line %d, col %d: Unexpected character '%s'\n", line_num, col_num, yytext); col_num++; }
 
 %%

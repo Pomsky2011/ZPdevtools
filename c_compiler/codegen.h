@@ -65,9 +65,12 @@ typedef struct {
     int frame_total;      /* bytes between S+1 and the return address */
     int ret_words;        /* return type of the function being generated */
     int ret_uns;
+    int ret_char;         /* the function returns a char: values are narrowed to 8 bits on the way out */
+    int ret_signed;       /* ... and sign-extended (signed char) rather than zero-extended */
 } CodegenContext;
 
 /* Code generation functions */
+extern int codegen_no_hwloop;   /* set by --no-hwloop: counted loops always use compare-and-branch */
 void codegen_program(ASTNode* node, FILE* output);
 
 #endif
