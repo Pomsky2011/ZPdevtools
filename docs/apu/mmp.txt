@@ -217,10 +217,10 @@ with fewer, the mixer outputs silence, holds its position and sets UNDERRUN.
 
 **Rate.** PITCH sets the stream's sample rate: rate = PITCH/4096 * 48000 Hz
 ($0460 = 13125 Hz exactly). Consumption is rate * 2 bytes/s, so a DMA of one
-256-frame page every few ms keeps it fed; `examples/stream-player/player.asm`
-(ZeroPoint repo) is a complete CPU-side feeder, `tools/build_stream_rom.py` turns
+256-frame page every few ms keeps it fed; `ZeroPoint/examples/stream-player/player.asm`
+is a complete CPU-side feeder, `ZeroPoint/tools/build_stream_rom.py` turns
 a WAV into a ROM (`--sign` makes a v3-signed one for the real boot ROM), and
-`bin/test_stream` / `tools/test_stream_rom.py` test it.
+`ZeroPoint/bin/test_stream` / `ZeroPoint/tools/test_stream_rom.py` test it.
 
 **Signed (v3) cartridges.** The audio is the data region, so each 16 KB chunk
 reads as DC poison (`DE`/`AF` bytes) until the Boot ROM has verified it with

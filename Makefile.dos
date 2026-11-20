@@ -19,7 +19,7 @@ COMPILER=TCC
 # Turbo C 2.0 settings
 !if "$(COMPILER)" == "TCC"
 CC=tcc
-CFLAGS=-mc -O -w -DMSDOS -I.
+CFLAGS=-mc -O -w -DMSDOS -Isrc -Ic_compiler
 LDFLAGS=-mc
 MODEL=compact
 !endif
@@ -27,7 +27,7 @@ MODEL=compact
 # Microsoft C 6.0 settings
 !if "$(COMPILER)" == "MSC"
 CC=cl
-CFLAGS=/AC /Ox /W3 /DMSDOS /I.
+CFLAGS=/AC /Ox /W3 /DMSDOS /Isrc /Ic_compiler
 LDFLAGS=/AC
 MODEL=compact
 !endif
@@ -48,46 +48,46 @@ COMPILER_OBJS=c_compiler\main.obj c_compiler\lexer.obj c_compiler\parser.tab.obj
 all: $(TOOLS) def88186cc.exe
 
 # Simple assemblers (small/compact model OK)
-cpuasm.exe: cpuasm.c compat.h
-	$(CC) $(CFLAGS) cpuasm.c -o$(OUTDIR)\cpuasm.exe
+cpuasm.exe: src\cpuasm.c src\compat.h
+	$(CC) $(CFLAGS) src\cpuasm.c -o$(OUTDIR)\cpuasm.exe
 
-apuasm.exe: apuasm.c compat.h
-	$(CC) $(CFLAGS) apuasm.c -o$(OUTDIR)\apuasm.exe
+apuasm.exe: src\apuasm.c src\compat.h
+	$(CC) $(CFLAGS) src\apuasm.c -o$(OUTDIR)\apuasm.exe
 
-ppuasm.exe: ppuasm.c compat.h
-	$(CC) $(CFLAGS) ppuasm.c -o$(OUTDIR)\ppuasm.exe
+ppuasm.exe: src\ppuasm.c src\compat.h
+	$(CC) $(CFLAGS) src\ppuasm.c -o$(OUTDIR)\ppuasm.exe
 
 # ROM builder
-rombuilder.exe: rombuilder.c compat.h
-	$(CC) $(CFLAGS) rombuilder.c -o$(OUTDIR)\rombuilder.exe
+rombuilder.exe: src\rombuilder.c src\compat.h
+	$(CC) $(CFLAGS) src\rombuilder.c -o$(OUTDIR)\rombuilder.exe
 
 # Locating linker (emits ELF; no signing key)
-zplink.exe: zplink.c compat.h
-	$(CC) $(CFLAGS) zplink.c -o$(OUTDIR)\zplink.exe
+zplink.exe: src\zplink.c src\compat.h
+	$(CC) $(CFLAGS) src\zplink.c -o$(OUTDIR)\zplink.exe
 
 # ROM signer (ELF -> signed .zpb). RSA math uses only 32-bit intermediates.
-zpbuild.exe: zpbuild.c compat.h zpsha256.h zprsa.h zpkey.h
-	$(CC) $(CFLAGS) zpbuild.c -o$(OUTDIR)\zpbuild.exe
+zpbuild.exe: src\zpbuild.c src\compat.h src\zpsha256.h src\zpblake2s.h src\zprsa.h src\zpkey.h
+	$(CC) $(CFLAGS) src\zpbuild.c -o$(OUTDIR)\zpbuild.exe
 
 # Disassemblers
-cpudisasm.exe: cpudisasm.c compat.h
-	$(CC) $(CFLAGS) cpudisasm.c -o$(OUTDIR)\cpudisasm.exe
+cpudisasm.exe: src\cpudisasm.c src\compat.h
+	$(CC) $(CFLAGS) src\cpudisasm.c -o$(OUTDIR)\cpudisasm.exe
 
-apudisasm.exe: apudisasm.c compat.h
-	$(CC) $(CFLAGS) apudisasm.c -o$(OUTDIR)\apudisasm.exe
+apudisasm.exe: src\apudisasm.c src\compat.h
+	$(CC) $(CFLAGS) src\apudisasm.c -o$(OUTDIR)\apudisasm.exe
 
-ppudisasm.exe: ppudisasm.c compat.h
-	$(CC) $(CFLAGS) ppudisasm.c -o$(OUTDIR)\ppudisasm.exe
+ppudisasm.exe: src\ppudisasm.c src\compat.h
+	$(CC) $(CFLAGS) src\ppudisasm.c -o$(OUTDIR)\ppudisasm.exe
 
 # Utilities
-hexview.exe: hexview.c compat.h
-	$(CC) $(CFLAGS) hexview.c -o$(OUTDIR)\hexview.exe
+hexview.exe: src\hexview.c src\compat.h
+	$(CC) $(CFLAGS) src\hexview.c -o$(OUTDIR)\hexview.exe
 
-rominspect.exe: rominspect.c compat.h zpsha256.h
-	$(CC) $(CFLAGS) rominspect.c -o$(OUTDIR)\rominspect.exe
+rominspect.exe: src\rominspect.c src\compat.h src\zpsha256.h
+	$(CC) $(CFLAGS) src\rominspect.c -o$(OUTDIR)\rominspect.exe
 
-wav2mmp.exe: wav2mmp.c compat.h
-	$(CC) $(CFLAGS) wav2mmp.c -o$(OUTDIR)\wav2mmp.exe
+wav2mmp.exe: src\wav2mmp.c src\compat.h
+	$(CC) $(CFLAGS) src\wav2mmp.c -o$(OUTDIR)\wav2mmp.exe
 
 # C Compiler (requires large model for complex programs)
 def88186cc.exe: $(COMPILER_OBJS)

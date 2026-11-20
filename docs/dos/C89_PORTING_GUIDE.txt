@@ -197,7 +197,7 @@ To verify DOS compatibility:
 3. Test each tool:
    cpuasm test.asm test.bin
    apuasm test.asm test.bin
-   ppuasm test.asm test.bin
+   ppuasm test.asm -o test.bin
 4. Check memory usage:
    mem /c
 5. Test with large files (if available)

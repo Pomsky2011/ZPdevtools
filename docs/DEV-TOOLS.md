@@ -27,6 +27,8 @@ Complete reference for all ZeroPoint development utilities.
 5. [C Compiler](#c-compiler)
    - [DEF88186 C Compiler (def88186cc)](#def88186-c-compiler-def88186cc)
 
+6. [Linking and signing (zplink, zpbuild)](#linking-and-signing)
+
 ---
 
 ## Assemblers
@@ -96,7 +98,7 @@ start:
 ```
 
 ```bash
-ppuasm draw_pixel.asm draw_pixel.bin
+ppuasm draw_pixel.asm -o draw_pixel.bin
 ```
 
 **See Also:**
@@ -278,16 +280,15 @@ rombuilder -cpu <file> -ppu <file> -apu <file> -o <output.zpb> [options]
 - `-ppu <file>` - PPU binary file
 - `-apu <file>` - APU binary file
 - `-o <file>` - Output ROM file (.zpb)
-- `-entry <addr>` - CPU entry point (hex, default: 0x8000)
-- `-title "Title"` - ROM title (max 64 chars)
-- `-dev "Developer"` - Developer name (max 64 chars)
+- `-cpu-base <addr>` / `-ppu-base <addr>` / `-apu-base <addr>` - Segment base addresses (defaults 0x008000 / 0x100000 / 0x200000)
+- `-entry <addr>` - CPU entry point (hex, default: the CPU base)
 - `-v` - Verbose output
 
 **Example:**
 ```bash
 # Build complete ROM
 rombuilder -cpu main.bin -ppu graphics.bin -apu audio.bin \
-           -o game.zpb -title "My Game" -dev "Studio X" -entry 0x8000
+           -o game.zpb -entry 0x8000
 
 # Minimal ROM
 rombuilder -cpu program.bin -ppu empty.bin -apu empty.bin -o test.zpb
@@ -448,35 +449,28 @@ wav2mmp sound.wav sound.inc
 
 ### DEF88186 C Compiler (def88186cc)
 
-Full C89-compliant compiler for DEF88186 CPU.
+Compiler for a **subset** of C89, small enough to run on DOS. Anything outside the subset is refused
+(error, non-zero exit, no output); what it accepts behaves as C does. `c_compiler/README.md`, section
+"What the compiler accepts today", is the authoritative list. For full C on a modern host use `zpcc`
+(`llvm_compiler/README.md`), which lowers clang's LLVM IR to DEF88186 assembly.
 
 **Usage:**
 ```bash
-def88186cc <input.c> [-o output.asm] [options]
+def88186cc [options] <input.c> [<input2.c> ...]
 ```
 
 **Options:**
-- `-o <file>` - Output assembly file
-- `-I <path>` - Add include directory
-- `-D MACRO[=value]` - Define preprocessor macro
-- `-E` - Preprocessor only (no compilation)
-- `-bin` - Full pipeline: compile → assemble → link
-
-**Features:**
-- Full C89/ANSI C support
-- Preprocessor (`#include`, `#define`, `#ifdef`, etc.)
-- Inline assembly (`__asm__("instruction")`)
-- Structs, unions, enums, typedef
-- All operators (arithmetic, logical, bitwise, ternary, sizeof)
-- Control flow (if/else, while, for, do-while, switch/case, break, continue)
-- Functions with recursion
-- Hardware optimizations (MUL/DIV, LOOP/LPEND)
+- `-o <file>` - Output file name
+- `-c` / `-S` - Compile to assembly only (default)
+- `-E` - Preprocess only, output to stdout
+- `-I <path>` - Add include search path
+- `-D <macro>[=value]` - Define preprocessor macro
+- `-bin` - Compile, link and assemble to a binary
+- `--no-hwloop` - Never use the hardware `LOOP`/`LPEND` counter
 
 **Example:**
 ```c
-// program.c
-#include <stdint.h>
-
+/* program.c */
 int factorial(int n) {
     if (n <= 1) return 1;
     return n * factorial(n - 1);
@@ -484,24 +478,30 @@ int factorial(int n) {
 
 int main() {
     int result = factorial(5);
-    __asm__("STA $8000");  // Store result
+    __asm__("STA $8000");  /* store result */
     return 0;
 }
 ```
 
 ```bash
-# Compile to assembly
+# Compile to assembly, then assemble
 def88186cc program.c -o program.asm
-
-# Full build
-def88186cc program.c -bin
-# Creates: program.asm, program.bin
+cpuasm program.asm program.bin
 ```
 
 **See Also:**
-- `c_compiler/README.md` - Complete compiler documentation
-- `c_compiler/examples/` - 16+ example programs
+- `c_compiler/README.md` - What is accepted and refused, how memory works, testing
+- `c_compiler/examples/` - Example programs (`examples/unsupported/` must be refused)
 - `ASM_MULTIFILE_GUIDE.md` - Multi-file projects
+- `SDK.md` - C SDK headers, runtime library and the linker flow
+
+---
+
+## Linking and Signing
+
+`zplink` locates flat CPU/PPU/APU segments into an ELF32 executable and `zpbuild` signs that ELF into a
+`.zpb` ROM. This is the current build path; `rombuilder` above is the older, unsigned one. See
+`LINKER.md` for both tools and `examples/link/` for a working end-to-end build.
 
 ---
 
@@ -517,12 +517,14 @@ make
 make assemblers      # Build ppuasm, apuasm, cpuasm
 make disassemblers   # Build cpudisasm, ppudisasm, apudisasm
 make rom-tools       # Build rombuilder, rominspect
+make linkers         # Build zplink
+make examples        # Assemble examples/ppu/*.asm to .bin
 make utilities       # Build hexview, wav2mmp
 ```
 
 ### Install System-Wide
 ```bash
-sudo make install
+make install        # copies the tools to /usr/local/bin (needs write access there)
 ```
 
 ### Clean Build Files
@@ -544,7 +546,7 @@ cpuasm build/main.asm build/cpu.bin
 
 2. **Write PPU microcode:**
 ```bash
-ppuasm src/graphics.asm build/ppu.bin
+ppuasm src/graphics.asm -o build/ppu.bin
 ```
 
 3. **Write APU audio:**
@@ -556,7 +558,7 @@ apuasm src/audio.asm build/apu.bin
 4. **Build ROM:**
 ```bash
 rombuilder -cpu build/cpu.bin -ppu build/ppu.bin -apu build/apu.bin \
-           -o game.zpb -title "My Game" -dev "Your Name"
+           -o game.zpb
 ```
 
 5. **Inspect and verify:**
@@ -598,7 +600,6 @@ rominspect game.zpb -x
 ### ROM Building Tips
 
 - Always verify checksums with `rominspect -c`
-- Use descriptive titles and developer names
 - Set correct entry point for your program
 - Extract components with `-x` to verify contents
 
@@ -621,14 +622,14 @@ def88186cc src/main.c -o build/main.asm
 cpuasm build/main.asm build/cpu.bin
 
 # Build PPU
-ppuasm src/graphics.asm build/ppu.bin
+ppuasm src/graphics.asm -o build/ppu.bin
 
 # Build APU
 apuasm src/audio.asm build/apu.bin
 
 # Build ROM
 rombuilder -cpu build/cpu.bin -ppu build/ppu.bin -apu build/apu.bin \
-           -o game.zpb -title "My Game" -dev "Studio"
+           -o game.zpb
 
 # Verify
 rominspect game.zpb -c

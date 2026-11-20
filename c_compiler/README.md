@@ -4,21 +4,19 @@
 ![Flex](https://img.shields.io/badge/Flex-Lexer-blue?style=for-the-badge)
 ![Bison](https://img.shields.io/badge/Bison-Parser-orange?style=for-the-badge)
 ![Assembly](https://img.shields.io/badge/Assembly-DEF88186-red?style=for-the-badge)
-![Status](https://img.shields.io/badge/Status-Production-success?style=for-the-badge)
 
-A complete C-to-assembly compiler targeting the DEF88186 hybrid CPU architecture for the ZeroPoint Fantasy Console. This compiler bridges high-level C programming with the low-level 65C816/8086-inspired instruction set, enabling efficient game development and system programming.
+A compiler for a subset of C89 that targets the DEF88186 hybrid CPU of the ZeroPoint Fantasy Console, small enough to run on a DOS machine. It refuses anything it cannot compile correctly; use `zpcc` (`../llvm_compiler/`) for full C.
 
 ## Overview
 
-The DEF88186 C Compiler is a full-featured compiler toolchain that translates a practical subset of C into native DEF88186 assembly language. Built with industry-standard tools (Flex & Bison), it provides a robust compilation pipeline with lexical analysis, syntax parsing, Abstract Syntax Tree (AST) construction, and optimized code generation targeting the 16-bit DEF88186 CPU.
+The compiler translates the subset described below into DEF88186 assembly. It is built with Flex and Bison: lexical analysis, parsing, an Abstract Syntax Tree, then code generation.
 
 ### Key Highlights
 
 - **Full Compiler Pipeline**: Lexer → Parser → AST → Code Generator → Assembly Output
 - **Hardware-Aware**: Leverages DEF88186's hardware multiply/divide instructions for performance
-- **ABI Compliant**: Follows standard DEF88186 calling conventions for interoperability
+- **ABI Compliant**: Follows the DEF88186 calling conventions that `zpcc` shares
 - **Stack Management**: Automatic stack frame allocation and cleanup
-- **Register Optimization**: Efficient use of A, X, Y registers and direct page addressing
 
 ## What the compiler accepts today (read this first)
 
@@ -246,228 +244,6 @@ sequenceDiagram
     end
 ```
 
-## Features
-
-- **Complete C89 Compiler**: Compiles C89-compliant subset to DEF88186 assembly
-- **Data Types**: `int` (16-bit), `char` (8-bit), `void`, `short`, `long`, `struct`, `union`, `enum`, `typedef`, arrays, pointers
-- **Type Modifiers**: `unsigned`, `signed` (parsed, basic support)
-- **Type Qualifiers**: `const`, `volatile` (parsed, documentation only)
-- **Storage Classes**: `static`, `extern` (parsed, documentation only)
-- **Functions**: Parameters, return values, recursion, calling conventions
-- **Variables**: Local, global, function parameters with proper scoping
-- **Control Flow**: `if/else`, `while`, `do-while`, `for`, `switch/case`, `break`, `continue`, `return`, `goto`/labels
-- **Operators**: Arithmetic, logical, bitwise, comparison, compound assignments, increment/decrement, ternary (`?:`), comma, cast, `sizeof`
-- **Pointers**: Address-of (`&`), dereference (`*`), multi-level pointers
-- **Structs**: Member access (`.`), pointer access (`->`), member assignment
-- **Arrays**: Fixed-size arrays with subscript access, assignment, and initialization lists
-- **Enums**: Named integer constants with auto-incrementing or explicit values
-- **Typedef**: Type aliases for basic types, pointers, and arrays
-- **Hardware Optimization**: Automatic `LOOP`/`LPEND` for counted loops, hardware `MUL`/`DIV`
-- **ABI Compliant**: Follows DEF88186 calling conventions for interoperability
-
-## Supported C Subset (original design notes)
-
-> The section *What the compiler accepts today* above is authoritative. Where this older reference promises more
-> (arrays, pointers, structs, unions, enums, typedefs), those features are currently refused.
-
-### Data Types
-- `int` - 16-bit signed integer
-- `char` - 8-bit signed character
-- **`bool`** / `_Bool` - 8-bit boolean; the literals `true` and `false` lex as
-  `1` and `0`. Casting to `bool` normalizes any non-zero value to `1`. (A
-  compiler extension in the spirit of early-1990s C, ahead of the C99 standard.)
-- `void` - no return value
-- **`short`** - 16-bit integer (same as int)
-- **`long`** - 16-bit integer (32-bit support planned)
-- **`unsigned`** - Unsigned type modifier
-- **`signed`** - Signed type modifier (default)
-- `struct` - Structured data types with member access
-- **`union`** - Overlapping data types (all members share same memory)
-- **`enum`** - Named integer constants with auto-incrementing or explicit values
-- **`typedef`** - Type aliases for creating custom type names
-- **Arrays** - Fixed-size single and multi-dimensional arrays (e.g., `int arr[10]`, `int matrix[3][4]`)
-- Pointers - Single and multi-level pointers with dereference
-
-### Operators
-- Arithmetic: `+`, `-`, `*`, `/`, `%`
-- Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`
-- Logical: `&&`, `||`, `!`
-- Bitwise: `&`, `|`, `^`, `~`, `<<`, `>>`
-- Assignment: `=`
-- Compound Assignment: `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`
-- Increment/Decrement: `++`, `--` (prefix and postfix)
-- Pointer: `&` (address-of), `*` (dereference)
-- Member Access: `.` (struct), `->` (pointer to struct)
-- **Ternary**: `?:` (conditional operator)
-- **Comma**: `,` (expression sequencing)
-- **Cast**: `(type)expr` - Type conversion
-- **sizeof**: `sizeof(type)` or `sizeof(expr)` - Returns size in bytes
-
-### Control Flow
-- `if (expr) stmt`
-- `if (expr) stmt else stmt`
-- `while (expr) stmt`
-- **`do stmt while (expr);`** - Post-test loop
-- `for (init; cond; incr) stmt`
-- **`switch (expr) { case val: ... break; default: ... }`** - Multi-way branch
-- `break` - Exit loop or switch early
-- `continue` - Skip to next iteration
-- **`goto label;`** - Unconditional jump
-- **`label: stmt`** - Label declaration
-- `return expr;`
-
-### Functions
-```c
-int add(int a, int b) {
-    return a + b;
-}
-```
-
-### Variables
-- Local variables
-- Function parameters
-- Global variables (basic support)
-- **Arrays**: Fixed-size local arrays with subscript access
-
-### Arrays
-```c
-int main() {
-    int arr[10];      // Declare 1D array
-    arr[0] = 42;      // Write to array
-    arr[5] = arr[0];  // Read from array
-
-    // Array initialization
-    int numbers[5] = {10, 20, 30, 40, 50};
-    char name[4] = {'J', 'o', 'h', 'n'};
-
-    // Multi-dimensional arrays
-    int matrix[3][4];  // 2D array: 3 rows, 4 columns
-    int cube[2][3][4]; // 3D array: 2x3x4 = 24 elements
-
-    return arr[5];
-}
-```
-
-**Array Features:**
-- **Declaration**: `type identifier[size];` or `type identifier[size1][size2]...;`
-- **Initialization**: `int arr[3] = {1, 2, 3};` - Initialize with values
-- Subscript access: `arr[index]`
-- Assignment: `arr[index] = value;`
-- **Multi-dimensional**: Up to N dimensions with proper memory allocation
-- Stack-allocated (local arrays only)
-- Supports variable indexing
-- **Note**: Multi-dimensional subscripting (`matrix[i][j]`) requires pointer arithmetic workaround
-
-### Pointers
-```c
-int main() {
-    int x = 42;
-    int *ptr = &x;    // Get address of x
-    int y = *ptr;     // Dereference pointer
-    *ptr = 100;       // Modify through pointer
-    return y;
-}
-```
-
-**Pointer Features:**
-- Address-of operator: `&variable`
-- Dereference operator: `*pointer`
-- Multi-level pointers: `int **ptr`
-- Pointer arithmetic: Basic support
-- Pointer parameters and return values
-
-### Structs
-```c
-struct Point {
-    int x;
-    int y;
-};
-
-int main() {
-    struct Point p;
-    p.x = 10;         // Member assignment
-    p.y = 20;
-
-    struct Point *ptr = &p;
-    ptr->x = 30;      // Pointer member access
-
-    return p.x + p.y;
-}
-```
-
-**Struct Features:**
-- Member access: `struct.member`
-- Pointer member access: `ptr->member`
-- Member assignment: `p.x = value`
-- Nested member access supported
-- Stack-allocated structs
-
-### Enums
-```c
-enum Color {
-    RED,      // 0
-    GREEN,    // 1
-    BLUE      // 2
-};
-
-enum Status {
-    OK = 0,
-    ERROR = -1,
-    PENDING = 100
-};
-
-int main() {
-    int color = RED;      // Use enum constant
-    int status = ERROR;   // Enums are integers
-    return color + status;
-}
-```
-
-**Enum Features:**
-- Auto-incrementing values starting from 0
-- Explicit value assignment (including negative values)
-- Enum constants usable as integers in expressions
-- Documented in generated assembly as comments
-
-### Typedef
-```c
-typedef int myint;
-typedef char* string;
-typedef int arr10[10];
-
-int main() {
-    myint x = 42;          // Same as int x
-    string name;           // Same as char* name
-    return x;
-}
-```
-
-**Typedef Features:**
-- Create type aliases for basic types
-- Pointer type aliases (e.g., `typedef int* intptr;`)
-- Array type aliases (e.g., `typedef int vector[3];`)
-- Documented in generated assembly as comments
-- **Note**: Using typedef'd types in declarations currently documented only
-
-### Literals
-```c
-int main() {
-    int num = 42;           // Decimal literal
-    int hex = 0xFF;         // Hexadecimal literal
-    char c = 'A';           // Character literal
-    char* str = "Hello";    // String literal (basic support)
-    char newline = '\n';    // Escape sequence
-    return 0;
-}
-```
-
-**Literal Features:**
-- **Decimal**: `42`, `255`
-- **Hexadecimal**: `0xFF`, `0x100`
-- **Character literals**: `'A'`, `'x'`, `'0'`
-- **Escape sequences**: `'\n'`, `'\t'`, `'\0'`
-- **String literals**: `"Hello, World!"` (stored as char* pointers)
-
 ## Building
 
 ```bash
@@ -572,13 +348,11 @@ int main() {
 
 ## Architecture Notes
 
-The compiler follows DEF88186 calling conventions:
-- First 3 parameters: A, X, Y registers
-- Additional parameters: stack (right-to-left)
+The compiler follows the DEF88186 calling conventions (spelled out in `../docs/cpu/conventions.txt`):
+- The first three argument words go in A, X and Y; the rest go on the stack
 - Return value: A register
 - 16-bit mode by default (REP #$30)
-- Caller-saved: A, X, Y
-- Callee-saved: D, DB
+- Locals, arrays and structs live in the stack frame
 
 ### Code Generation Strategy
 
@@ -639,56 +413,11 @@ with an error, and where the compiler differs from ISO C.
 
 - **Hardware Multiply/Divide**: 8-13 cycles vs 100+ cycles for software implementation
 - **Hardware Loops**: `LOOP`/`LPEND` instructions optimize simple counted loops
-- **Register Parameters**: First 3 parameters avoid stack overhead
-- **Direct Page Access**: Local variables use fast DP addressing when possible
+- **Register Parameters**: The first 3 parameter words avoid stack overhead
 - **Compound Assignments**: Efficiently compiled using read-modify-write patterns
 - **sizeof**: Compile-time constant evaluation (zero runtime cost)
 - **Switch/case**: Linear comparison chain (O(n) - jump table optimization possible)
 - **Tail Call Optimization**: Not yet implemented
-
-## Future Enhancements
-
-### Completed Features ✓
-- [x] Array support ✓ **DONE!**
-- [x] Pointer support with pointer arithmetic ✓ **DONE!**
-- [x] Struct support with member access ✓ **DONE!**
-- [x] Increment/decrement operators (++/--) ✓ **DONE!**
-- [x] Compound assignment operators (+=, -=, etc.) ✓ **DONE!**
-- [x] Break and continue statements ✓ **DONE!**
-- [x] **Multi-dimensional arrays** ✓ **DONE!**
-- [x] **Switch/case statements** ✓ **DONE!**
-- [x] **Ternary operator (?:)** ✓ **DONE!**
-- [x] **sizeof operator** ✓ **DONE!**
-- [x] **String literals** ✓ **DONE!**
-- [x] **Character literals with escape sequences** ✓ **DONE!**
-- [x] **Better error messages with line/column numbers** ✓ **DONE!**
-- [x] **do-while loops** ✓ **DONE!**
-- [x] **Cast operators** ✓ **DONE!**
-- [x] **Comma operator** ✓ **DONE!**
-- [x] **goto and labels** ✓ **DONE!**
-- [x] **Multiple declarations (int a, b, c;)** ✓ **DONE!**
-- [x] **Enum declarations** ✓ **DONE!**
-- [x] **Typedef support** ✓ **DONE!**
-- [x] **Array initialization lists** ✓ **DONE!**
-- [x] **Union support** ✓ **DONE!**
-- [x] **Type modifiers (unsigned, signed, short, long)** ✓ **DONE!**
-- [x] **Type qualifiers (const, volatile)** ✓ **DONE!**
-- [x] **Storage classes (static, extern)** ✓ **DONE!**
-
-### Planned Features
-- [ ] Multi-dimensional array subscripting (matrix[i][j] access)
-- [ ] Struct initialization
-- [ ] Union support
-- [ ] Function pointers
-- [ ] Type qualifiers enforcement (const, volatile, static, extern)
-- [ ] Type modifiers (unsigned, signed, short, long)
-- [ ] Preprocessor integration
-- [ ] Optimization passes (constant folding, dead code elimination)
-- [ ] Inline assembly support
-- [ ] Optimization flags (-O1, -O2, -O3)
-- [ ] Switch jump table optimization
-- [ ] Full string table implementation with .rodata section
-- [ ] Full typedef integration into type system
 
 ## Contributing
 

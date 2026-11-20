@@ -1094,9 +1094,7 @@ there is no shift instruction.
 
 These are illustrative sketches, not literal ppuasm source - see
 `ZPdevtools/examples/ppu/*.asm` for real, currently-assembling programs
-(`tile_gradient_demo.asm` and `tile_simple_demo.asm` in that directory
-predate this revision and use the removed STRTDEFTILE/ENDDEFTILE/HALT -
-see their header comments for the current equivalent).
+(`make examples` assembles all of them).
 
 12.1 LOOP COUNTER
 

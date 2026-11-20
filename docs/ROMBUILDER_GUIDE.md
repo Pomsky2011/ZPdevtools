@@ -69,7 +69,7 @@ The ROM Builder uses the following default memory layout:
 ```bash
 # Assemble components
 cpuasm main.asm main.bin
-ppuasm graphics.asm graphics.bin
+ppuasm graphics.asm -o graphics.bin
 apuasm audio.asm audio.bin
 
 # Build ROM
@@ -127,7 +127,7 @@ cd ../build
 
 # Step 3: Assemble PPU code
 echo "Assembling PPU code..."
-../../ppuasm ../graphics/sprites.asm ppu.bin
+../../executables/ppuasm ../graphics/sprites.asm -o ppu.bin
 
 # Step 4: Assemble APU code
 echo "Assembling APU code..."
