@@ -1,7 +1,10 @@
 # ZeroPoint development documentation
 
-Reference and guides for the ZeroPoint fantasy console's toolchain. Everything here describes the emulator at revision 10 (which
-is frozen) and was checked against it: see "How these docs are kept honest" below.
+Reference and guides for the ZeroPoint fantasy console's toolchain. Everything here describes the emulator at revision 10, which is
+frozen; the core is now at revision 12, but everything added since is dev-unit-only and off on a retail unit, so these docs still hold. It
+was checked against the emulator: see "How these docs are kept honest" below. The dev unit, the debug serial port and the Boot ROM's
+exception entries are documented in the emulator repo (`ZeroPoint/docs/debug-protocol.md`, `docs/exceptions.md`); the SDK header is
+[`zp_serial.h`](sdk/README.md) and the examples are `examples/cpu/serial_echo.asm`, `exception_vectors.asm` and `exception_handler.asm`.
 
 ## The machine
 
