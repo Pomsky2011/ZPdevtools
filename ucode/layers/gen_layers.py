@@ -431,6 +431,7 @@ def main():
     with open(asm, "w") as f:
         f.write("\n".join(lines) + "\n")
     write_layout_header(os.path.join(HERE, "zp_layers_layout.h"))
+    write_layout_header(os.path.join(HERE, "..", "..", "include", "zeropoint", "zp_layers_layout.h"))   # the C library (zp_layers.h) includes it from the SDK headers
     res = subprocess.run([PPUASM, asm, "-o", args.out], capture_output=True, text=True)
     sys.stdout.write(res.stdout)
     sys.stderr.write(res.stderr)

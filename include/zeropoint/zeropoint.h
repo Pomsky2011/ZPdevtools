@@ -25,6 +25,7 @@
 #include "zp_apu.h"
 #include "zp_timer.h"
 #include "zp_serial.h"
+#include "zp_pad.h"
 #include "zp_cop.h"
 
 #endif /* ZEROPOINT_H */
