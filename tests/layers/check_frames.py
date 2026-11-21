@@ -6,8 +6,8 @@
 The example's assets are fully known (build/assets.bin, where build/assets.h says each piece sits), so this composites the whole
 picture itself in the order the microcode draws it: BG0 (opaque), the bird (a sprite BETWEEN the layers), BG1 (see-through where a
 pixel's palette entry has alpha 0), the hero (above both), then the window's text box (above everything, never scrolling). The game
-advances one step per frame, so a dumped frame is matched against the game steps up to its number; it must equal one of them exactly,
-pixel for pixel, and the gap between the frame number and the step must be the same for every frame. Exit status 0 when every frame does.
+advances one step per frame; a dumped frame's step is read off where BG1 is (its scroll is the step, mod 512), and the frame must then equal that
+step's reconstruction exactly, pixel for pixel, and the gap between the frame number and the step must be the same for every frame. Exit status 0 when every frame does.
 """
 import re
 import struct
@@ -89,6 +89,35 @@ def expected(t):
     return frame
 
 
+# Rows that show BG1 and nothing that moves independently of it: the clouds (rows 24-63) and the trees and bushes (rows 112-135), without the bird
+# (y 36-50) or the hero (y 136-151). Over these a BG1 scroll position is nearly unambiguous, but not quite (a scroll that puts every cloud off the
+# sampled columns fits many), so find_steps returns every scroll that fits and the caller checks each against the whole frame.
+BG1_ROWS = [y for y in range(24, 64, 3) if not 36 <= y <= 51] + list(range(112, 136, 4))
+
+
+def find_steps(got, n):
+    """Candidate game steps for a frame: every BG1 scroll (= the step mod 512) that explains the BG1 rows, as steps no later than frame n."""
+    out = []
+    for sc in range(512):
+        for y in BG1_ROWS:
+            ok_row = True
+            for x in range(0, 256, 3):
+                i = bg(1, x, y, sc, 0)
+                c = pal[i] if pal[i][3] else pal[bg(0, x, y, 0, 0)] if y < 64 else None
+                if c is None:
+                    if pal[i][3] and pal[i] != got[y * 256 + x]:      # below the sky BG0 is not uniform: only the BG1 pixels themselves are compared
+                        ok_row = False
+                        break
+                elif c != got[y * 256 + x]:
+                    ok_row = False
+                    break
+            if not ok_row:
+                break
+        else:
+            out.extend(range(sc, n + 1, 512))
+    return out
+
+
 ok = True
 offsets = []
 for path in sys.argv[2:]:
@@ -96,13 +125,22 @@ for path in sys.argv[2:]:
     raw = open(path, "rb").read()
     got = [tuple(raw[i:i + 4]) for i in range(0, len(raw), 4)]
     best = None
-    # the game loop starts a few tens of rasters after power-on (the uploads take that long), so frame n shows game step n - lag
-    for t in range(max(0, n - 40), n + 1):
-        bad = sum(1 for a, b in zip(got, expected(t)) if a != b)
-        if best is None or bad < best[0]:
-            best = (bad, t)
-        if bad == 0:
+    # the game loop starts some frames after power-on (the uploads, and on the real Boot ROM its whole splash), so frame n shows step n - lag
+    for step in find_steps(got, n):
+        for t in (step, step - 1, step + 1):
+            if t < 0:
+                continue
+            bad = sum(1 for a, b in zip(got, expected(t)) if a != b)
+            if best is None or bad < best[0]:
+                best = (bad, t)
+            if bad == 0:
+                break
+        if best and best[0] == 0:
             break
+    if best is None:
+        print("  FAIL: frame %d: BG1 is not where the game would put it at any step (nothing drawn, or the game is not running)" % n)
+        ok = False
+        continue
     status = "ok  " if best[0] == 0 else "FAIL"
     print("  %s: frame %d is game step %d (start lag %d)%s" % (status, n, best[1], n - best[1], "" if best[0] == 0 else ", closest match: %d pixels differ" % best[0]))
     ok = ok and best[0] == 0
@@ -111,6 +149,6 @@ for path in sys.argv[2:]:
 if len(set(offsets)) > 1:
     print("  FAIL: the start lag changes (%s): the game loop is not running exactly one step per frame" % offsets)
     ok = False
-elif ok:
+elif ok and offsets:
     print("  ok  : one game step per frame (the lag stays %d)" % offsets[0])
-sys.exit(0 if ok else 1)
+sys.exit(0 if ok and offsets else 1)

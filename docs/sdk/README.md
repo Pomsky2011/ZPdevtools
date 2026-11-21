@@ -86,12 +86,24 @@ The loaders are written array-free (sequential register writes rather than a
 
 | File | Role |
 |------|------|
-| `crt0_entry.asm` | Entrypoint-mode startup: sets 16-bit mode, slides into `main`. `.include` at the top of your program. |
+| `crt0_entry.asm` | Entrypoint-mode startup: sets 16-bit mode and a stack (`S = $F000`), enters `main` with `BRA`. `.include` at the top of your program. |
 | `crt0_rom.asm`   | ROM-mode startup: fuller bring-up (CLD, defined flags) then `main`. |
 | `zp_mmio.asm`    | `zp_peek8` / `zp_poke8`, implemented with absolute-long-indexed access to the RAM/APU/PPU/IO banks. |
 | `zp_cop.asm`     | `zp_cop3` / `zp_cop32` (any `COP` signature, built at run time) plus the typed Boot ROM service wrappers. Needs the real Boot ROM (`--boot`) for `$F0-$FF`. |
 | `zp_dma.asm`     | `zp_dma_load` for hand-written asm (boot ROM, no C runtime). |
 | `zp_long.asm`    | 32-bit runtime for the C compilers (`long` add/sub/mul/div/mod, shifts, bitwise, compares). Link it into any program that does `long` arithmetic. Tested by `ZeroPoint/bin/test_zp_long`. |
+
+**Two things that only go wrong on the real Boot ROM** (the native boot hides both, so test with `--boot` before calling anything done; `examples/layers-game`
+is checked both ways by `tests/layers/run.sh`):
+
+- **The machine state at entry.** The Boot ROM hands off with `DB = $80`, `S = $01FF` and `Y = $FFFE` (`ZeroPoint/docs/boot-handoff.md`); the native boot leaves
+  `DB = $00`. A `JMP addr` takes its bank from `DB`, not `PB`, so a startup that ends in `JMP main` jumps into RAM on the real Boot ROM and runs garbage: `crt0_*.asm`
+  use `BRA main` (the current bank, whatever `DB` is) and neither compiler emits `JMP`. A 512-byte stack is also too small for a C call chain a few functions
+  deep, so the crt0s set `S`. If you write your own startup, do both.
+- **Signing a ROM bigger than a few KB.** `zpbuild` without `--codesize` signs the original way: the Boot ROM computes one SHA-256 over the whole payload *in software*,
+  which for a megabyte never finishes (the lightning splash just stays on screen, and it looks like an unsigned ROM). Use `--codesize N --trailer 2`: the console's BLAKE2s
+  engine then checks the whole ROM in a fraction of a second. `N` must cover your CPU program (it starts at `$8000`); the layers example computes it from the size of `game.bin`.
+  The native boot does not hash at all, so it runs either. See [linker.md](linker.md), "Trailer versions".
 
 The C calling convention, shared by both compilers, is in [abi.md](abi.md): 16-bit mode, the first three words of arguments in
 `A`, `X` and `Y`, the rest pushed right to left, the result in `A` (or `A:X` for 32 bits). `int` is 16 bits, `long` 32.

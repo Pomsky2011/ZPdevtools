@@ -42,8 +42,11 @@ $(BUILD)/game.bin: $(BUILD)/game.asm
 $(BUILD)/game.elf: $(BUILD)/game.bin $(BUILD)/layers.bin $(BUILD)/assets.bin
 	$(BIN)/zplink -o $@ --cpu $(BUILD)/game.bin@0x8000 --ppu $(BUILD)/layers.bin@0x100000 --data $(BUILD)/assets.bin@0x110000 --entry 0x8000
 
+# Signed with --codesize N --trailer 2: the console's BLAKE2s engine hashes the whole ROM at boot in a fraction of a second. Without them zpbuild uses the
+# original single-region SHA-256 path, which the real Boot ROM computes in software: for a ROM this size it never finishes (the lightning splash stays up
+# for good), though the native boot, which does not hash, runs it. N has to cover the CPU program (it starts at $8000).
 $(BUILD)/game.zpb: $(BUILD)/game.elf
-	$(BIN)/zpbuild $< -o $@ --title "LAYERS GAME" --dev ZP
+	$(BIN)/zpbuild $< -o $@ --title "LAYERS GAME" --dev ZP --codesize $$(python3 -c "import os; print((0x8000 + os.path.getsize('$(BUILD)/game.bin') + 255) // 256 * 256)") --trailer 2
 
 run: $(BUILD)/game.zpb
 	$(EMU) $<
