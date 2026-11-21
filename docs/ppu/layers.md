@@ -20,7 +20,7 @@ every tile itself; it is kept because its measurements are why the hardware queu
 | Late entries dropped with a sticky flag | Done (`$0364` bit 0); the tests assert it stays clear |
 | RGBA16 only | Yes |
 | 1 standstill layer above all the others, for textboxes | Done, see "Window layer": per band one ink span and one glass span, opaque ink hides the BG under it |
-| A translucent box | Done as a blended fill (`glass`), capped by blitter time: about 3 cells per band over the worst background |
+| A translucent box | Done as a blended fill (`glass`): any width (a full 32-cell row is ~12.5k of the band's ~278k channel-cycles) |
 
 ## CPU interface
 
@@ -37,7 +37,7 @@ CPU's 128 KB of WRAM is unaffected):
 | `$1C00-$1DFF` | palette, 256 x BBGR16, loaded once at start with `PALETTE256` |
 | `$1E00-$1E15` | control block, words: `NCOLS SPREN FRAMES L1FLAGS TILEREQ TILEBANK TILEID RUN LISTBASE WINBASE L0FLAGS` |
 | `$1F00-$1FFF` | stack (grows up) |
-| `$2000-$3FFF` | two frame blocks of 4 KiB (`$2000`, `$3000`): the sprite lists, 32 bands x 128 B, with the four scroll words at the end (`+$FF8`) |
+| `$2000-$3FFF` | two frame blocks of 4 KiB (`$2000`, `$3000`): the four scroll words (`+0`), then the packed sprite stream from `+8` (a header word per band, then its 14-byte pieces; see "Sprite priority"; ~290 pieces fit) |
 | `$4000-$7FFF` | BG0 map, 64x64 cells x 4 B |
 | `$8000-$BFFF` | BG1 map |
 
@@ -45,7 +45,7 @@ CPU's 128 KB of WRAM is unaffected):
   H = `$08`, V = `$10`). Tile data is 8bpp (the 256-entry palette), so each layer can own an index range. A cell with T is
   see-through where its palette entry has alpha 0.
 - **Frame block** (double-buffered): the sprite lists *and* the four scroll words `SCX0 SCY0 SCX1 SCY1` (0-511) live in one 4 KiB
-  block at `LISTBASE`; the scroll words are at `+$FF8`. The PPU snapshots `LISTBASE` (and `NCOLS`, `SPREN`, `L1FLAGS`) once per
+  block at `LISTBASE`; the scroll words are at `+0` and the sprite stream starts at `+8`. The PPU snapshots `LISTBASE` (and `NCOLS`, `SPREN`, `L1FLAGS`) once per
   frame (and `WINBASE`), so the CPU fills the *idle* block (`$2000` or `$3000`) at its leisure, then writes `LISTBASE` to flip: scroll and sprites
   change together and nothing tears. Because `FRAMES` increments when the PPU takes the snapshot, the CPU can zero it, wait for
   it to turn non-zero, and then know the other block is free. `L1FLAGS` is OR'd into BG1's queue flags (`$40` makes the whole
@@ -53,8 +53,8 @@ CPU's 128 KB of WRAM is unaffected):
   lets a sprite *behind* BG0 show (see "Sprite priority"). Both are snapshotted once per frame.
 - **Maps are read when drawn**: a queued row's cells are read at dispatch, not at launch. Update a map (or the sprite cells)
   only where the PPU is not about to draw, or double buffer it.
-- **Sprites**: fill `ZPL_Sprite {x, y, w, h, cells, flags}` entries and call `zpl_build_lists()`; copy the 32 x 256 bytes it
-  produces to `ZPL_LISTS`. Each tile row of a sprite becomes one *piece* per 8-row band its rows touch, clipped to that band,
+- **Sprites**: fill `ZPL_Sprite {x, y, w, h, cells, flags}` entries and call `zpl_build_lists()`, then `zpl_pack_stream()` to
+  squeeze its dense rows into the frame block at `ZPL_STREAM_OFF` (after the scroll words). Each tile row of a sprite becomes one *piece* per 8-row band its rows touch, clipped to that band,
   so a sprite always sits in the same band as the BG rows it must go over. Later sprites are on top. All sprite pieces are
   transparent (alpha-0 pixels skipped). Set `SPREN` non-zero to enable sprites. `flags` also picks the sprite's priority.
 - **Starting up and tiles**: the PPU idles until `RUN` is non-zero, serving tile uploads (tile pixels can only be written through the
@@ -98,9 +98,9 @@ every cart that does not know about the layer has. Tables are double-buffered li
 - **Budget.** Per band, in the unit of `ZPL_BAND_BUDGET` (the sprite time over the worst background): a solid span *saves* time (the BG it
   hides costs 2 x 264 per column, it costs 264), an overlay costs 264 per cell, glass 392. `zpl_build_window(boxes, n, mode, budget, table,
   spriteBudget)` admits ink first, then glass, while the net cost stays within `budget`, drops what does not fit (returns the count) and fills
-  `spriteBudget[b]`, what is left of the band for sprites: pass it to `zpl_build_lists_bands()`. At the shipped 1300 that is about **3 cells of
-  glass, or 4 of overlay, per band** over a worst-case background (both layers fine-scrolled both ways), and a solid span of any width.
-  A game with a lighter background passes a larger budget (see below for how far the saturation tests go).
+  `spriteBudget[b]`, what is left of the band for sprites: pass it to `zpl_build_lists_bands()`. At the shipped 150000 every box fits (a full
+  row of glass is ~12.5k, of overlay ~8.4k) with ~125k left for sprites, which is about what `ZPL_MAXP` full-height 32-tile pieces ask for. (On
+  the old 340-cycle line the budget was 1300 and only ~3 cells of glass fitted per band.)
 - **Order.** Sprites behind BG0, BG0, sprites between, BG1, sprites above both, then the window per band (glass, then ink): queue order is z-order, and the hardware retires a blit only
   after the older ones it overlaps, so the glass reads a finished background and a sprite never shows through a box.
 - **Producer.** A window band costs the PPU more than a plain one (the BG launches double under a culling span, plus the window's own), so
@@ -139,24 +139,25 @@ The requirement was that the PPU can never lag, because one late band flickers t
    hardware had crossed scanline 257 and the piece landed a whole frame late. The queue is in order, so that one held entry
    blocked everything behind it for a frame: exactly the cascade to avoid. With the frame in the launch there is no race.
 2. **Late work cannot block.** A frame the beam has passed is dispatched at once and flagged late instead of waiting.
-3. **Admission control is by blitter time, not by count** (and a window takes its share out of the band, see above). The hardware has a fixed amount of blit time per band (8 channels,
-   2720 cycles), the two layers take almost all of it under a fine scroll, and what is left is what sprites may use. The
-   list builder admits sprite pieces per band up to `ZPL_BAND_BUDGET` channel-cycles (a tile costs `8 + 32 x rows written`),
-   and at most `ZPL_MAXP` = 8 pieces; anything beyond that is dropped deterministically (the builder returns the count). A
-   4-tile-wide piece costs four times a 1-tile one, so a piece count alone is the wrong limit: that is what the first
-   sweep showed (clean to 160 sprite cells per frame, late from 200, with the old 12-piece cap not even reached).
+3. **Admission control is by blitter time and by count** (and a window takes its share out of the band, see above). The hardware has a fixed amount of blit time per band (8 channels,
+   8 lines x 4343 cycles = 34,744 cycles each, ~278k channel-cycles; it was 2720 cycles each on the old 340-cycle line), the two layers take ~20k of it under a
+   fine scroll, and what is left is what sprites may use. The list builder admits sprite pieces per band up to `ZPL_BAND_BUDGET` channel-cycles
+   (a tile costs `8 + 32 x rows written`), and at most `ZPL_MAXP` = 15 pieces in total (the most the header's count field takes); anything
+   beyond that is dropped deterministically (the builder returns the count). Since the raster was stretched the count is what binds: the widest
+   possible load, 15 full-height pieces of 32-tile sprites, is ~127k channel-cycles, under half of the band's capacity. On the old line it was the other
+   way round (a 4-tile piece cost four times a 1-tile one, so the blitter time was the limit, and `ZPL_MAXP` was 8).
+   The frame blocks bound a frame too: a block is 4 KiB, so ~290 pieces per frame whatever their bands.
 4. **A worst-case test.** `test_layers` saturates every band with far more sprites than the budget admits (up to 16
-   four-tile sprites per band, sharing one cell array so nothing but the budget limits them), under fine scroll on both
+   four-tile sprites per band, and 15 sprites of 16 and of 32 tiles, sharing one cell array so nothing but the budget and the piece cap limit them), under fine scroll on both
    layers, and asserts the late and overflow bits stay clear. With `LAYERS_ALLPHASES=1` it does so for all 64 combinations of
    the two layers' fine-Y phase, the only thing the background's cost depends on.
 
-Measured limit (all 64 fine-Y phase pairs, `LAYERS_ALLPHASES=1`, saturated sprites): the budget is clean through **1800** and first fails at
-**2100** (4 of 192 runs late; 2400: 6, 2800: 12, 3200: 59), so the shipped `ZPL_BAND_BUDGET` of **1300** is about 40% under the first failure. The
-first version of this section said 1550: that was the *producer* running out of time (it was 90% busy at 8 one-cell pieces), not the blitter,
-and it moved when the producer got cheaper. In sprite terms 1300 is about 5 full-height sprite cells per band, roughly 157 per frame, under the
-worst background; a lighter background leaves more room, and the budget is a constant to raise per game. With a window the saturated test
-(7 window shapes x 5 scrolls x 7 sprite loads, shapes from a 1-wide full-height box to a 28 x 12 textbox, overlay and glass) is clean through 2400
-and first fails at 2800 (3 of 245 runs).
+Measured limit: there is none below what the builder can ask for. With all 64 fine-Y phase pairs (`LAYERS_ALLPHASES=1`) and saturated
+sprites, up to 15 full-height 32-tile pieces per band (the exact worst case, 126,720 channel-cycles), with and without a window (7 shapes x 5 scrolls x
+every sprite load, from a 1-wide full-height box to a 28 x 12 textbox, overlay and glass), no band goes late at the shipped `ZPL_BAND_BUDGET` of
+**150000** or at 260000. On the old 340-cycle line the same test had an edge: clean through 1800 and first late at 2100 (2400 and up with a window),
+so the shipped budget was 1300, about 40% under it. The producer is a similar story: it used to be ~90% busy at 8 one-cell pieces
+under a window and now has 12.8x the time (see "History: producer cost" for what it took then).
 
 Also verified: per-frame production keeps pace with the beam (the frame counter advances once per beam frame), and every
 case is compared against an independent per-pixel reference over the whole frame (BG0, BG1, sprites), on several seeds.
@@ -214,6 +215,9 @@ through the PPU window, so its padding must be zero bytes (a `NOP` word writes `
 - A box's cells are read when drawn, so rewrite them (a typewriter text) in place only where the PPU is not about to draw, like a map.
 
 ## History: producer cost
+
+(Written for the old 340-cycle line, core revision 12 and before. With revision 13's 4343-cycle line the producer has 12.8x the time per band and none of
+these margins binds any more; the rule about label jumps below still holds, they cost ~10 cycles.)
 
 Adding the window made the saturated tests fail at the shipped budget. Measured with a throwaway harness that samples the PPU's execution pointer:
 the producer's wait-for-queue-space loop was idle only 9.9% of the time at 8 one-cell sprite pieces per band, and a window band (BG launches

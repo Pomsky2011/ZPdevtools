@@ -62,9 +62,8 @@ of stalls makes a delay. Every other instruction costs exactly 2 cycles, with no
 | Interval | APU cycles | Instructions |
 |----------|-----------|--------------|
 | One 48 kHz audio sample | 88.6 | 44.3 |
-| One display frame (1.3 ms, see the [CPU timing page](../cpu/timing.md)) | 5,546 | 2,773 |
 | 1/120 s (the sequencer's tick) | 35,422.6 | 17,711 |
-| 1/60 s | 70,845 | 35,422 |
+| 1/60 s, which is one display frame since core revision 13 (see the [CPU timing page](../cpu/timing.md)) | 70,845 | 35,422 |
 
 In fast mode every figure doubles.
 

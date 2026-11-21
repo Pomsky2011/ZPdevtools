@@ -13,7 +13,7 @@
  * The header word is the number of pieces above BG1, plus ZPL_EXT_FLAG when the band has pieces behind BG0 or between the layers; their two counts
  * sit at ZPL_EXT_OFF in the band's row (behind, between). A band that is full drops
  * further pieces (the admission control: the blitter's time per band is fixed, so what does not fit is not drawn). Full means
- * ZPL_MAXP pieces, or ZPL_BAND_BUDGET channel-cycles of blit time (the real limit: a 4-cell piece costs 4x a 1-cell one);
+ * ZPL_MAXP pieces, or ZPL_BAND_BUDGET channel-cycles of blit time (a 4-cell piece costs 4x a 1-cell one; at the shipped budget the piece count binds first);
  * `dropped` counts what was left out. x/y/clip words are little-endian; y and the clips are frame rows (the microcode adds 0 or 256 to put them in
  * the frame the hardware is on).
  */

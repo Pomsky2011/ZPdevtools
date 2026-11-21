@@ -39,9 +39,11 @@ MAP = (0x4000, 0x8000)  # 64x64 cells x 4 B = 16 KiB each
 TILE_MODE_FLAGS = 0x20  # queue flag bits 4-5 = tile mode 2 (16BBGR 8bpp: the 256-entry palette)
 F_CLIP, F_WRAP, F_TRANSPARENT = 0x01, 0x08, 0x40
 BANDS = 32
-MAXP = 8                # sprite pieces per band the PPU will launch (a header above this is clamped)
-BAND_BUDGET = 1300      # blitter channel-cycles of sprite work the list builder admits per band (zp_layers_sprites.h): bands first go late at ~1550 under the worst fine scroll, see docs/ppu/layers.md
-LIST_STRIDE = 128       # the builder's dense form: per band a header word, then MAXP records of 7 words in port order (2 + 8 x 14 = 114 B)
+MAXP = 15               # sprite pieces per priority group the PPU will launch (a count above this is clamped). 15 is the most the header's count field takes
+                        # below EXT_FLAG (16): a plain band's header is its count, and `header > MAXP` is what says "extended"
+BAND_BUDGET = 150000      # blitter channel-cycles of sprite work the list builder admits per band (zp_layers_sprites.h). A band is 8 lines x 4343 cycles x 8 channels = ~278k, the layers
+                        # use ~20k of it under the worst fine scroll, and ZPL_MAXP pieces of the widest sprites ask for at most ~127k: so the piece cap is what binds, see docs/ppu/layers.md
+LIST_STRIDE = 256       # the builder's dense form: per band a header word, then MAXP records of 7 words in port order (2 + 15 x 14 = 212 B), then the two EXT counts
 RECORD_BYTES = 14       # what the PPU reads is the packed stream: per band a header word (bits 0-3: the pieces above BG1; EXT_FLAG: this band also has pieces
                         # behind BG0 and between the layers), then the records; an EXT band reads [count][behind records][count][between records] after the header,
                         # the above records last. Bands back to back.

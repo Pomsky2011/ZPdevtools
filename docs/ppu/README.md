@@ -18,7 +18,7 @@ program and starts it.
 
 - **64 sixteen-bit registers.** `R59` and `R60` hold the V-blank and H-blank handler addresses, `R61` is the stack pointer (grows
   up), `R62` is the **jump target register**, `R63` is the data pointer.
-- **Every instruction is 16 bits, big-endian, and costs 1 to 16 cycles.** One display line is 340 cycles.
+- **Every instruction is 16 bits, big-endian, and costs 1 to 16 cycles.** One display line is 4343 cycles (340 before core revision 13).
 - **Constants are built a byte at a time** through four target registers: a 16-bit constant is four instructions, 8 cycles.
 - **Only `CMP` sets flags.** Jumps go to the address in `R62`, so a jump to a label first loads `R62`.
 - **Drawing is mostly asynchronous.** `TILEDRAW` hands a tile to one of 8 blit channels and returns; blits land in issue order.

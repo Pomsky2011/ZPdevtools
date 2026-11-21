@@ -111,11 +111,12 @@ isr:
 
 Here a handler's `RET` returns to `idle` and sets `R62` to `idle`, which is what the loop needs. This held for every arrival
 cycle tested (80 offsets, five interrupts each, `SP` balanced). Put real work in the handlers, or poll in a loop that
-reloads `R62` immediately before every jump and can tolerate being restarted. Keep handlers short: the H-blank window is 84
-cycles inside a 340-cycle line.
+reloads `R62` immediately before every jump and can tolerate being restarted. Keep handlers short: the H-blank window is 1072
+cycles inside a 4343-cycle line (84 inside 340 before core revision 13).
 
 ## Timing
 
-One display line is 340 pixel clocks, which is 340 PPU cycles: 256 visible, then 84 of H-blank. A frame is 261 lines (256
-visible, 5 of V-blank): 88,740 cycles, 1.3 ms. The PPU can find out where the beam is with `GBLS` (0 in V-blank, 1 in H-blank,
+One display line is 4343 PPU cycles, 340 pixel positions at about 12.8 cycles each: 256 visible (3271 cycles), then 84 of H-blank (1072 cycles). A
+frame is 261 lines (256 visible, 5 of V-blank): 1,133,523 cycles, exactly 1/60 s. (Before core revision 13 a pixel was one cycle: a line was 340
+cycles and a frame 88,740, 1.3 ms.) The PPU can find out where the beam is with `GBLS` (0 in V-blank, 1 in H-blank,
 65535 in the visible area), or read the scanline at `$00E0`.

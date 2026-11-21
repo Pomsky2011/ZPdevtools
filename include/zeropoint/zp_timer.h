@@ -18,7 +18,7 @@
 
 /* Timer bits (0bVHSQETAR). */
 #define ZP_TMR_VBLANK  0x80  /* ~16.67 ms  (60 Hz)            */
-#define ZP_TMR_HBLANK  0x40  /* one scanline (~244 us)       */
+#define ZP_TMR_HBLANK  0x40  /* ~244 us (not a scanline: 63.9 us) */
 #define ZP_TMR_1S      0x20  /* 1 second                     */
 #define ZP_TMR_QUARTER 0x10  /* 1/4 second (250 ms)          */
 #define ZP_TMR_EIGHTH  0x08  /* 1/8 second (125 ms)          */

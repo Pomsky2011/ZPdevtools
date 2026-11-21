@@ -1,8 +1,9 @@
 # ZeroPoint development documentation
 
-Reference and guides for the ZeroPoint fantasy console's toolchain. Everything here describes the emulator at revision 10, which is
-frozen; the core is now at revision 12, but everything added since is dev-unit-only and off on a retail unit, so these docs still hold. It
-was checked against the emulator: see "How these docs are kept honest" below. The dev unit, the debug serial port and the Boot ROM's
+Reference and guides for the ZeroPoint fantasy console's toolchain. Everything here describes the emulator at revision 13, which is
+frozen. The CPU, PPU, APU and DMA behave as they did at revision 10 (revisions 11 and 12 added dev-unit-only features, off on a retail unit);
+revision 13 changed one thing, the raster timing: a line is 4343 cycles (it was 340) and a frame is 1/60 s (it was 1.3 ms). The pages say so where it
+matters. It was checked against the emulator: see "How these docs are kept honest" below. The dev unit, the debug serial port and the Boot ROM's
 exception entries are documented in the emulator repo (`ZeroPoint/docs/debug-protocol.md`, `docs/exceptions.md`); the SDK header is
 [`zp_serial.h`](sdk/README.md) and the examples are `examples/cpu/serial_echo.asm`, `exception_vectors.asm` and `exception_handler.asm`.
 

@@ -152,8 +152,9 @@ Eight independent timers share three registers, one bit each, in the order `V H 
 | 1 `A` | about a millisecond | 68,010 | 1 ms |
 | 0 `R` | 60 V-blanks | 68,011,380 | ~1 s |
 
-These timers count on their own; they are **not** locked to the display. A display frame is 261 lines of 340 pixels,
-88,740 master cycles or 1.3 ms, so the `V` timer fires about every 12.8 display frames.
+These timers count on their own; they are **not** locked to the display (they are free-running, and their phase is not tied to the raster). Since core revision 13 a display frame is
+261 lines of 4343 cycles, 1,133,523 master cycles, which is exactly the `V` timer's period, so the `V` timer fires once per display frame. (Before, a frame was 340-cycle
+lines, 88,740 cycles or 1.3 ms, and the `V` timer fired about every 12.8 frames.)
 
 ### Interrupt controller, `$D80058-$D80059`
 

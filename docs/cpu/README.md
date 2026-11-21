@@ -4,7 +4,7 @@ The DEF88186 is the ZeroPoint's main processor: a 16-bit, 24-bit-addressed, litt
 65C816, with a hardware multiplier and divider, a hardware loop counter and a block mover. It runs at 17.002839 MHz
 (master clock / 4) and controls everything else: the PPU, APU and DMA are all driven through its address space.
 
-These pages describe what the emulator (revision 10, which is frozen) actually does. Where an older document, a
+These pages describe what the emulator (revision 13, which is frozen; the CPU is unchanged since revision 10) actually does. Where an older document, a
 comment or the 65C816 data sheet says otherwise, the emulator wins.
 
 | Page | What's in it |

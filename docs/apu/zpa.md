@@ -224,8 +224,8 @@ checks: the jingle starts (0.16 s after power-on) and is audible, the engine tic
 up to the verify result (the hold loops while the mailbox is 0), the result lands in $A0:1000
 (1 for a good signature, 2 for a tampered ROM), every channel is silent within 0.7 s of it (the
 hold loop polls the mailbox at its JZ events), the APU is back in the BIOS idle loop, and a
-cartridge `$0A` program is then accepted and run. A System "frame" is a 261x340 raster at the
-68 MHz master clock (~1.3 ms), not 1/60 s; the test converts through the master clock.
+cartridge `$0A` program is then accepted and run. A System "frame" is a 261x4343 raster at the
+68 MHz master clock, 1/60 s since core revision 13 (it was 261x340, ~1.3 ms); the test converts through the master clock.
 
 ## Open items
 

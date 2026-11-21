@@ -41,19 +41,21 @@ Costs worth knowing:
 
 ## How many cycles you have
 
-The display is 261 lines of 340 pixels, drawn at the master clock rate, so:
+The display is 261 lines, each 4343 master cycles (core revision 13; before it, 340 cycles a line, one per pixel), so:
 
 | | Master cycles | CPU cycles | Time |
 |---|---------------|-----------|------|
-| One scanline | 340 | **85** | 5.0 µs |
-| Visible part of a line (256 pixels) | 256 | 64 | |
-| H-blank part (84 pixels) | 84 | 21 | |
-| One frame (261 lines) | 88,740 | **22,185** | 1.30 ms |
-| V-blank (5 lines) | 1,700 | 425 | |
+| One scanline | 4,343 | **1,086** | 63.9 µs |
+| Visible part of a line (pixels 0-255) | 3,271 | 818 | |
+| H-blank part (pixels 256-339) | 1,072 | 268 | |
+| One frame (261 lines) | 1,133,523 | **283,381** | 16.667 ms |
+| V-blank (5 lines) | 21,715 | 5,429 | |
 
-That is about 766 frames a second, not 60. A "frame" in this machine is short; the CPU gets only 22,185 cycles in it,
-roughly 5,500 instructions. Anything that must happen at 60 Hz is paced by a timer (the `V` timer is 16.667 ms) or by
-counting frames, not by the display's own V-blank.
+A frame is exactly 1/60 s, the period of the `V` timer, and a pixel lasts about 12.8 master cycles (the beam is at pixel
+`floor(cycle in line x 340 / 4343)`, which is what the display status registers report). A frame gives the CPU about
+283,000 cycles, roughly 70,000 instructions. (Before core revision 13 a pixel was one cycle: a frame was 88,740 cycles, 1.3 ms,
+about 766 a second, and the CPU got only 22,185 cycles of it.) The `V` timer is not phase-locked to the raster, so for anything
+that must change in the V-blank, use the display's own V-blank.
 
 ## Measuring
 
