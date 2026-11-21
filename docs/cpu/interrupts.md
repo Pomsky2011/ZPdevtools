@@ -126,3 +126,13 @@ natively when no real Boot ROM is loaded. The CPU is back at the next instructio
 
 Use the wrappers in `include/zeropoint/zp_cop.h` and `lib/zp_cop.asm` instead of writing these by hand. `COP` with any
 other signature, and `BRK`, are yours.
+
+## Boot ROM exception entries
+
+The Boot ROM has five fixed entry points for exceptions: ABORT `$E0:0048`, NMI `$E0:004C`, IRQ `$E0:0050`, BRK `$E0:0054` and COP
+`$E0:0058`. Nothing routes to them by itself (the CPU still reads the vector from the cartridge, as above); a cartridge points a
+vector at a stub that does `JML $E00054` and so on. On a retail unit they lock the machine. On a dev unit the dev Boot ROM asks the host
+for a handler image over the debug serial port and runs it, and the CPU also raises ABORT for a write to ROM or an access to unmapped
+memory. [`examples/cpu/exception_vectors.asm`](../../examples/cpu/exception_vectors.asm) is a cartridge that wires all five up, and
+[`exception_handler.asm`](../../examples/cpu/exception_handler.asm) a handler image that reports and resumes. The protocol is in
+the emulator's `docs/exceptions.md`.
