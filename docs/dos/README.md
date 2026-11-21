@@ -14,8 +14,8 @@ and, on an old compiler, supplies the fixed-width types.
 |-------|-------|
 | Assemblers | `cpuasm`, `ppuasm`, `apuasm` |
 | Disassemblers | `cpudisasm`, `ppudisasm`, `apudisasm` |
-| ROM tools | `rombuilder`, `rominspect`, `zplink`, `zpbuild` |
-| Utilities | `hexview`, `wav2mmp` |
+| ROM tools | `rominspect`, `zplink`, `zpbuild` |
+| Utilities | `hexview` |
 | Compiler | `def88186cc` (`c_compiler/`), built from the pre-generated `lexer.c` and `parser.tab.c`, since Flex and Bison do not run on DOS |
 
 `zpcc` needs clang/LLVM and is not built on DOS.

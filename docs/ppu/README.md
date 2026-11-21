@@ -31,7 +31,7 @@ program and starts it.
    loading `R62` and jumping then jumps to itself forever (28 of 77 arrival cycles, measured). Wait for interrupts with a bare
    `JMR` spinning on itself. See [architecture.md](architecture.md).
 2. **The jump shorthands overwrite target registers 0 and 1.** Use 2 and 3 for your own constants.
-3. **Binary literals (`0b101`) silently become 0, and numbers over 255 are truncated by `SETBYTE`.**
+3. **`SETBYTE` takes one byte.** A plain number over 255 is an error, not truncated; only a label is split into its low and high byte.
 
 ## How these pages were checked
 

@@ -14,7 +14,7 @@ script for this reason).
 |---|---|
 | Case | instruction names and registers are case-insensitive |
 | Registers | `R0`-`R63`; `SP` is `R61`, `PC` is `R62`, `DP` is `R63` |
-| Numbers | decimal, `0x1F` or `$1F`. **Binary literals (`0b101`) are not supported and silently read as 0.** |
+| Numbers | decimal, `0x1F`, `$1F` or binary `0b101`; a leading zero means octal (`010` is 8). A literal with a stray character (`0b102`, `08`, `12abc`) is an error. `SETBYTE` refuses a plain number outside -128..255 (only a label is split into its low and high byte) |
 | Comments | `;` or `#` to the end of the line. `//` is not a comment. |
 | Labels | `name:` at the start of a line, on its own or before an instruction |
 | Aliases | `R10 = COUNTER` makes `COUNTER` mean `R10`; `$0x0100 = IO` makes `IO` mean `0x0100` |

@@ -12,8 +12,8 @@
  *                                     include/rom.h: 64-byte header + flat
  *                                     payload + optional "ZPSG" signed trailer.
  *   raw                             - anything else: a headerless blob such as
- *                                     a rombuilder flat image or a bare
- *                                     cpuasm/ppuasm/apuasm object (even unnamed).
+ *                                     a bare cpuasm/ppuasm/apuasm object
+ *                                     (even unnamed).
  *
  * Usage: rominspect <file> [-v] [-x] [-c]
  *   -v   Verbose (offsets, flags, digests)
@@ -338,7 +338,7 @@ static int inspect_elf(const uint8_t *d, size_t size, Opts *o)
 }
 
 /* ====================================================================== */
-/* Raw / unnamed blob (rombuilder flat image, bare asm object, ...)       */
+/* Raw / unnamed blob (bare asm object, flat image, ...)                  */
 /* ====================================================================== */
 static int inspect_raw(const uint8_t *d, size_t size, Opts *o)
 {
@@ -348,7 +348,7 @@ static int inspect_raw(const uint8_t *d, size_t size, Opts *o)
     printf("Checksum:     0x%08lX\n", (unsigned long)checksum(d, size));
     if (size) print_hex_preview(d, size);
     printf("\n");
-    printf("This looks like an unnamed object: a rombuilder flat image, or a bare\n");
+    printf("This looks like an unnamed object: a headerless flat image, or a bare\n");
     printf("cpuasm/ppuasm/apuasm output blob. There is no header to describe its\n");
     printf("layout - load address and role come from how it was assembled/linked.\n\n");
 

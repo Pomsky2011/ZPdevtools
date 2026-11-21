@@ -99,18 +99,18 @@ How to read the columns:
 | `2C` | `PHB` | Stack (Push) | 1 | 3 | `........` | S, stack -1 | ✓ |
 | `2D` | `PHD` | Stack (Push) | 1 | 4 | `........` | S, stack -2 | ✓ |
 | `2E` | `PHK` | Stack (Push) | 1 | 3 | `........` | S, stack -1 | ✓ |
-| `2F` | `PHP` | Stack (Push) | 1 | 3 | `........` | S, stack -1 | ✓ |
+| `2F` | `PHP` (alias `PUSHF`) | Stack (Push) | 1 | 3 | `........` | S, stack -1 | ✓ |
 | `30` | `PHX` | Stack (Push) | 1 | 3 | `........` | S, stack -2 or -1 | ✓ |
 | `31` | `PHY` | Stack (Push) | 1 | 3 | `........` | S, stack -2 or -1 | ✓ |
 | `32` | `PLA` | Stack (Pull) | 1 | 4 | `N.....Z.` | AS, stack 1 or 2 | ✓ |
-| `33` | `POPF` | Stack (Pull) | 1 | 3 | `NVMXDIZC` | S, stack 1 | ✓ |
+| `33` | `POPF` (alias `PPP`) | Stack (Pull) | 1 | 3 | `NVMXDIZC` | S, stack 1 | ✓ |
 
 ## Arithmetic
 
 | Op | Syntax | Mode | Bytes | Cycles | Flags | Writes | Asm |
 |----|--------|------|-------|--------|-------|--------|-----|
 | `66` | `ADC dp` | Direct Page | 2 | 3 | `NV....ZC` | A | ✓ |
-| `69` | `INC A` | Accumulator | 1 | 2 | `N.....Z.` | A | ✓ |
+| `69` | `INC A` (alias `INA`) | Accumulator | 1 | 2 | `N.....Z.` | A | ✓ |
 | `6A` | `INC addr` | Absolute | 3 | 3 | `N.....Z.` | — | ✓ |
 | `6B` | `INC addr,X` | Absolute Indexed,X | 3 | 4 | `N.....Z.` | — | ✓ |
 | `6C` | `INC dp` | Direct Page | 2 | 5 | `N.....Z.` | — | ✓ |
@@ -118,7 +118,7 @@ How to read the columns:
 | `6E` | `INC.L addr` | Absolute | 3 | 6 | `N.....Z.` | — | ✓ |
 | `6F` | `INX` | Implied | 1 | 2 | `N.....Z.` | X | ✓ |
 | `70` | `INY` | Implied | 1 | 2 | `N.....Z.` | Y | ✓ |
-| `71` | `DEC A` | Accumulator | 1 | 2 | `N.....Z.` | A | ✓ |
+| `71` | `DEC A` (alias `DEA`) | Accumulator | 1 | 2 | `N.....Z.` | A | ✓ |
 | `72` | `DEC addr` | Absolute | 3 | 3 | `N.....Z.` | — | ✓ |
 | `73` | `DEC addr,X` | Absolute Indexed,X | 3 | 4 | `N.....Z.` | — | ✓ |
 | `74` | `DEC dp` | Direct Page | 2 | 5 | `N.....Z.` | — | ✓ |
@@ -287,12 +287,12 @@ How to read the columns:
 | `0B` | `BEQ long` | Absolute Long | 4 | 2/3/4 | `........` | — | ✓ |
 | `0C` | `JMP (addr,X)` | Absolute Indexed Indirect | 3 | 4 | `........` | — | ✓ |
 | `0D` | `JMP (addr)` | Absolute Indirect | 3 | 4 | `........` | — | ✓ |
-| `0E` | `JMP [addr]` | Absolute Indirect Long | 3 | 4 | `........` | — | ✓ |
+| `0E` | `JMP [addr]` (alias `JML`) | Absolute Indirect Long | 3 | 4 | `........` | — | ✓ |
 | `0F` | `JMP addr` | Absolute | 3 | 4 | `........` | — | ✓ |
 | `10` | `JMP long` (alias `JML`) | Absolute Long | 4 | 4 | `........` | — | ✓ |
 | `11` | `JSR (addr,X)` | Absolute Indexed Indirect | 3 | 4 | `........` | S, stack -2 | ✓ |
 | `12` | `JSR addr` | Absolute | 3 | 4 | `........` | S, stack -2 | ✓ |
-| `13` | `LOOP #word` | Immediate | 3 | 2 | `........` | — | ✓ |
+| `13` | `LOOP #word` (alias `LP`) | Immediate | 3 | 2 | `........` | — | ✓ |
 | `14` | `LPEND` | Immediate | 1 | 1 | `........` | — | ✓ |
 | `15` | `CALL long` | Absolute Long | 4 | 16 | `........` | S, stack -3 | ✓ |
 | `16` | `RET` | Implied | 1 | 8 | `NVMXDIZC` | S, stack 4 | ✓ |

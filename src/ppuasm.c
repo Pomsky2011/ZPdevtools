@@ -335,6 +335,30 @@ static void expr_skip_ws(void) {
 
 static int expr_add(void);
 
+/* A numeric literal as the expression scanner collects it (letters and digits, "$" already turned into "0x"): decimal,
+ * 0x hex, 0b binary, or C-style octal for a leading zero. The whole token has to be a number; sscanf("%i") used to stop
+ * at the first character that was not, so 0b101 read as 0 and 08 as 0. */
+static int parse_literal(const char *tok, int *out) {
+    char *end;
+    const char *d;
+    long v;
+    if (tok[0] == '0' && (tok[1] == 'b' || tok[1] == 'B')) {
+        if (!tok[2]) return 0;
+        v = 0;
+        for (d = tok + 2; *d; d++) {
+            if (*d != '0' && *d != '1') return 0;
+            v = v * 2 + (*d - '0');
+            if (v > 0x7FFFFFFFL) return 0;
+        }
+        *out = (int)v;
+        return 1;
+    }
+    v = strtol(tok, &end, 0);
+    if (end == tok || *end != '\0' || v > 0x7FFFFFFFL) return 0;
+    *out = (int)v;
+    return 1;
+}
+
 static int expr_atom(void) {
     char tok[MAX_LABEL_LENGTH];
     int i = 0, value, negate = 0;
@@ -376,8 +400,9 @@ static int expr_atom(void) {
     }
 
     if (isdigit((unsigned char)tok[0]) || (tok[0] == '0' && tok[1] == 'x')) {
-        if (sscanf(tok, "%i", &value) != 1) {
+        if (!parse_literal(tok, &value)) {
             error(expr_line, "Invalid numeric literal in expression");
+            value = 0;
         }
     } else if (find_constant(tok, &value)) {
         /* resolved via constants table */
@@ -512,7 +537,10 @@ static unsigned short assemble_preset_e(Instruction *inst) {
                 imm = value & 0xFF;
             }
         } else {
-            /* 8-bit literal - use as-is */
+            /* 8-bit literal - use as-is; one that does not fit is an error, not its low byte */
+            if (value < -128 || value > 255) {
+                error(inst->line_num, "SETBYTE value does not fit in a byte (use a label to split a 16-bit address)");
+            }
             imm = value & 0xFF;
         }
 

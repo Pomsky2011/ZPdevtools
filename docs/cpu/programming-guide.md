@@ -7,7 +7,7 @@ read those first if something here looks odd.
 
 ## Starting up
 
-The cartridge's entry point is recorded in its ROM header (see `zpbuild` and `rombuilder`), not in a reset vector. Assume
+The cartridge's entry point is recorded in its ROM header (see `zplink` and `zpbuild`), not in a reset vector. Assume
 nothing about the flags when you arrive:
 
 ```cpuasm

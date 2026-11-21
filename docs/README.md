@@ -15,7 +15,7 @@ is frozen) and was checked against it: see "How these docs are kept honest" belo
 
 | | |
 |---|---|
-| [tools/](tools/README.md) | Every tool's usage and traps, multi-file assembly, and the legacy `rombuilder` |
+| [tools/](tools/README.md) | Every tool's usage and traps, multi-file assembly |
 | [sdk/](sdk/README.md) | The C SDK, the [C calling convention](sdk/abi.md), and [`zplink` / `zpbuild`](sdk/linker.md) |
 | [dos/](dos/README.md) | Building on MS-DOS and the C89 rules |
 

@@ -162,7 +162,7 @@ runs a PPU program in a window. See also `examples/ppu/` for working programs.
 1. Is the program at address 0, and was the PPU started? Check `PPUSTATUS` and `PPUPC`.
 2. Is the loop wedged? Sample `PPUPC` over time: a PPU spinning on one address with `R62` equal to it is stuck on its own
    jump. This is what an interrupt does to a `JMR label` loop.
-3. Did a `0b` literal silently become 0? `ppuasm` does not read binary numbers.
-4. Did a constant above 255 get truncated? `SETBYTE` takes only a byte, and a plain number is not split.
+3. Does `SETBYTE` refuse a constant? It takes only a byte (-128..255), and a plain number is not split: use a label, or
+   two `SETBYTE`s after `TARREG` selects each half.
 5. For tiles: is the tile ID and bank the one you defined? The `$0300` window writes whichever tile is selected right now.
 6. For layered drawing, did the late bit (`$0364` bit 0) get set? A row was queued too late for its frame.

@@ -20,7 +20,7 @@
  *          --cpu FILE[@ADDR] [--ppu FILE[@ADDR]] [--apu FILE[@ADDR]]
  *          [--data FILE@ADDR ...] [--entry ADDR]
  *
- * Default addresses match rombuilder/CLAUDE.md:
+ * Default addresses match the console memory map (ZeroPoint CLAUDE.md):
  *   cpu  @ 0x008000   ppu @ 0x100000   apu @ 0x200000
  */
 

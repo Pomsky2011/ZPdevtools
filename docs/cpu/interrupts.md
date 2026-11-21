@@ -100,8 +100,7 @@ isr:    PHA
 ```
 
 Run on the emulator, the counter reads 10 after 700,000 master cycles and 51 after 3,400,000. Two details worth copying:
-the handler's address is a literal in the vector (`cpuasm` silently emits nothing for `.word label`, so put handlers at
-fixed addresses), and the idle loop uses `BRA`, because with `DB = $80` a `JMP idle` would jump into bank `$80`.
+the vector can name the handler's label (`.word handler`; the example writes the address out as a literal), and the idle loop uses `BRA`, because with `DB = $80` a `JMP idle` would jump into bank `$80`.
 
 ## WAI
 

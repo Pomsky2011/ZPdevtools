@@ -11,13 +11,12 @@ BINDIR = executables
 
 # Tools
 ASSEMBLERS    = ppuasm apuasm cpuasm
-ROM_TOOLS     = rombuilder rominspect
+ROM_TOOLS     = rominspect
 LINKERS       = zplink
 SIGNERS       = zpbuild
 DISASSEMBLERS = cpudisasm ppudisasm apudisasm
-CONVERTERS    = wav2mmp
 UTILITIES     = hexview
-ALL_TOOLS     = $(ASSEMBLERS) $(ROM_TOOLS) $(LINKERS) $(SIGNERS) $(DISASSEMBLERS) $(CONVERTERS) $(UTILITIES)
+ALL_TOOLS     = $(ASSEMBLERS) $(ROM_TOOLS) $(LINKERS) $(SIGNERS) $(DISASSEMBLERS) $(UTILITIES)
 ALL_BINS      = $(addprefix $(BINDIR)/,$(ALL_TOOLS))
 
 all: $(BINDIR) $(ALL_BINS)
@@ -36,9 +35,6 @@ $(BINDIR)/cpuasm: $(SRC)/cpuasm.c | $(BINDIR)
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
 # ROM Tools
-$(BINDIR)/rombuilder: $(SRC)/rombuilder.c | $(BINDIR)
-	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
-
 $(BINDIR)/rominspect: $(SRC)/rominspect.c $(SRC)/zpsha256.h | $(BINDIR)
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
@@ -60,10 +56,6 @@ $(BINDIR)/ppudisasm: $(SRC)/ppudisasm.c | $(BINDIR)
 
 $(BINDIR)/apudisasm: $(SRC)/apudisasm.c | $(BINDIR)
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
-
-# Converters
-$(BINDIR)/wav2mmp: $(SRC)/wav2mmp.c | $(BINDIR)
-	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS) -lm
 
 # Utilities
 $(BINDIR)/hexview: $(SRC)/hexview.c | $(BINDIR)
@@ -105,8 +97,8 @@ help:
 	@echo "  all            - Build all tools (default)"
 	@echo "  assemblers     - Build assemblers only (ppuasm, apuasm, cpuasm)"
 	@echo "  disassemblers  - Build disassemblers (cpudisasm, ppudisasm, apudisasm)"
-	@echo "  rom-tools      - Build ROM tools (rombuilder, rominspect)"
-	@echo "  utilities      - Build utilities (hexview, wav2mmp)"
+	@echo "  rom-tools      - Build ROM tools (rominspect)"
+	@echo "  utilities      - Build utilities (hexview)"
 	@echo "  examples       - Assemble the PPU demos in examples/ppu to .bin files"
 	@echo "  check          - Build, then run the assembler, linker, signer and disassembler tests"
 	@echo "  clean          - Remove all built files"
@@ -117,14 +109,14 @@ help:
 	@echo "Individual tools:"
 	@echo "  Assemblers:    ppuasm, apuasm, cpuasm"
 	@echo "  Disassemblers: cpudisasm, ppudisasm, apudisasm"
-	@echo "  ROM Tools:     rombuilder, rominspect"
-	@echo "  Converters:    wav2mmp"
+	@echo "  ROM Tools:     rominspect, zplink, zpbuild"
 	@echo "  Utilities:     hexview"
 
 # The fast tool tests (the fuzzer, tests/asm/fuzz_asm.py, and the compiler suite, tests/cc/run.sh, are run separately).
 check: all
 	sh tests/asm/check.sh
 	sh tests/asm/robust.sh
+	python3 scripts/sync_cpuasm_cycles.py --check
 	sh tests/c89/check.sh
 	python3 tests/link/check.py
 	python3 tests/disasm/check.py

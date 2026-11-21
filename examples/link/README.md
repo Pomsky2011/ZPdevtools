@@ -18,7 +18,7 @@ Files:
 - `main.c` — the same idea written against the C SDK; compiles with both `zpcc`
   and `def88186cc -DZP_CC_DOS` (see `../../docs/sdk/README.md`). The Makefile does not build it.
 - `gfx.bin` / `snd.bin` — placeholder PPU/APU asset blobs the Makefile generates (replace with
-  `ppuasm`/`apuasm`/`wav2mmp` output; keep them 256-byte aligned).
+  `ppuasm`/`apuasm`/`zpsnd.py` output; keep them 256-byte aligned).
 
 Inspect the results:
 

@@ -8,7 +8,7 @@ bad=0
 for f in c_compiler/ast.c c_compiler/codegen.c c_compiler/main.c c_compiler/preprocessor.c \
          c_compiler/parser.tab.c c_compiler/lexer.c \
          src/apuasm.c src/apudisasm.c src/cpuasm.c src/cpudisasm.c src/hexview.c src/ppuasm.c \
-         src/ppudisasm.c src/rombuilder.c src/rominspect.c src/wav2mmp.c src/zpbuild.c src/zplink.c; do
+         src/ppudisasm.c src/rominspect.c src/zpbuild.c src/zplink.c; do
     [ -f "$f" ] || continue
     out=$(gcc $FLAGS -Ic_compiler -Isrc "$f" 2>&1 | grep -E 'error|warning')
     if [ -n "$out" ]; then echo "FAIL $f"; echo "$out" | head -5; bad=$((bad+1)); else echo "ok   $f"; fi

@@ -27,13 +27,13 @@ cd examples/cpu
 
 What to know:
 
-- **Includes are relative to the working directory**, not to the file that contains the `.include`. Assembling
-  `examples/cpu/main_multifile.asm` from the repository root fails with `Cannot open input file` for each include, followed by
-  an `Undefined label` for everything those files define. Run the assembler from the directory the paths are relative to.
-- **Includes nest.** A file may include another, with the same working-directory rule for the path.
+- **Includes are looked up next to the file that contains the `.include`**, then in the working directory. So
+  `cpuasm examples/cpu/main_multifile.asm` works from the repository root. A missing file is `Cannot open input file: name`,
+  followed by an `Undefined label` for everything it would have defined.
+- **Includes nest** (16 deep at most; a file that includes itself is an error), with the same lookup for each path.
 - **Labels are global and forward references work** (two passes).
-- **A duplicate label is not an error.** Including a file twice assembles it twice with no complaint, so include each file once.
-  There are no include guards.
+- **A duplicate label is an error**, so including a file twice fails (`Duplicate label: name`): include each file once. There
+  are no include guards.
 - **`.org` is one origin shared by everything.** An `.org` inside an included file moves the position for the rest of the
   output, and padding goes in when it moves forward.
 - **`.equ NAME value`** defines a constant (it must come before its first use).

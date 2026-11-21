@@ -16,11 +16,9 @@ Every tool except `zpcc` (C++, needs clang) is strict C89, so the rest can also 
 | | `zpcc` (`llvm_compiler/`) | Full C through clang/LLVM; needs clang |
 | Linking | `zplink` | Locates flat CPU/PPU/APU segments into an ELF32 executable |
 | | `zpbuild` | Signs a zplink ELF into a `.zpb` ROM (`--selftest` checks the signing path) |
-| | `rombuilder` | Older, unsigned CPU+PPU+APU ROM packer |
 | | `rominspect` | Inspects ELF / ZPB / raw files (`-v` verbose, `-c` check, `-x` extract) |
 | Disassemblers | `cpudisasm`, `ppudisasm`, `apudisasm` | `-b` bytes, `-c` comments, `-s`/`-e` range |
 | Utilities | `hexview` | Hex viewer with `--analyze` statistics |
-| | `wav2mmp` | WAV to an APU MMP sample include |
 
 Python tools in `scripts/`: the ADPCM player builder (`build_adpcm_rom.py`, `docs/apu/adpcm.md`) and the ZPA sound pack
 baker `zpsnd.py` (`docs/apu/zpsnd.md`).
@@ -61,7 +59,7 @@ python3 tests/asm/fuzz_asm.py    # assembler fuzzer (not part of make check)
 | | |
 |---|---|
 | `docs/README.md` | Index of all the documentation |
-| `docs/tools/` | Every tool's usage and traps, `rombuilder` (legacy), multi-file assembly |
+| `docs/tools/` | Every tool's usage and traps, multi-file assembly |
 | `docs/sdk/` | The C SDK (`include/zeropoint/`, `lib/`), the C calling convention (`abi.md`), `zplink` and `zpbuild` (`linker.md`) |
 | `docs/cpu/` | DEF88186: architecture, addressing modes, instructions, opcode table, memory map, interrupts, timing, programming guide |
 | `spec/` | Machine-read specs: the CPU opcode map and the measured per-opcode table (see `spec/README.md`) |
@@ -83,4 +81,4 @@ internally (`PUSH`, `POP` and `RET` do not). Use target registers 2 and 3 for ma
 
 Licensed under the Mozilla Public License v2.0 (MPL-2.0) — see [LICENSE](LICENSE).
 
-MPL-2.0 is file-level copyleft: modifications to these tools' own source files must stay under MPL and have their source made available if distributed. Programs, ROMs, or games you build *with* these tools (via `cpuasm`, `ppuasm`, `apuasm`, `def88186cc`, `rombuilder`, etc.) are not Covered Software and are not subject to this license — you may license your own output however you like.
+MPL-2.0 is file-level copyleft: modifications to these tools' own source files must stay under MPL and have their source made available if distributed. Programs, ROMs, or games you build *with* these tools (via `cpuasm`, `ppuasm`, `apuasm`, `def88186cc`, `zplink`, etc.) are not Covered Software and are not subject to this license — you may license your own output however you like.

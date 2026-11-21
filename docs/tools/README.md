@@ -15,8 +15,6 @@ Usage below is what each tool prints and does today.
 | `zpbuild` | sign an ELF into a `.zpb` ROM | see [../sdk/linker.md](../sdk/linker.md) |
 | `rominspect` | inspect an ELF, `.zpb` or raw file | `rominspect file [-v] [-x] [-c]` |
 | `hexview` | hex dump | `hexview file [-s off] [-n count] [-w width] [-g group] [-a] [-o file] [--analyze]` |
-| `rombuilder` | legacy flat-image builder, **not loadable** | see [rombuilder.md](rombuilder.md) |
-| `wav2mmp` | WAV to SST blocks, **out of date** | see below |
 
 ## The build pipeline
 
@@ -40,14 +38,15 @@ and the SDK headers on the include path ([../sdk/README.md](../sdk/README.md)).
 Each assembler is documented with the processor it targets: [cpuasm](../cpu/programming-guide.md),
 [apuasm](../apu/programming-guide.md), [ppuasm](../ppu/assembler.md). The traps worth knowing up front:
 
-- **`cpuasm`** resolves `.include` relative to the **working directory**, not to the including file, so run it from the project
-  root. A missing include prints `Cannot open input file` and then fails on every label that file would have defined. It does
-  not diagnose a duplicate label (the file included twice simply assembles twice), and `.word label` / `.byte label` emit
-  nothing and report no error. Directives: `.org` `.bank` `.equ` `.byte` `.word` `.include` (and `.data`/`.code`, accepted and
-  ignored). `BNE`, `BPL`, `BVC` and `BCC` are pseudo-instructions. See [multifile-assembly.md](multifile-assembly.md).
+- **`cpuasm`** looks for an `.include` next to the including file first, then in the working directory. A missing include
+  prints `Cannot open input file: name` and then fails on every label that file would have defined; a label defined twice
+  (a file included twice) is an error, and so is a file that includes itself. Directives: `.org` `.bank` `.equ` `.byte` `.word`
+  `.long` `.include` (and `.data`/`.code`, accepted and ignored); `.byte`/`.word`/`.long` take numbers, `.equ` names and labels,
+  and refuse a number that does not fit. `BNE`, `BPL`, `BVC` and `BCC` are pseudo-instructions. See
+  [multifile-assembly.md](multifile-assembly.md).
 - **`apuasm`** resolves `.include` relative to the including file. Directives: `.org` `.db` `.dbh` `.include` `.rp`. Its RP lint
   rejects a jump to a label in another page.
-- **`ppuasm`** has no directives at all, silently reads `0b101` as 0, and builds 16-bit constants only through `TARREG`/`SETBYTE`.
+- **`ppuasm`** has no directives at all, and builds 16-bit constants only through `TARREG`/`SETBYTE` (`SETBYTE` refuses a plain number over 255).
 
 ## Disassemblers
 
@@ -90,13 +89,6 @@ hexview game.bin --analyze        # file statistics
 ```
 
 `-g 1|2|4` groups bytes, `-a` prints addresses in hex only, `-o` writes to a file.
-
-## wav2mmp (out of date)
-
-`wav2mmp input.wav output.inc [--sst-addr A] [--stl-addr A] [--label PREFIX] [--no-loop]` (and `scripts/wav2mmp.py`, the same
-tool) converts a mono 16-bit WAV to SST blocks and an STL entry as APU assembly. **That assembly no longer assembles**: it
-uses the removed `SBF` instruction and its usage comments recommend the unimplemented `WRH`/`WRL`. Use `scripts/zpsnd.py`
-([../apu/zpsnd.md](../apu/zpsnd.md)) to make sample data.
 
 ## Scripts
 

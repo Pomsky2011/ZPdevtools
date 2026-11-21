@@ -127,6 +127,11 @@ static int errors = 0;
  * code actually runs in a different bank. .BANK lets a program tell cpuasm
  * which bank it's being assembled for, so those forms encode the real bank. */
 static uint8_t current_bank = 0;
+/* Directory of the file being assembled, with its trailing separator ("" = the working directory). .include looks here
+ * first, like apuasm, so a file can include its neighbours whatever the working directory is. */
+static char cur_dir[MAX_LINE];
+static int include_depth = 0;
+#define MAX_INCLUDE_DEPTH 16
 
 /* Function prototypes */
 void init_instructions(void);
@@ -158,6 +163,27 @@ void error(const char *msg) {
 
 void warning(const char *msg) {
     fprintf(stderr, "Warning: %s\n", msg);
+}
+
+/* The directory part of a path, trailing separator included ("" if it has none or is too long to prepend again). */
+static void dir_of(const char *path, char *dir) {
+    const char *s = path + strlen(path);
+    size_t n;
+    while (s > path && s[-1] != '/' && s[-1] != '\\') s--;
+    n = (size_t)(s - path);
+    if (n >= MAX_LINE / 2) n = 0;
+    memcpy(dir, path, n);
+    dir[n] = '\0';
+}
+
+static int is_absolute_path(const char *path) {
+    return path[0] == '/' || path[0] == '\\' || (isalpha((unsigned char)path[0]) && path[1] == ':');
+}
+
+static int file_exists(const char *path) {
+    FILE *f = fopen(path, "r");
+    if (f) fclose(f);
+    return f != NULL;
 }
 
 /* Skip whitespace */
@@ -322,8 +348,10 @@ void add_label(const char *name, uint16_t addr) {
     }
     idx = find_label(name);
     if (idx >= 0) {
-        if (labels[idx].defined && pass == 2) {
-            error("Duplicate label");
+        if (labels[idx].defined) {
+            char msg[128];
+            sprintf(msg, "Duplicate label: %s", name);
+            error(msg);
             return;
         }
         labels[idx].address = addr;
@@ -664,6 +692,57 @@ void emit_long(uint32_t value) {
     emit_byte((value >> 16) & 0xFF);
 }
 
+/* The operands of .BYTE / .WORD / .LONG (size = 1, 2, 3): numbers, .EQU constants, or labels. A label is the address it
+ * is defined at (with its bank, for .LONG); it is only known on pass 2, and pass 1 just needs the size. */
+static void emit_data_list(char *p, int size, const char *directive) {
+    char token[MAX_LINE];
+    char msg[2 * MAX_LINE + 64];
+    uint32_t val;
+    int idx, is_number;
+
+    p = skip_whitespace(p);
+    while (*p) {
+        p = parse_token(p, token);
+        if (!*token) break;
+        val = 0;
+        is_number = 1;
+        if (!parse_number(token, &val)) {
+            idx = find_equate(token);
+            if (idx >= 0) {
+                val = equates[idx].value;
+            } else {
+                is_number = 0;
+                if (pass == 2) {
+                    idx = find_label(token);
+                    if (idx >= 0 && labels[idx].defined) {
+                        val = ((uint32_t)labels[idx].bank << 16) | labels[idx].address;
+                    } else {
+                        sprintf(msg, "Undefined label: %s", token);
+                        error(msg);
+                    }
+                }
+            }
+        }
+        if (is_number && pass == 2) {
+            int32_t sv = (int32_t)val;
+            int bad = 0;
+            if (size == 1) bad = (sv < -128 || sv > 255);
+            else if (size == 2) bad = (sv < -32768 || sv > 65535);
+            else bad = (val > 0xFFFFFFu && sv >= 0);
+            if (bad) {
+                sprintf(msg, "%s value %ld does not fit in %d byte%s", directive, (long)sv, size, size == 1 ? "" : "s");
+                error(msg);
+            }
+        }
+        emit_byte((uint8_t)(val & 0xFF));
+        if (size >= 2) emit_byte((uint8_t)((val >> 8) & 0xFF));
+        if (size >= 3) emit_byte((uint8_t)((val >> 16) & 0xFF));
+        p = skip_whitespace(p);
+        if (*p == ',') p++;
+        p = skip_whitespace(p);
+    }
+}
+
 /* Initialize instruction table */
 void init_instructions(void) {
     /* This is a simplified version - in a full assembler, you'd parse the CSV */
@@ -743,8 +822,8 @@ void init_instructions(void) {
 
     /* Stores - STA */
     INST("STA", AM_ABSOLUTE, 0x51, 3, 3);
-    INST("STA", AM_ABSOLUTE_X, 0x52, 3, 3);
-    INST("STA", AM_ABSOLUTE_Y, 0x53, 3, 3);
+    INST("STA", AM_ABSOLUTE_X, 0x52, 3, 4);
+    INST("STA", AM_ABSOLUTE_Y, 0x53, 3, 4);
     INST("STA", AM_DIRECT_PAGE, 0x54, 2, 3);
     INST("STA", AM_DP_X, 0x4A, 2, 4);
     INST("STA", AM_ABSOLUTE_LONG, 0x55, 4, 5);
@@ -752,7 +831,7 @@ void init_instructions(void) {
     INST("STA", AM_STACK_RELATIVE, 0x57, 2, 4);
     INST("STA", AM_DP_INDIRECT_X, 0x4B, 2, 6);
     INST("STA", AM_DP_INDIRECT, 0x4C, 2, 5);
-    INST("STA", AM_DP_INDIRECT_Y, 0x4D, 2, 6);
+    INST("STA", AM_DP_INDIRECT_Y, 0x4D, 2, 7);
     /* STA (sr,S),Y / [dp] / [dp],Y: real opcodes, documented in
      * docs/cpu/opcode-table.md, but never registered here. */
     INST("STA", AM_SR_INDIRECT_Y, 0x4E, 2, 7);
@@ -771,7 +850,7 @@ void init_instructions(void) {
 
     /* Stores - STZ */
     INST("STZ", AM_ABSOLUTE, 0x5E, 3, 3);
-    INST("STZ", AM_ABSOLUTE_X, 0x5F, 3, 3);
+    INST("STZ", AM_ABSOLUTE_X, 0x5F, 3, 4);
     INST("STZ", AM_DIRECT_PAGE, 0x60, 2, 3);
     INST("STZ", AM_DP_X, 0x61, 2, 4);
 
@@ -816,7 +895,7 @@ void init_instructions(void) {
     /* Arithmetic - INC/DEC */
     INST("INC", AM_ACCUMULATOR, 0x69, 1, 2);
     INST("INC", AM_ABSOLUTE, 0x6A, 3, 3);
-    INST("INC", AM_ABSOLUTE_X, 0x6B, 3, 3);
+    INST("INC", AM_ABSOLUTE_X, 0x6B, 3, 4);
     INST("INC", AM_DIRECT_PAGE, 0x6C, 2, 5);
     INST("INC", AM_DP_X, 0x6D, 2, 6);
     /* 0x6E (cpu_inst_0x6E) is commented "INC long" in cpu_instructions.cpp but calls addrAbsolute(): the same 16-bit
@@ -829,7 +908,7 @@ void init_instructions(void) {
 
     INST("DEC", AM_ACCUMULATOR, 0x71, 1, 2);
     INST("DEC", AM_ABSOLUTE, 0x72, 3, 3);
-    INST("DEC", AM_ABSOLUTE_X, 0x73, 3, 3);
+    INST("DEC", AM_ABSOLUTE_X, 0x73, 3, 4);
     INST("DEC", AM_DIRECT_PAGE, 0x74, 2, 5);
     INST("DEC", AM_DP_X, 0x75, 2, 6);
     /* 0x76 mirrors 0x6E above: DEC.L, the 6-cycle duplicate of DEC absolute (0x72). */
@@ -906,21 +985,21 @@ void init_instructions(void) {
      * (cpu_instructions.cpp 0x8F-0x91, 0x81-0x83, 0x85-0x87, 0x9A-0x9C),
      * documented in docs/cpu/opcode-table.md, but never registered here - only
      * the accumulator/plain-absolute forms were. */
-    INST("ASL", AM_ABSOLUTE_X, 0x9A, 3, 3);
+    INST("ASL", AM_ABSOLUTE_X, 0x9A, 3, 4);
     INST("ASL", AM_DIRECT_PAGE, 0x9B, 2, 5);
     INST("ASL", AM_DP_X, 0x9C, 2, 6);
     INST("LSR", AM_ACCUMULATOR, 0x8D, 1, 2);
     INST("LSR", AM_ABSOLUTE, 0x8E, 3, 3);
-    INST("LSR", AM_ABSOLUTE_X, 0x8F, 3, 3);
+    INST("LSR", AM_ABSOLUTE_X, 0x8F, 3, 4);
     INST("LSR", AM_DIRECT_PAGE, 0x90, 2, 5);
     INST("LSR", AM_DP_X, 0x91, 2, 6);
     INST("ROL", AM_ACCUMULATOR, 0x80, 1, 2);
     INST("ROL", AM_ABSOLUTE, 0x81, 3, 3);
-    INST("ROL", AM_ABSOLUTE_X, 0x82, 3, 3);
+    INST("ROL", AM_ABSOLUTE_X, 0x82, 3, 4);
     INST("ROL", AM_DIRECT_PAGE, 0x83, 2, 5);
     INST("ROR", AM_ACCUMULATOR, 0x84, 1, 2);
     INST("ROR", AM_ABSOLUTE, 0x85, 3, 3);
-    INST("ROR", AM_ABSOLUTE_X, 0x86, 3, 3);
+    INST("ROR", AM_ABSOLUTE_X, 0x86, 3, 4);
     INST("ROR", AM_DIRECT_PAGE, 0x87, 2, 5);
     /* RCL A (0x8C): real opcode, documented in docs/cpu/opcode-table.md, but
      * never registered here. Bare "RCL" (no operand) resolves to
@@ -1039,19 +1118,19 @@ void init_instructions(void) {
     /* Hardware extensions (8086-inspired) - MUL: A * operand -> A:X            */
     /* (opcodes per spec/DEF88186.csv)                                        */
     INST("MUL", AM_IMMEDIATE,          0xEF, 3, 8);
-    INST("MUL", AM_ABSOLUTE,           0xF0, 3, 9);
-    INST("MUL", AM_ABSOLUTE_X,         0xF1, 3, 9);
-    INST("MUL", AM_ABSOLUTE_Y,         0xF2, 3, 9);
-    INST("MUL", AM_DIRECT_PAGE,        0xF3, 2, 9);
-    INST("MUL", AM_DP_X,               0xF4, 2, 10);
-    INST("MUL", AM_ABSOLUTE_LONG,      0xF5, 4, 11);
-    INST("MUL", AM_ABSOLUTE_LONG_X,    0xF6, 4, 11);
-    INST("MUL", AM_STACK_RELATIVE,     0xF7, 2, 10);
-    INST("MUL", AM_DP_INDIRECT_X,      0xEA, 2, 12);
-    INST("MUL", AM_DP_INDIRECT_Y,      0xEB, 2, 11);
-    INST("MUL", AM_DP_INDIRECT_LONG,   0xED, 2, 12);
-    INST("MUL", AM_DP_INDIRECT_LONG_Y, 0xEE, 2, 12);
-    INST("MUL", AM_SR_INDIRECT_Y,      0xEC, 2, 13);
+    INST("MUL", AM_ABSOLUTE,           0xF0, 3, 8);
+    INST("MUL", AM_ABSOLUTE_X,         0xF1, 3, 8);
+    INST("MUL", AM_ABSOLUTE_Y,         0xF2, 3, 8);
+    INST("MUL", AM_DIRECT_PAGE,        0xF3, 2, 8);
+    INST("MUL", AM_DP_X,               0xF4, 2, 8);
+    INST("MUL", AM_ABSOLUTE_LONG,      0xF5, 4, 8);
+    INST("MUL", AM_ABSOLUTE_LONG_X,    0xF6, 4, 8);
+    INST("MUL", AM_STACK_RELATIVE,     0xF7, 2, 8);
+    INST("MUL", AM_DP_INDIRECT_X,      0xEA, 2, 8);
+    INST("MUL", AM_DP_INDIRECT_Y,      0xEB, 2, 8);
+    INST("MUL", AM_DP_INDIRECT_LONG,   0xED, 2, 8);
+    INST("MUL", AM_DP_INDIRECT_LONG_Y, 0xEE, 2, 8);
+    INST("MUL", AM_SR_INDIRECT_Y,      0xEC, 2, 8);
     /* DIV X,Y is handled as a special operand form below; long forms here.     */
     INST("DIV", AM_ABSOLUTE_LONG_X,    0x93, 4, 8);
     INST("DIV", AM_ABSOLUTE_LONG_Y,    0x94, 4, 8);
@@ -1078,6 +1157,7 @@ int assemble_line(char *line) {
     char *colon;
     char *t;
     char filename[MAX_LINE];
+    char incpath[2 * MAX_LINE];
     char *src;
     char *end;
     uint32_t addr;
@@ -1191,6 +1271,17 @@ int assemble_line(char *line) {
             end = filename + strlen(filename);
             if (end > filename && *(end - 1) == '"') *(end - 1) = '\0';
 
+            if (!*filename) {
+                error(".include expects a file name");
+                return 0;
+            }
+
+            /* Relative to the including file first, then the working directory (how every include used to be found). */
+            if (cur_dir[0] && !is_absolute_path(filename) && strlen(cur_dir) + strlen(filename) < MAX_LINE) {
+                sprintf(incpath, "%s%s", cur_dir, filename);
+                if (file_exists(incpath)) strcpy(filename, incpath);
+            }
+
             /* Recursively assemble the included file */
             assemble_file(filename);
         }
@@ -1253,30 +1344,17 @@ int assemble_line(char *line) {
     }
 
     if (strcmp(token, ".BYTE") == 0) {
-        p = skip_whitespace(p);
-        while (*p) {
-            p = parse_token(p, token);
-            if (!*token) break;
-            if (parse_number(token, &val)) {
-                emit_byte(val & 0xFF);
-            }
-            p = skip_whitespace(p);
-            if (*p == ',') p++;
-        }
+        emit_data_list(p, 1, ".byte");
         return 0;
     }
 
     if (strcmp(token, ".WORD") == 0) {
-        p = skip_whitespace(p);
-        while (*p) {
-            p = parse_token(p, token);
-            if (!*token) break;
-            if (parse_number(token, &val)) {
-                emit_word(val & 0xFFFF);
-            }
-            p = skip_whitespace(p);
-            if (*p == ',') p++;
-        }
+        emit_data_list(p, 2, ".word");
+        return 0;
+    }
+
+    if (strcmp(token, ".LONG") == 0) {
+        emit_data_list(p, 3, ".long");
         return 0;
     }
 
@@ -1290,6 +1368,16 @@ int assemble_line(char *line) {
         while (end > operand && isspace(*end)) *end-- = '\0';
     }
     substitute_equates(operand);
+
+    /* The short spellings the opcode CSV lists next to the real mnemonics. */
+    if (strcmp(token, "LP") == 0) strcpy(token, "LOOP");
+    else if (strcmp(token, "PUSHF") == 0) strcpy(token, "PHP");
+    else if (strcmp(token, "PPP") == 0) strcpy(token, "POPF");
+    else if ((strcmp(token, "INA") == 0 || strcmp(token, "DEA") == 0) &&
+             (!operand[0] || strcmp(operand, "A") == 0 || strcmp(operand, "a") == 0)) {
+        strcpy(operand, "A");
+        strcpy(token, token[0] == 'I' ? "INC" : "DEC");
+    } else if (strcmp(token, "JML") == 0 && (operand[0] == '[' || (operand[0] == '!' && operand[1] == '['))) strcpy(token, "JMP");  /* JML [addr] is JMP [addr] */
 
     /* Leading '!' forces absolute (DB-relative) addressing even when the
      * operand value is <=0xFF, which detect_addressing_mode() would
@@ -1513,13 +1601,23 @@ int assemble_line(char *line) {
 void assemble_file(const char *filename) {
     FILE *f;
     char line[MAX_LINE];
+    char saved_dir[MAX_LINE];
     int line_num;
 
-    f = fopen(filename, "r");
-    if (!f) {
-        error("Cannot open input file");
+    if (include_depth >= MAX_INCLUDE_DEPTH) {
+        error("Includes nested too deeply (does a file include itself?)");
         return;
     }
+    f = fopen(filename, "r");
+    if (!f) {
+        char msg[2 * MAX_LINE];
+        sprintf(msg, "Cannot open input file: %s", filename);
+        error(msg);
+        return;
+    }
+    strcpy(saved_dir, cur_dir);
+    dir_of(filename, cur_dir);
+    include_depth++;
 
     line_num = 0;
 
@@ -1538,7 +1636,14 @@ void assemble_file(const char *filename) {
         assemble_line(line);
     }
 
+    if (ferror(f)) {
+        char msg[2 * MAX_LINE];
+        sprintf(msg, "Cannot read input file: %s", filename);
+        error(msg);
+    }
     fclose(f);
+    include_depth--;
+    strcpy(cur_dir, saved_dir);
 
     printf("Pass %d: Assembled %lu bytes, %d labels, %d fixups\n",
            pass, (unsigned long)code_len, num_labels, num_fixups);
