@@ -41,17 +41,21 @@ F_CLIP, F_WRAP, F_TRANSPARENT = 0x01, 0x08, 0x40
 BANDS = 32
 MAXP = 8                # sprite pieces per band the PPU will launch (a header above this is clamped)
 BAND_BUDGET = 1300      # blitter channel-cycles of sprite work the list builder admits per band (zp_layers_sprites.h): bands first go late at ~1550 under the worst fine scroll, see docs/ppu/layers.md
-LIST_STRIDE = 128       # the builder's dense form: per band a word count, then MAXP records of 7 words in port order (2 + 8 x 14 = 114 B)
-RECORD_BYTES = 14       # what the PPU reads is the packed stream: per band a word count, then count records, bands back to back
+LIST_STRIDE = 128       # the builder's dense form: per band a header word, then MAXP records of 7 words in port order (2 + 8 x 14 = 114 B)
+RECORD_BYTES = 14       # what the PPU reads is the packed stream: per band a header word (bits 0-3: the pieces above BG1; EXT_FLAG: this band also has pieces
+                        # behind BG0 and between the layers), then the records; an EXT band reads [count][behind records][count][between records] after the header,
+                        # the above records last. Bands back to back.
+EXT_FLAG = 16
+EXT_OFF = 2 + MAXP * RECORD_BYTES   # in the builder's dense form: the two extra count words (behind, between) of a band, after its record room
 LIST_RECORD_WORDS = 7   # src, count, x, y, clip0, clip1, flags
 QUEUE_CELLS = 128
 
-CTRL_WORDS = ["NCOLS", "SPREN", "FRAMES", "L1FLAGS", "TILEREQ", "TILEBANK", "TILEID", "RUN", "LISTBASE", "WINBASE"]
+CTRL_WORDS = ["NCOLS", "SPREN", "FRAMES", "L1FLAGS", "TILEREQ", "TILEBANK", "TILEID", "RUN", "LISTBASE", "WINBASE", "L0FLAGS"]
 SCROLL_OFF = 0          # the four scroll words SCX0 SCY0 SCX1 SCY1 start the frame block, then (STREAM_OFF) the sprite stream: one flip moves scroll and sprites together
 STREAM_OFF = 8
 
 REGS = dict(
-    ORIG=53, CLAMP=54, C14=55,
+    ORIG=53, L0F=54, C14=55,
     ZERO=4, C2=2, C8=3, ONE=5, C512=7, C256=8, C64=9, C128=10, CMAXP=11, FOUR=12, PENDP=13, PORTB=14, FBASE=15,
     SRC=16, CNT=17, PX=18, PY=19, CL0=20, CL1=21, FLG=22,
     SHX0=23, SHY0=24, SHX1=25, SHY1=26, NCOLS=27, SPREN=28, BAND=29, ROW0=30, KA=31, KB=32, MAPB=33, SCX=34, SCY=35,
@@ -187,11 +191,17 @@ def emit_program():
 
     # ---- one frame: snapshot the CPU-visible registers, then produce its 32 bands -----------------------------------------
     label("frame_loop")
-    ldw("NCOLS", ctrl("NCOLS")); ldw("SPREN", ctrl("SPREN")); ldw("L1F", ctrl("L1FLAGS")); ldw("LBASE", ctrl("LISTBASE")); ldw("WINBASE", ctrl("WINBASE"))
+    ldw("NCOLS", ctrl("NCOLS")); ldw("SPREN", ctrl("SPREN")); ldw("L1F", ctrl("L1FLAGS")); ldw("L0F", ctrl("L0FLAGS")); ldw("LBASE", ctrl("LISTBASE")); ldw("WINBASE", ctrl("WINBASE"))
     li("T2", SCROLL_OFF); mov("T", "LBASE"); ins("ADD", "T", "T2")           # scroll comes from the same block as the sprite lists
     for name in ("SHX0", "SHY0", "SHX1", "SHY1"):
         e("    SETDP %s" % r("T")); e("    MOV %s" % r(name)); ins("ADD", "T", "C2")
+    for name in ("SHY0", "SHY1"):                                             # the producer relies on a scroll Y in 0..511 (do_layer)
+        mov("T", name); ins("INTDIV", "T", "C512"); ins("MUL", "T", "C512"); ins("SUB", name, "T")
     mov("REC", "LBASE"); ins("ADD", "REC", "C8")                              # REC walks the sprite stream across the bands: it starts after the scroll words
+    e("    CMP %s, %s" % (r("SPREN"), r("ZERO")))                                   # the band header is multiplied by SPREN (no branch per band): make it 0 or 1
+    e("    JMZ fl_spren_ok")
+    e("    CLR %s" % r("SPREN")); e("    INC %s" % r("SPREN"))
+    label("fl_spren_ok")
     ldw("T", ctrl("FRAMES")); e("    INC %s" % r("T")); stw(ctrl("FRAMES"), "T")
     e("    INC %s" % r("PFRAME"))
     li("T", 0x035E); e("    SETDP %s" % r("T")); e("    MOVDP %s" % r("PFRAME"))     # every row of this frame names it (the port keeps the word)
@@ -219,16 +229,21 @@ def emit_program():
     e("    INC %s" % r("CULL"))
     label("win_read_done")
 
-    # BG0 then BG1: queue order is z-order
-    mov("SCX", "SHX0"); mov("SCY", "SHY0"); li("MAPB", MAP[0]); e("    CLR %s" % r("LAYERF"))
+    # The band's sprite header (docs/ppu/layers.md "Sprite priority"): ORIG = the pieces above BG1, plus EXT_FLAG when the band has groups behind BG0 and
+    # between the layers (their count words follow in the stream, each read where its group is drawn). SPREN = 0 zeroes it. A label jump costs ~10
+    # cycles here (ppuasm sets up the target first), so the plain band below, the usual one, has only the one test and no jump back.
+    e("    SETDP %s" % r("REC")); e("    MOV %s" % r("ORIG")); ins("ADD", "REC", "C2"); ins("MUL", "ORIG", "SPREN")
+    e("    CMP %s, %s" % (r("ORIG"), r("CMAXP")))
+    e("    JMG band_ext")
+    mov("SCX", "SHX0"); mov("SCY", "SHY0"); li("MAPB", MAP[0]); mov("LAYERF", "L0F")    # BG0 is opaque unless the CPU says T
     e("    JSR do_layer")
     mov("SCX", "SHX1"); mov("SCY", "SHY1"); li("MAPB", MAP[1]); mov("LAYERF", "L1F")
     e("    JSR do_layer")
-
-    e("    CMP %s, %s" % (r("SPREN"), r("ZERO")))
-    e("    JMZ sprites_done")
+    e("    CMP %s, %s" % (r("ORIG"), r("ZERO")))
+    e("    JMZ band_win")
+    mov("NREC", "ORIG")
     e("    JSR do_sprites")
-    label("sprites_done")
+    label("band_win")
     e("    CMP %s, %s" % (r("WINBASE"), r("ZERO")))
     e("    JMZ band_next")
     e("    JSR do_window")                                  # above everything, so last
@@ -240,11 +255,38 @@ def emit_program():
     e("    JNZ band_loop")
     e("    JMR frame_loop")
 
+    # ---- band_ext: a band with sprites behind BG0 and/or between the layers (out of line: the plain band falls straight through to its window and
+    # the loop end). Queue order is z-order: behind BG0, BG0, between, BG1, above both. The two count words follow the header in the stream. -------
+    label("band_ext")
+    e("    SETDP %s" % r("REC")); e("    MOV %s" % r("NREC")); ins("ADD", "REC", "C2")
+    e("    CMP %s, %s" % (r("NREC"), r("ZERO")))
+    e("    JMZ ext_back_done")
+    e("    JSR do_sprites")
+    label("ext_back_done")
+    mov("SCX", "SHX0"); mov("SCY", "SHY0"); li("MAPB", MAP[0]); mov("LAYERF", "L0F")
+    e("    JSR do_layer")
+    e("    SETDP %s" % r("REC")); e("    MOV %s" % r("NREC")); ins("ADD", "REC", "C2")
+    e("    CMP %s, %s" % (r("NREC"), r("ZERO")))
+    e("    JMZ ext_mid_done")
+    e("    JSR do_sprites")
+    label("ext_mid_done")
+    mov("SCX", "SHX1"); mov("SCY", "SHY1"); li("MAPB", MAP[1]); mov("LAYERF", "L1F")
+    e("    JSR do_layer")
+    li("T2", EXT_FLAG); mov("NREC", "ORIG"); ins("SUB", "NREC", "T2")                  # the above count, without the flag
+    e("    CMP %s, %s" % (r("NREC"), r("ZERO")))
+    e("    JMZ band_win")
+    e("    JSR do_sprites")
+    e("    JMR band_win")
+
     # ---- do_layer: one layer's pieces for the band: SCX SCY MAPB LAYERF ROW0 NCOLS in. Works out the layer's row state, then draws
     # the screen cells [KA, KB) of it (do_range); under an opaque window span only the cells the span does not hide. -----------------------
     label("do_layer")
     mov("WY", "ROW0"); ins("ADD", "WY", "SCY")
-    mov("T", "WY"); ins("INTDIV", "T", "C512"); ins("MUL", "T", "C512"); ins("SUB", "WY", "T")     # world row mod 512
+    e("    INC %s" % r("WY")); e("    CMP %s, %s" % (r("WY"), r("C512")))                              # world row mod 512: SCY was reduced to 0..511 once per frame
+    e("    JNG dl_wy_ok")                                                                              # (so ROW0 + SCY < 760), WY + 1 > 512 is WY >= 512
+    ins("SUB", "WY", "C512")
+    label("dl_wy_ok")
+    e("    DEC %s" % r("WY"))
     mov("TROW", "WY"); ins("INTDIV", "TROW", "C8")
     mov("O", "TROW"); ins("MUL", "O", "C8"); mov("T", "WY"); ins("SUB", "T", "O"); mov("O", "T")   # fine Y 0..7
     mov("TX", "SCX"); ins("INTDIV", "TX", "C8")
@@ -337,17 +379,14 @@ def emit_program():
     label("dw_done")
     e("    RET")
 
-    # ---- do_sprites: the band's piece list from the packed stream: [word count][count x 14 B]; REC is a running pointer, so an empty band
-    # costs two bytes of ROM. A count above MAXP is clamped and the surplus skipped (the builder never makes one). ---------------------
+    # ---- do_sprites: one priority group of the band's pieces from the packed stream (NREC = its count): the records are the next 14 B each at REC, a
+    # running pointer, so an empty band costs two bytes of ROM. A count above MAXP is clamped and the surplus (in KB) skipped (the builder never makes one). ---
     label("do_sprites")
-    e("    SETDP %s" % r("REC")); e("    MOV %s" % r("ORIG"))
-    ins("ADD", "REC", "C2")
-    mov("NREC", "ORIG")
+    e("    CLR %s" % r("KB"))
     e("    CMP %s, %s" % (r("NREC"), r("CMAXP")))
-    e("    JNG sp_count_ok")
-    mov("NREC", "CMAXP")                              # admission: at most MAXP pieces per band
-    label("sp_count_ok")
-    mov("CLAMP", "NREC")
+    e("    JNG sp_loop")
+    mov("KB", "NREC"); ins("SUB", "KB", "CMAXP")
+    mov("NREC", "CMAXP")                              # admission: at most MAXP pieces per group
     label("sp_loop")
     e("    CMP %s, %s" % (r("NREC"), r("ZERO")))
     e("    JMZ sp_done")
@@ -359,19 +398,19 @@ def emit_program():
     e("    DEC %s" % r("NREC"))
     e("    JMR sp_loop")
     label("sp_done")
-    mov("T", "ORIG"); ins("SUB", "T", "CLAMP"); ins("MUL", "T", "C14"); ins("ADD", "REC", "T")   # skip what was clamped away
+    ins("MUL", "KB", "C14"); ins("ADD", "REC", "KB")                    # skip what was clamped away (nothing: KB = 0)
     e("    RET")
 
 
 def write_layout_header(path):
     with open(path, "w") as f:
-        f.write("// generated by gen_layers.py - PPU layout of the two-layer + sprite microcode (docs/ppu/layers.md)\n")
+        f.write("/* generated by gen_layers.py - PPU layout of the two-layer + sprite microcode (docs/ppu/layers.md) */\n")
         f.write("#pragma once\n")
         for n, v in (("CODE_BASE", CODE_BASE), ("PAL", PAL), ("CTRL", CTRL), ("STACK", STACK), ("SPRCELLS", SPRCELLS), ("LISTS", LISTS), ("LISTS2", LISTS2),
                      ("MAP0", MAP[0]), ("MAP1", MAP[1]), ("WIN0", WIN0), ("WIN1", WIN1), ("GLFILL", GLFILL), ("WINCELLS", WINCELLS), ("WINCELLS_END", WINCELLS_END)):
             f.write("#define ZPL_%s 0x%04X\n" % (n, v))
         for n, v in (("BANDS", BANDS), ("SCROLL_OFF", SCROLL_OFF), ("STREAM_OFF", STREAM_OFF), ("MAXP", MAXP), ("BAND_BUDGET", BAND_BUDGET), ("LIST_STRIDE", LIST_STRIDE), ("LIST_RECORD_WORDS", LIST_RECORD_WORDS),
-                     ("QUEUE_CELLS", QUEUE_CELLS), ("TILE_MODE_FLAGS", TILE_MODE_FLAGS), ("WIN_HDR_BYTES", WIN_HDR_BYTES), ("WIN_REC_BYTES", WIN_REC_BYTES),
+                     ("QUEUE_CELLS", QUEUE_CELLS), ("EXT_FLAG", EXT_FLAG), ("EXT_OFF", EXT_OFF), ("TILE_MODE_FLAGS", TILE_MODE_FLAGS), ("WIN_HDR_BYTES", WIN_HDR_BYTES), ("WIN_REC_BYTES", WIN_REC_BYTES),
                      ("WIN_TABLE_BYTES", WIN_TABLE_BYTES)):
             f.write("#define ZPL_%s %d\n" % (n, v))
         f.write("#define ZPL_F_CLIP 0x%02X\n#define ZPL_F_WRAP 0x%02X\n#define ZPL_F_TRANSPARENT 0x%02X\n" % (F_CLIP, F_WRAP, F_TRANSPARENT))

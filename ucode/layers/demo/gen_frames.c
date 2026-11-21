@@ -47,11 +47,11 @@ int main(int argc, char** argv) {
         unsigned char block[BLOCK_BYTES];
         int i;
 
-        /* ship: sweeps across the sky, turning round at each end */
+        /* ship: sweeps across the sky, turning round at each end; it flies between the layers: in front of BG0 (sky + ground), behind BG1 (the clouds) */
         spr[0].w = 4; spr[0].h = 2; spr[0].cells = ZPL_SPRCELLS + 4 * 5;
         spr[0].x = (short)(112 + (int)(104 * sin(t)));
         spr[0].y = (short)(22 + (int)(12 * sin(3 * t)));
-        spr[0].flags = cos(t) < 0 ? ZPL_SPR_HFLIP : 0;
+        spr[0].flags = (cos(t) < 0 ? ZPL_SPR_HFLIP : 0) | ZPL_SPR_PRIO_MID;
         /* box: a loop in the middle of the screen */
         spr[1].w = 2; spr[1].h = 2; spr[1].cells = ZPL_SPRCELLS + 4 * 1;
         spr[1].x = (short)(120 + (int)(80 * cos(2 * t)));

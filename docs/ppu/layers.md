@@ -13,7 +13,8 @@ every tile itself; it is kept because its measurements are why the hardware queu
 | Asked | Result |
 |-------|--------|
 | 2 background layers, 64x64 maps, pixel scroll X and Y | Done. BG0 behind BG1, each layer scrolls independently, wrapping at 512 px |
-| Sprites of configurable size | Done: any w x h in 8x8 tiles, hflip/vflip, drawn after both layers in array order |
+| Sprites of configurable size | Done: any w x h in 8x8 tiles, hflip/vflip, array order within a priority |
+| Sprite priority | Done, see "Sprite priority": behind BG0, between the layers, or above both (the default) |
 | The PPU must never lag (a late band flickers the frame) | Guaranteed by construction and tested, see "Never lag" |
 | Hardware: write-ahead queue, 128 tiles, framebuffer access given up | Done as a tile-**row** queue (a map row is one launch), 128 cells, `$E000-$FFFF` and `$C000-$DFFF` open bus in write-ahead mode |
 | Late entries dropped with a sticky flag | Done (`$0364` bit 0); the tests assert it stays clear |
@@ -34,7 +35,7 @@ CPU's 128 KB of WRAM is unaffected):
 | `$11A0-$17FF` | window cell pool, 408 cells: where the cells of window boxes live (nothing else reads it) |
 | `$1800-$1BFF` | sprite tile cells, 4 bytes each, room for 256 |
 | `$1C00-$1DFF` | palette, 256 x BBGR16, loaded once at start with `PALETTE256` |
-| `$1E00-$1E13` | control block, words: `NCOLS SPREN FRAMES L1FLAGS TILEREQ TILEBANK TILEID RUN LISTBASE WINBASE` |
+| `$1E00-$1E15` | control block, words: `NCOLS SPREN FRAMES L1FLAGS TILEREQ TILEBANK TILEID RUN LISTBASE WINBASE L0FLAGS` |
 | `$1F00-$1FFF` | stack (grows up) |
 | `$2000-$3FFF` | two frame blocks of 4 KiB (`$2000`, `$3000`): the sprite lists, 32 bands x 128 B, with the four scroll words at the end (`+$FF8`) |
 | `$4000-$7FFF` | BG0 map, 64x64 cells x 4 B |
@@ -48,13 +49,14 @@ CPU's 128 KB of WRAM is unaffected):
   frame (and `WINBASE`), so the CPU fills the *idle* block (`$2000` or `$3000`) at its leisure, then writes `LISTBASE` to flip: scroll and sprites
   change together and nothing tears. Because `FRAMES` increments when the PPU takes the snapshot, the CPU can zero it, wait for
   it to turn non-zero, and then know the other block is free. `L1FLAGS` is OR'd into BG1's queue flags (`$40` makes the whole
-  layer transparent where its tiles are alpha 0).
+  layer transparent where its tiles are alpha 0); `L0FLAGS` does the same for BG0 and is 0 (opaque) unless the CPU sets it, which is what
+  lets a sprite *behind* BG0 show (see "Sprite priority"). Both are snapshotted once per frame.
 - **Maps are read when drawn**: a queued row's cells are read at dispatch, not at launch. Update a map (or the sprite cells)
   only where the PPU is not about to draw, or double buffer it.
 - **Sprites**: fill `ZPL_Sprite {x, y, w, h, cells, flags}` entries and call `zpl_build_lists()`; copy the 32 x 256 bytes it
   produces to `ZPL_LISTS`. Each tile row of a sprite becomes one *piece* per 8-row band its rows touch, clipped to that band,
   so a sprite always sits in the same band as the BG rows it must go over. Later sprites are on top. All sprite pieces are
-  transparent (alpha-0 pixels skipped). Set `SPREN` to 1 to enable sprites.
+  transparent (alpha-0 pixels skipped). Set `SPREN` non-zero to enable sprites. `flags` also picks the sprite's priority.
 - **Starting up and tiles**: the PPU idles until `RUN` is non-zero, serving tile uploads (tile pixels can only be written through the
   `$0300` window, which is keyed on the PPU's live bank/ID). To upload a tile the CPU writes `TILEBANK`, `TILEID`, then
   `TILEREQ = 1`; the PPU selects the tile and sets `TILEREQ = 2`; the CPU writes the tile's 64 bytes to `$0300-$033F` and sets
@@ -99,10 +101,34 @@ every cart that does not know about the layer has. Tables are double-buffered li
   `spriteBudget[b]`, what is left of the band for sprites: pass it to `zpl_build_lists_bands()`. At the shipped 1300 that is about **3 cells of
   glass, or 4 of overlay, per band** over a worst-case background (both layers fine-scrolled both ways), and a solid span of any width.
   A game with a lighter background passes a larger budget (see below for how far the saturation tests go).
-- **Order.** BG0, BG1, sprites, then the window per band (glass, then ink): queue order is z-order, and the hardware retires a blit only
+- **Order.** Sprites behind BG0, BG0, sprites between, BG1, sprites above both, then the window per band (glass, then ink): queue order is z-order, and the hardware retires a blit only
   after the older ones it overlaps, so the glass reads a finished background and a sprite never shows through a box.
 - **Producer.** A window band costs the PPU more than a plain one (the BG launches double under a culling span, plus the window's own), so
   the producer had to get cheaper first, see "History: producer cost".
+
+## Sprite priority
+
+A sprite's `flags` bits 2-3 pick where it sits in the band's launch order (`ZPL_SPR_PRIO_MASK`):
+
+| Flags | Constant | Sits |
+|-------|----------|------|
+| `$00` | (none) | above BG0 and BG1 (the default, and the only choice before this existed) |
+| `$04` | `ZPL_SPR_PRIO_MID` | between BG0 and BG1: BG1's opaque pixels cover it |
+| `$08` | `ZPL_SPR_PRIO_BACK` | behind BG0 |
+
+- **Behind BG0 needs a transparent BG0.** BG0 is opaque by default, so a sprite behind it is completely covered and never shows. Write
+  `ZPL_F_TRANSPARENT` (`$40`) to `L0FLAGS` and BG0's alpha-0 pixels let it through; what is behind everything is black.
+- **Within one priority** later sprites are on top, as before; the builder keeps array order and the admission budget (`ZPL_BAND_BUDGET`,
+  `ZPL_MAXP`) is shared by all three priorities of a band, so a band never holds more than `ZPL_MAXP` pieces in total.
+- **Stream format.** Per band the PPU reads a header word: bits 0-3 are the number of pieces above both layers, and `ZPL_EXT_FLAG` (`$10`)
+  says the band also has pieces behind BG0 or between the layers. A plain band is the header and its pieces (14 B each), exactly the
+  old format, so a stream built for the old microcode still runs. An extended band reads, after the header, `[count][behind pieces]
+  [count][between pieces]` and then the above pieces, so it costs 4 B more. `zpl_build_lists_bands()` and `zpl_pack_stream()` do all of
+  this; in the dense form the two extra counts sit at `ZPL_EXT_OFF`.
+- **Cost.** The plain band is the old straight line (BG0, BG1, sprites, window) with one compare of overhead, and the saturation tests
+  have the same edge as before (see "Never lag"). An extended band takes a separate path that costs about 40 PPU cycles more. A mixed-priority saturation
+  case is in `test_layers`.
+- **Demo:** the ship flies between the layers, so the clouds (BG1) pass in front of it.
 
 ## Never lag
 
@@ -116,7 +142,7 @@ The requirement was that the PPU can never lag, because one late band flickers t
 3. **Admission control is by blitter time, not by count** (and a window takes its share out of the band, see above). The hardware has a fixed amount of blit time per band (8 channels,
    2720 cycles), the two layers take almost all of it under a fine scroll, and what is left is what sprites may use. The
    list builder admits sprite pieces per band up to `ZPL_BAND_BUDGET` channel-cycles (a tile costs `8 + 32 x rows written`),
-   and at most `ZPL_MAXP` = 12 pieces; anything beyond that is dropped deterministically (the builder returns the count). A
+   and at most `ZPL_MAXP` = 8 pieces; anything beyond that is dropped deterministically (the builder returns the count). A
    4-tile-wide piece costs four times a 1-tile one, so a piece count alone is the wrong limit: that is what the first
    sweep showed (clean to 160 sprite cells per frame, late from 200, with the old 12-piece cap not even reached).
 4. **A worst-case test.** `test_layers` saturates every band with far more sprites than the budget admits (up to 16
@@ -139,8 +165,8 @@ case is compared against an independent per-pixel reference over the whole frame
 
 - A **producer loop** on the PPU walks 32 bands per frame. For each band and layer it computes the world row and column, then
   launches one queue row per half of the tile row (a fine Y scroll splits every tile row across two bands, clipped to the
-  band, so z-order between layers stays exact), with the hardware wrapping the 64-cell map row. BG0, then BG1, then the band's
-  sprite pieces, because queue order is z-order. The hardware holds each row until its screen rows are safe to write.
+  band, so z-order between layers stays exact), with the hardware wrapping the 64-cell map row. The band's sprite pieces behind BG0,
+  BG0, the pieces between, BG1, then the pieces above both, because queue order is z-order. The hardware holds each row until its screen rows are safe to write.
 - The producer runs ahead of the beam by however much the 128-cell queue holds, and blocks (`wait_space`) when it is full.
 - The first frame after start is a transient (the producer starts a frame ahead); the tests judge frames after it.
 - One band costs about 50 PPU cycles per launch, so the PPU is mostly idle: the blitter is the bottleneck, as designed. The frame number is written once per frame
@@ -174,8 +200,8 @@ through the PPU window, so its padding must be zero bytes (a `NOP` word writes `
 
 ## Limits and what is not done
 
-- One sprite priority (above both layers, below the window). A sprite between the layers, or behind BG0, would need its pieces queued in the
-  middle of a band's layer order.
+- Sprite priority is per sprite and has three levels; the window is always above them. There is no per-tile BG priority (a BG tile over a
+  sprite): BG rows are launched whole.
 - No per-sprite blend. The queue snapshots the global blend settings at launch, so a blended sprite is a launch with different
   settings pushed first; not wired up.
 - Sprite cell storage is 256 cells; sprites may share cell arrays (the saturation test does).
@@ -197,6 +223,16 @@ that already holds the port address, the frame word is written once per frame, t
 and a sprite piece is read straight into the launch registers (one `MOV` + `ADD DP` per word) instead of copied word by word through a
 temporary. Idle at 8 one-cell pieces rose from 9.9% to 38.5% without a window, and the worst windowed band (a full-height 1-wide box, which
 saves almost nothing but still splits every BG row) is 10.7% idle at 8 pieces. Those are the numbers to watch if the producer grows again.
+
+Sprite priority hit the same wall. **A label jump is ~10 cycles, taken or not**: `ppuasm` expands `JMZ label` (and `JMG`, `JNG`, `JNZ`, `JMR`) into
+four `TARREG`/`SETBYTE` instructions that load the target into `R62` (8 cycles) and then the jump, so the one-line `CMP` + `JMG` that
+looked like 2 cycles cost ~10. The first version (header decode and two more tests on every band) failed the windowed saturation test at
+a budget of 1700, where the old microcode held to 2400-2500: the same instruction count as a few "free" compares, ~35 cycles per band. The
+fix was to count jumps, not instructions: the plain band has one test and no jump back (the extended band is out of line, it falls straight
+through to the window), the header read is unconditional (`MUL` by a 0/1 `SPREN` instead of a compare and a jump), and `do_layer`'s "world
+row mod 512" no longer divides (scroll Y is reduced once per frame, then one conditional subtract: ~9 cycles saved per layer per band). The
+edge is the same as before the change (fine at 2400-2500, as measured by `LAYERS_BUDGET=...`). A delay-injection experiment (extra
+`INC`s at the top of every band) is a good probe: the old microcode tolerated ~24 cycles per band there.
 
 ## History: why the hardware changed
 
