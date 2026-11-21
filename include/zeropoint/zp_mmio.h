@@ -64,6 +64,10 @@
 #define ZP_DMA_IRQ      (ZP_IO_DMA + 0x02)  /* R: 1 if paused by interrupt   */
 #define ZP_DMA_CHAN(n)  (ZP_IO_DMA + 0x03 + (n)) /* R: channel n state (0-11) */
 
+/* ---- System control ($D80048) ------------------------------------------ */
+#define ZP_SYS_DEVMODE  (ZP_IO_SYSCTL + 0x00)  /* R: bit 0 DEV_MODE (guest-writable, unused), bit 1 dev unit (host-set) */
+#define ZP_SYS_DEVUNIT  0x02                   /* the dev-unit bit: debug serial UART on, signature checks always pass */
+
 /* ---- Runtime-provided bus accessors (libzp: zp_mmio.asm) --------------- */
 /* These use DEF88186 absolute-long addressing to reach any 24-bit address.
  * On def88186cc (no prototypes) the calls resolve via implicit declaration

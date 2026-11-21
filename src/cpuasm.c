@@ -246,6 +246,29 @@ int parse_number(const char *str, uint32_t *value) {
     }
 }
 
+/* ",x" / ",y" / ",s" is an index register however it is spelled, but the addressing-mode detection only knows the upper-case
+ * form, so a lower-case one used to assemble silently as a plain address with the index dropped (LDA >msg,x read msg+0 every
+ * time). Folds the letter to upper case and drops spaces before it (", X"). */
+static void normalize_index_registers(char *operand) {
+    size_t i, o = 0;
+    for (i = 0; operand[i]; i++) {
+        operand[o++] = operand[i];
+        if (operand[i] == ',') {
+            size_t j = i + 1;
+            char u, next;
+            while (operand[j] == ' ' || operand[j] == '\t') j++;
+            u = (char)toupper((unsigned char)operand[j]);
+            next = operand[j] ? operand[j + 1] : '\0';
+            if ((u == 'X' || u == 'Y' || u == 'S') &&
+                (next == '\0' || next == ')' || next == ']' || next == ',' || isspace((unsigned char)next))) {
+                operand[o++] = u;
+                i = j;
+            }
+        }
+    }
+    operand[o] = '\0';
+}
+
 /* Find a .EQU constant by name; returns its index or -1 */
 int find_equate(const char *name) {
     int i;
@@ -1368,6 +1391,7 @@ int assemble_line(char *line) {
         while (end > operand && isspace(*end)) *end-- = '\0';
     }
     substitute_equates(operand);
+    normalize_index_registers(operand);
 
     /* The short spellings the opcode CSV lists next to the real mnemonics. */
     if (strcmp(token, "LP") == 0) strcpy(token, "LOOP");

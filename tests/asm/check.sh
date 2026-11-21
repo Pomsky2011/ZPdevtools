@@ -27,6 +27,12 @@ try ok  'LDA $FF'            '3bff'
 try ok  'tbl: LDA >tbl'      '3d000280'
 try ok  'tbl: LDA >tbl,X'    '3e000280'
 try ok  'tbl: STA >tbl,X'    '56000280'
+# an index register is an index register in any case, with or without a space (lower case used to drop it silently)
+try ok  'tbl: LDA >tbl,x'      '3e000280'
+try ok  'LDA $123456,x'        '3e563412'
+try ok  'LDA $1234,x'          '393412'
+try ok  'LDA $1234, X'         '393412'
+try ok  'LDA 5,s'              '3f05'
 # Forms cpudisasm prints and cpuasm has to read back: '!' / '>' override the by-value choice of direct page / long, block
 # moves take two bank bytes in the order written (CPU::opMVN fetches the source bank first), DIV X,Y.
 try ok  'MVP $7E,$7F'        '687e7f'

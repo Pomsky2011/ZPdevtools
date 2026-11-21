@@ -108,9 +108,12 @@ The nine config bytes and the four transfer modes are described in `lib/zp_dma.a
 | `$D80031` | `P1_CTRL` | r: `$80` pad press, `$40`/`$20` bumpers, `$10`/`$08` triggers, `$04` menu, `$02` pause, `$01` connected |
 | `$D80032` | `P1_BTN` | r: face buttons 4,3,2,1 in bits 7-4 |
 | `$D80038-3A` | `P2_DIR/CTRL/BTN` | r: same layout; reads 0 (unplugged) until a frontend plugs it in |
-| `$D8003C` | `SER_STATUS` | r: bit 0 receive ready, bit 1 transmit has room |
-| `$D8003D` | `SER_DATA` | rw: 256-byte queues. Nothing consumes the transmit side yet. |
-| `$D8003E` | `SER_CTRL` | w: bit 0 clears both queues |
+| `$D8003C` | `SER_STATUS` | r: bit 0 receive ready, bit 1 transmit has room; on a dev unit also bit 2 overrun, bit 3 transmit done |
+| `$D8003D` | `SER_DATA` | rw: 255-byte queues. On a retail unit nothing drains the transmit side; on a dev unit it is a 115200-baud UART (one byte per 1476 CPU cycles) |
+| `$D8003E` | `SER_CTRL` | w: bit 0 clears both queues, bit 1 clears the overrun flag (dev unit) |
+
+The serial port is a UART only on a **dev unit**, a host setting a program cannot change (`zeropoint_sdl --dev-unit`). See the
+emulator's `docs/debug-protocol.md` and `examples/cpu/serial_echo.asm`.
 
 ### Display status, `$D80040-$D80047` (read-only)
 
@@ -125,7 +128,7 @@ The nine config bytes and the four transfer modes are described in `lib/zp_dma.a
 
 | Address | Name | |
 |---------|------|--|
-| `$D80048` | `DEV_MODE` | rw: 1 when the emulator is in dev mode (the Boot ROM reads it) |
+| `$D80048` | `DEV_MODE` | r: bit 0 the old dev-mode byte (guest-writable, nothing acts on it), **bit 1 the dev-unit latch** (set by the host, no program can write it: the debug serial port is a UART and signature checks always pass) |
 | `$D80049-4B` | `CART_ENTRY` | r: cartridge entry point (low, middle, bank) |
 
 ### Timers, `$D80050-$D80052`

@@ -102,6 +102,8 @@ passed = {'cpu': 0, 'apu': 0, 'ppu': 0}
 for cpu in ('cpu', 'apu', 'ppu'):
     for src in sorted(glob.glob(os.path.join(EXAMPLES, cpu, '*.asm'))):
         d, b = os.path.dirname(src), os.path.basename(src)
+        if 'no-roundtrip' in open(src).read():
+            continue   # marked as holding data (a string, a table): a disassembler cannot tell data from code
         if not assemble(cpu, b, path('x.bin'), cwd=d) or os.path.getsize(path('x.bin')) > 8192:
             continue   # some PPU examples no longer assemble (stale), others are huge padded images
         rc, out = disasm(cpu, 'x.bin')

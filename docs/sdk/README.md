@@ -24,6 +24,7 @@ Include the umbrella and you get everything:
 | `zp_ppu.h`   | PPU window, VOC registers, `zp_ppu_boot` / `zp_ppu_upload` / start/reset |
 | `zp_apu.h`   | APU window, `zp_apu_boot` / `zp_apu_upload_samples`, rombank, control |
 | `zp_timer.h` | 8 hardware timers (`ZP_TMR_*`), enable/IRQ/status/wait helpers |
+| `zp_serial.h` | the debug serial port: `zp_serial_putc/puts/getc/ready/flush`, `zp_is_dev_unit()` (a UART on `zeropoint_sdl --dev-unit`, a no-op on a retail unit) |
 | `zp_cop.h`   | Every `COP` signature: generic `zp_cop3` / `zp_cop32`, Boot ROM service wrappers (`zp_sin`, `zp_sqrt`, `zp_hypot`, `zp_boot_ppu_load`, `zp_verify_chunk`, ...) |
 
 Everything funnels down to two hardware primitives, `zp_peek8` / `zp_poke8`,
