@@ -207,7 +207,7 @@ through the PPU window, so its padding must be zero bytes (a `NOP` word writes `
   settings pushed first; not wired up.
 - Sprite cell storage is 256 cells; sprites may share cell arrays (the saturation test does).
 - A band whose sprites exceed the budget silently loses its overflow pieces (the builder reports how many).
-- The C library for the console side is `include/zeropoint/zp_layers.h` (docs/sdk/README.md, example `examples/layers-game/`). Its frame builder is an
+- The C library for the console side is `include/zeropoint/zp_layers.h` (docs/sdk/README.md, example: the game template `game-template/`, via `examples/layers-game/`). Its frame builder is an
   unoptimised C port of the host builder in `zp_layers_sprites.h` and costs ~10-12k CPU cycles per sprite, so a game with many moving sprites still
   wants the host to precompute them (as the demo does) or hand-written assembly for `zpl_pass`/`zpl_layout`.
 - `NCOLS` is fixed at 33 (full width at any fine X).

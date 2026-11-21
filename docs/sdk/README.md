@@ -93,7 +93,7 @@ The loaders are written array-free (sequential register writes rather than a
 | `zp_dma.asm`     | `zp_dma_load` for hand-written asm (boot ROM, no C runtime). |
 | `zp_long.asm`    | 32-bit runtime for the C compilers (`long` add/sub/mul/div/mod, shifts, bitwise, compares). Link it into any program that does `long` arithmetic. Tested by `ZeroPoint/bin/test_zp_long`. |
 
-**Two things that only go wrong on the real Boot ROM** (the native boot hides both, so test with `--boot` before calling anything done; `examples/layers-game`
+**Two things that only go wrong on the real Boot ROM** (the native boot hides both, so test with `--boot` before calling anything done; `game-template`
 is checked both ways by `tests/layers/run.sh`):
 
 - **The machine state at entry.** The Boot ROM hands off with `DB = $80`, `S = $01FF` and `Y = $FFFE` (`ZeroPoint/docs/boot-handoff.md`); the native boot leaves
@@ -102,7 +102,7 @@ is checked both ways by `tests/layers/run.sh`):
   deep, so the crt0s set `S`. If you write your own startup, do both.
 - **Signing a ROM bigger than a few KB.** `zpbuild` without `--codesize` signs the original way: the Boot ROM computes one SHA-256 over the whole payload *in software*,
   which for a megabyte never finishes (the lightning splash just stays on screen, and it looks like an unsigned ROM). Use `--codesize N --trailer 2`: the console's BLAKE2s
-  engine then checks the whole ROM in a fraction of a second. `N` must cover your CPU program (it starts at `$8000`); the layers example computes it from the size of `game.bin`.
+  engine then checks the whole ROM in a fraction of a second. `N` must cover your CPU program (it starts at `$8000`); the game template computes it from the size of `game.bin`.
   The native boot does not hash at all, so it runs either. See [linker.md](linker.md), "Trailer versions".
 
 The C calling convention, shared by both compilers, is in [abi.md](abi.md): 16-bit mode, the first three words of arguments in
@@ -118,8 +118,9 @@ or struct values. The exact list for `def88186cc` is in `c_compiler/README.md`.
 
 A game that wants scrolling tile layers and sprites does not have to speak the layers microcode's protocol (`ZPdevtools/docs/ppu/layers.md`):
 `zp_layers.h` boots the microcode, loads palette, tiles, maps and cells, and once per frame builds the sprite stream and flips it in.
-Header only, both compilers; `examples/layers-game/` is a complete small game (a pad-driven hero, two parallax layers, a bird flying
-*between* the layers, a text box in the window layer) and `tests/layers/run.sh` checks its every pixel on both compilers.
+Header only, both compilers; `game-template/` (the `ZPgameTemplate` repo) is a complete small game on it (a pad-driven hero, two parallax layers, a bird flying
+*between* the layers, a text box in the window layer) with its art as PNGs that `scripts/png2zp.py` converts ([../tools/png2zp.md](../tools/png2zp.md)),
+and `tests/layers/run.sh` checks its every pixel on both compilers. `examples/layers-game/` just builds the template.
 
 ```c
 #include <zeropoint/zeropoint.h>

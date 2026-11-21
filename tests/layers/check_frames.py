@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Checks frames dumped from the layers-game example against an independent reconstruction of what they must show.
+"""Checks frames dumped from the game template (with its sample art) against an independent reconstruction of what they must show.
 
   check_frames.py <build-dir> <frame.rgba> [<frame.rgba> ...]
 
@@ -47,7 +47,7 @@ def cell(table_off, n):
 
 maps = [at("MAP0"), at("MAP1")]
 sprite_cells = [cell(at("CELLS"), i) for i in range(counts["CELLS_N"])]
-win_cells = [cell(at("WINCELLS"), i) for i in range(counts["WINCELLS_N"])]
+win_cells = [cell(at("BOX_MSG"), i) for i in range(counts["BOX_MSG_N"])]
 BOX_COL, BOX_ROW, BOX_W, BOX_H = 2, 26, 28, 5
 HERO = (120, 136)                           # main.c: it never moves, nothing presses the pad
 

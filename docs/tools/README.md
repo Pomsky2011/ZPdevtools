@@ -95,6 +95,7 @@ hexview game.bin --analyze        # file statistics
 | Script | Does |
 |--------|------|
 | `scripts/zpsnd.py` | bake samples and a score into a ZPA sound pack ([../apu/zpsnd.md](../apu/zpsnd.md)) |
+| `scripts/png2zp.py` | PNG art and Tiled maps to the layers library's palette, tiles, maps and cells ([png2zp.md](png2zp.md)) |
 | `scripts/build_adpcm_rom.py` | audio file to an ADPCM-playing ROM ([../apu/adpcm.md](../apu/adpcm.md)) |
 | `scripts/gen_cpu_docs.py`, `gen_apu_docs.py`, `gen_ppu_docs.py` | regenerate the generated pages under `docs/` |
 | `scripts/check_doc_asm.py` | assemble every `cpuasm`, `apuasm` and `ppuasm` block in the Markdown docs |

@@ -20,8 +20,8 @@ Every tool except `zpcc` (C++, needs clang) is strict C89, so the rest can also 
 | Disassemblers | `cpudisasm`, `ppudisasm`, `apudisasm` | `-b` bytes, `-c` comments, `-s`/`-e` range |
 | Utilities | `hexview` | Hex viewer with `--analyze` statistics |
 
-Python tools in `scripts/`: the ADPCM player builder (`build_adpcm_rom.py`, `docs/apu/adpcm.md`) and the ZPA sound pack
-baker `zpsnd.py` (`docs/apu/zpsnd.md`).
+Python tools in `scripts/`: the ADPCM player builder (`build_adpcm_rom.py`, `docs/apu/adpcm.md`), the ZPA sound pack
+baker `zpsnd.py` (`docs/apu/zpsnd.md`) and the PNG/Tiled art converter `png2zp.py` (`docs/tools/png2zp.md`).
 
 ## Building
 
@@ -69,7 +69,7 @@ python3 tests/asm/fuzz_asm.py    # assembler fuzzer (not part of make check)
 | `c_compiler/README.md` | What `def88186cc` accepts and refuses |
 | `llvm_compiler/README.md` | `zpcc` |
 
-`game-template/` is a git submodule (`ZPgameTemplate`): a buildable skeleton for a ZeroPoint game.
+`game-template/` is a git submodule (`ZPgameTemplate`): a small game on the layers library with its art as PNGs (`scripts/png2zp.py`), the starting point for a game of your own. `examples/layers-game/` builds it.
 
 ### PPU assembler notes
 
