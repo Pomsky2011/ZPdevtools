@@ -195,11 +195,24 @@ static int run_selftest(void)
     return 0;
 }
 
+/* --save-size: 1K..512K of battery SRAM, a power of two, as plain bytes or with a K suffix ("8K", "8192").
+   Returns the header code n (size = 512 << n, 1..10), or -1 if it is not a valid size. */
+static int parse_save_size(const char *s)
+{
+    char *end;
+    unsigned long v = strtoul(s, &end, 0);
+    int code = 1;
+    if (*end == 'k' || *end == 'K') { v *= 1024UL; end++; if (*end == 'i' || *end == 'I') { end++; if (*end == 'b' || *end == 'B') end++; } }
+    if (*end != '\0' || v < 1024UL || v > 524288UL || (v & (v - 1)) != 0) return -1;
+    while ((512UL << code) != v) code++;
+    return code;
+}
+
 static void usage(const char *p)
 {
     fprintf(stderr, "zpbuild - ZeroPoint ROM signer (HQ mastering step)\n\n");
     fprintf(stderr, "Usage: %s IN.elf -o OUT.zpb\n", p);
-    fprintf(stderr, "       [--title NAME] [--dev AUTHOR] [--entry ADDR] [--codesize N] [--trailer 2|3]\n");
+    fprintf(stderr, "       [--title NAME] [--dev AUTHOR] [--entry ADDR] [--codesize N] [--trailer 2|3] [--save-size N]\n");
     fprintf(stderr, "       [--selftest] [-v]\n\n");
     fprintf(stderr, "Reads a zplink ELF, reconstructs the ROM payload, and writes a\n");
     fprintf(stderr, "signed .zpb ROM (ZPB header + payload + RSA-2048/SHA-256 trailer).\n");
@@ -213,6 +226,8 @@ static void usage(const char *p)
     fprintf(stderr, "--trailer 2 (with --codesize) signs the whole payload instead: code and\n");
     fprintf(stderr, "data are each BLAKE2s-hashed at boot, no manifest, no per-chunk checks\n");
     fprintf(stderr, "(the console's BLAKE2s engine makes that ~0.5 s per 8 MB). Default is 3.\n");
+    fprintf(stderr, "--save-size N gives the cartridge N bytes of battery save RAM (a power of two,\n");
+    fprintf(stderr, "1K..512K, e.g. 8K) at banks $C0-$C7; the size is in the signed header.\n");
 }
 
 int main(int argc, char **argv)
@@ -221,7 +236,7 @@ int main(int argc, char **argv)
     char title[32], dev[16];
     unsigned long entry = 0, img_size = 0, elf_entry = 0, elf_len = 0, total;
     unsigned long code_size = 0;
-    int have_entry = 0, have_codesize = 0, have_trailer = 0, verbose = 0, i, trailer_ver = 3;
+    int have_entry = 0, have_codesize = 0, have_trailer = 0, verbose = 0, i, trailer_ver = 3, save_code = 0;
     unsigned char *elf, *img;
     unsigned char hdr[ZPB_HDR_SIZE], digest[32], sig[ZP_RSA_BYTES];
     unsigned char *manifest = NULL;
@@ -240,6 +255,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i],"--entry") && i+1<argc){ entry=parse_addr(argv[++i]); have_entry=1; }
         else if (!strcmp(argv[i],"--codesize") && i+1<argc){ code_size=parse_addr(argv[++i]); have_codesize=1; }
         else if (!strcmp(argv[i],"--trailer") && i+1<argc){ have_trailer=1; trailer_ver=atoi(argv[++i]); if (trailer_ver!=2 && trailer_ver!=3){ fprintf(stderr,"zpbuild: --trailer must be 2 or 3\n"); return 1; } }
+        else if (!strcmp(argv[i],"--save-size") && i+1<argc){ save_code=parse_save_size(argv[++i]); if (save_code < 0){ fprintf(stderr,"zpbuild: --save-size must be a power of two from 1K to 512K\n"); return 1; } }
         else if (!strcmp(argv[i],"--title") && i+1<argc){ memset(title,0,32); strncpy(title,argv[++i],31); }
         else if (!strcmp(argv[i],"--dev") && i+1<argc){ memset(dev,0,16); strncpy(dev,argv[++i],15); }
         else if (argv[i][0]=='-'){ fprintf(stderr,"zpbuild: unknown option '%s'\n",argv[i]); usage(argv[0]); return 1; }
@@ -277,7 +293,7 @@ int main(int argc, char **argv)
     memset(hdr,0,sizeof(hdr));
     hdr[0]='Z'; hdr[1]='P'; hdr[2]='B'; hdr[3]=0;
     hdr[4]=2;                                   /* version 2: signed */
-    hdr[5]=0x01;                                /* flags: bit0 = signed */
+    hdr[5]=(unsigned char)(0x01 | (save_code << 4));   /* flags: bit0 = signed, bits 4-7 = save RAM size code (512 << n bytes, 0 = none) */
     put16(hdr+6, ZPB_HDR_SIZE);
     put32(hdr+8, img_size);
     put32(hdr+12, entry);

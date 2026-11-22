@@ -121,6 +121,12 @@ static int inspect_zpb(const uint8_t *d, size_t size, Opts *o)
     printf("Magic:        ZPB (valid)\n");
     printf("Version:      %u\n", version);
     printf("Flags:        0x%02X%s\n", flags, (flags & 1) ? " (signed)" : "");
+    if (flags >> 4) {
+        if ((flags >> 4) <= 10) printf("Save RAM:     %lu bytes (battery SRAM at banks $C0-$C7)\n", 512UL << (flags >> 4));
+        else printf("Save RAM:     invalid size code %u\n", flags >> 4);
+    } else {
+        printf("Save RAM:     none\n");
+    }
     printf("Header size:  %u bytes\n", headerSize);
     printf("Title:        \"%s\"\n", title);
     printf("Developer:    \"%s\"\n", dev);

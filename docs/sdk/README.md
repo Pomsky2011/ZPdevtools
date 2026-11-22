@@ -27,6 +27,7 @@ Include the umbrella and you get everything:
 | `zp_serial.h` | the debug serial port: `zp_serial_putc/puts/getc/ready/flush`, `zp_is_dev_unit()` (a UART on `zeropoint_sdl --dev-unit`, a no-op on a retail unit) |
 | `zp_pad.h`   | the controllers: `zp_pad_dir/ctrl/btn(player)`, `zp_pad_dx/dy(player)` (-1, 0, 1), the `ZP_DIR_*` `ZP_CTRL_*` `ZP_BTN_*` bits |
 | `zp_layers.h` | the **layers microcode library**: two scrolling tile layers, sprites with three priorities, a window layer (see below) |
+| `zp_save.h`  | the cartridge's **battery save RAM** (banks `$C0-$C7`; build with `zpbuild --save-size 8K`, link `lib/zp_save.asm`; **not** in `zeropoint.h`): `zp_save_read8/write8/read/write/erase`, and `zp_save_load` / `zp_save_store`, a two-slot CRC-checked store that survives a power cut. See the emulator's `docs/cart-save.md` |
 | `zp_cop.h`   | Every `COP` signature: generic `zp_cop3` / `zp_cop32`, Boot ROM service wrappers (`zp_sin`, `zp_sqrt`, `zp_hypot`, `zp_boot_ppu_load`, `zp_verify_chunk`, ...) |
 
 Everything funnels down to two hardware primitives, `zp_peek8` / `zp_poke8`,
@@ -90,6 +91,7 @@ The loaders are written array-free (sequential register writes rather than a
 | `crt0_rom.asm`   | ROM-mode startup: fuller bring-up (CLD, defined flags) then `main`. |
 | `zp_mmio.asm`    | `zp_peek8` / `zp_poke8`, implemented with absolute-long-indexed access to the RAM/APU/PPU/IO banks. |
 | `zp_cop.asm`     | `zp_cop3` / `zp_cop32` (any `COP` signature, built at run time) plus the typed Boot ROM service wrappers. Needs the real Boot ROM (`--boot`) for `$F0-$FF`. |
+| `zp_save.asm`    | `zp_sram_peek8` / `zp_sram_poke8` for the save banks `$C0-$C7` (`zp_save.h` builds on them). Separate from `zp_mmio.asm` so a program without save RAM keeps its exact timing: link it only into a cartridge built with `--save-size`. |
 | `zp_dma.asm`     | `zp_dma_load` for hand-written asm (boot ROM, no C runtime). |
 | `zp_long.asm`    | 32-bit runtime for the C compilers (`long` add/sub/mul/div/mod, shifts, bitwise, compares). Link it into any program that does `long` arithmetic. Tested by `ZeroPoint/bin/test_zp_long`. |
 

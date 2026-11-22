@@ -8,6 +8,8 @@
  *
  *   #include <zeropoint/zeropoint.h>
  *
+ * (zp_save.h, the battery save RAM, is not in here: it needs lib/zp_save.asm linked in; include it yourself.)
+ *
  * Link against libzp (crt0 + zp_mmio.asm, plus zp_cop.asm for the COP calls)
  * so zp_peek8/zp_poke8 and zp_cop resolve.
  */

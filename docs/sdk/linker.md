@@ -66,7 +66,7 @@ $ readelf -l game.elf
 
 ```
 zpbuild IN.elf -o OUT.zpb [--title "NAME"] [--dev "AUTHOR"] [--entry ADDR]
-        [--codesize N] [--trailer 2|3] [--selftest] [-v]
+        [--codesize N] [--trailer 2|3] [--save-size N] [--selftest] [-v]
 ```
 
 | Option | Meaning |
@@ -77,6 +77,7 @@ zpbuild IN.elf -o OUT.zpb [--title "NAME"] [--dev "AUTHOR"] [--entry ADDR]
 | `--entry ADDR` | Override the entry point (default: the ELF's entry). |
 | `--codesize N` | Opt into splitting the payload into "code" (the first `N` bytes) and bulk "data" (the rest), signed as trailer version 3 by default (see below). Omit for plain single-region signing (trailer version 1). |
 | `--trailer 2\|3` | With `--codesize`: `3` (the default) signs the data as per-chunk hashes checked lazily; `2` signs code and data as two whole hashes checked at boot, with no manifest and no per-chunk checks. |
+| `--save-size N` | Give the cartridge `N` bytes of battery save RAM (a power of two, 1K..512K: `8K`, `8192`), mapped at banks `$C0-$C7`. The size is a code in header flags bits 4-7, so it is signed with the rest of the header. See `zp_save.h` and the emulator's `docs/cart-save.md`. |
 | `--selftest` | Run the SHA-256 + RSA sign/verify/tamper self-test and exit. |
 
 The payload is wrapped in the emulator's 64-byte `ZPBHeader` (see
